@@ -1,0 +1,15 @@
+{
+  "name": "digieurope",
+  "private": true,
+  "version": "0.0.0",
+  "description": "Prototype platform for digitalising public administration services",
+  "engines": { "node": ">=22" },
+  "workspaces": ["apps/*", "packages/*"],
+  "scripts": {
+    "dev:api": "npm run dev -w @digieurope/api",
+    "dev:web": "npm run dev -w @digieurope/web",
+    "build": "npm run build --workspaces --if-present",
+    "test": "npm run test --workspaces --if-present",
+    "typecheck": "npm run typecheck --workspaces --if-present"
+  }
+}
