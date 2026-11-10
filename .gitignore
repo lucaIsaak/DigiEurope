@@ -7,3 +7,6 @@ coverage/
 !.env.example
 .DS_Store
 *.log
+
+# Prototype data (JSON store + uploads)
+apps/api/data/
