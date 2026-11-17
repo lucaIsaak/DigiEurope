@@ -10,7 +10,7 @@ function baseApp(overrides: Partial<Application> = {}): Application {
   return {
     id: "a1",
     reference: "MS-2026-00001",
-    municipalityId: "musterstadt",
+    municipalityId: "Frankfurt",
     status: "draft",
     language: "en",
     identityMethod: "eid",
@@ -22,7 +22,7 @@ function baseApp(overrides: Partial<Application> = {}): Application {
     identityDocument: { type: "id_card", number: "L01X00T47", issuingCountry: "DE", expiryDate: "2030-01-01" },
     residenceTitle: { type: "", expiryDate: "" },
     move: {
-      newAddress: { street: "Lindenallee", houseNumber: "5", addressExtra: "", postalCode: "12345", city: "Musterstadt" },
+      newAddress: { street: "Lindenallee", houseNumber: "5", addressExtra: "", postalCode: "12345", city: "Frankfurt" },
       moveInDate: "2026-11-03",
       residenceType: "main",
       previousResidence: "germany",

@@ -2,7 +2,7 @@
 
 Prototype of a platform that digitalises public administration services, starting with the **address registration (Anmeldung)** for newcomers in Germany. The product idea and research are in [docs/Product-discovery.md](docs/Product-discovery.md).
 
-The prototype is a **pre-checking layer in front of the existing Bürgeramt**: applicants fill in a guided, bilingual form that is checked instantly, the landlord confirms online, and a caseworker decides on a complete application. Musterstadt is a fictional pilot city.
+The prototype is a **pre-checking layer in front of the existing Bürgeramt**: applicants fill in a guided, bilingual form that is checked instantly, the landlord confirms online, and a caseworker decides on a complete application. Frankfurt is a fictional pilot city.
 
 ## Run it
 

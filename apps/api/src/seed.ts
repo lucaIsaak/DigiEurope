@@ -96,7 +96,7 @@ export function seedDemoData(store: Store, now = new Date()) {
     if (digitalLandlord) {
       app.landlord = {
         status: "confirmed", landlordName: pick(LANDLORDS), landlordEmail: "vermietung@example.org",
-        landlordAddress: `Rathausplatz ${3 + (i % 9)}, 12345 Musterstadt`, landlordIsOwner: true,
+        landlordAddress: `Rathausplatz ${3 + (i % 9)}, 12345 Frankfurt`, landlordIsOwner: true,
         requestedAt: iso(submittedAt - DAY), confirmedAt: iso(submittedAt - 3 * 3600_000),
       };
     } else {

@@ -5,7 +5,7 @@
  */
 const en = {
   "app.name": "DigiEurope",
-  "app.municipality": "Musterstadt",
+  "app.municipality": "Frankfurt",
   "demo.banner": "Prototype with demo data. Do not enter real personal data.",
   "demo.views": "Views",
   "nav.citizen": "Citizen",
@@ -16,7 +16,7 @@ const en = {
   "lang.label": "Language",
 
   // Landing
-  "home.kicker": "Address registration (Anmeldung) · Musterstadt",
+  "home.kicker": "Address registration (Anmeldung) · Frankfurt",
   "home.title": "Register your new address online. No appointment hunting.",
   "home.lead":
     "Fill in the form in your language, and we check it right away, so nothing is missing. A caseworker confirms it, usually within two working days. You can see where your application is at any time.",
@@ -205,7 +205,7 @@ const en = {
   "precheck.residence_title_ok": "Visa or permit valid and uploaded",
   "precheck.address_incomplete": "New address incomplete: {fields}",
   "precheck.address_outside_municipality": "This postal code is not in {municipality}. Register with the city you moved to",
-  "precheck.address_ok": "New address is in Musterstadt",
+  "precheck.address_ok": "New address is in Frankfurt",
   "precheck.move_in_missing": "Add your move-in date",
   "precheck.move_in_future": "You can register only after moving in",
   "precheck.move_in_late":
@@ -314,7 +314,7 @@ const en = {
 
   // Caseworker
   "cw.title": "Work queue",
-  "cw.office": "Bürgeramt Musterstadt",
+  "cw.office": "Bürgeramt Frankfurt",
   "cw.lead": "Every application in this queue has passed the automatic pre-check. You decide; nothing is decided automatically.",
   "cw.tab.open": "Open",
   "cw.tab.waiting": "Waiting for applicant",
@@ -399,7 +399,7 @@ export type MessageKey = keyof typeof en;
 
 const de: Record<MessageKey, string> = {
   "app.name": "DigiEurope",
-  "app.municipality": "Musterstadt",
+  "app.municipality": "Frankfurt",
   "demo.banner": "Prototyp mit Demodaten. Bitte keine echten personenbezogenen Daten eingeben.",
   "demo.views": "Ansichten",
   "nav.citizen": "Bürger:in",
@@ -409,7 +409,7 @@ const de: Record<MessageKey, string> = {
   "nav.status": "Antrag verfolgen",
   "lang.label": "Sprache",
 
-  "home.kicker": "Wohnsitzanmeldung · Musterstadt",
+  "home.kicker": "Wohnsitzanmeldung · Frankfurt",
   "home.title": "Neue Adresse online anmelden. Ohne Terminsuche.",
   "home.lead":
     "Sie füllen das Formular in Ihrer Sprache aus, und wir prüfen es sofort, damit nichts fehlt. Eine Sachbearbeiterin oder ein Sachbearbeiter bestätigt die Anmeldung, meist innerhalb von zwei Werktagen. Sie sehen jederzeit, wo Ihr Antrag steht.",
@@ -595,7 +595,7 @@ const de: Record<MessageKey, string> = {
   "precheck.residence_title_ok": "Visum oder Aufenthaltstitel gültig und hochgeladen",
   "precheck.address_incomplete": "Neue Adresse unvollständig: {fields}",
   "precheck.address_outside_municipality": "Diese Postleitzahl liegt nicht in {municipality}. Melden Sie sich in der Stadt an, in die Sie gezogen sind",
-  "precheck.address_ok": "Neue Adresse liegt in Musterstadt",
+  "precheck.address_ok": "Neue Adresse liegt in Frankfurt",
   "precheck.move_in_missing": "Einzugsdatum fehlt",
   "precheck.move_in_future": "Die Anmeldung ist erst nach dem Einzug möglich",
   "precheck.move_in_late":
@@ -701,7 +701,7 @@ const de: Record<MessageKey, string> = {
   "ll.invalid": "Dieser Link ist nicht gültig.",
 
   "cw.title": "Arbeitsvorrat",
-  "cw.office": "Bürgeramt Musterstadt",
+  "cw.office": "Bürgeramt Frankfurt",
   "cw.lead": "Jeder Antrag hier hat die automatische Vorprüfung bestanden. Die Entscheidung treffen Sie; nichts wird automatisch entschieden.",
   "cw.tab.open": "Offen",
   "cw.tab.waiting": "Wartet auf Antragsteller:in",

@@ -45,7 +45,7 @@ describe("Anmeldung end to end", () => {
     const link = res.json().landlord.requestLink as string;
     const token = link.split("/landlord/")[1]!;
     expect((await app.inject({ method: "GET", url: `/landlord/${token}` })).json().tenantName).toBe("Lena Hoffmann");
-    res = await app.inject({ method: "POST", url: `/landlord/${token}/confirm`, payload: { landlordName: "K. Weber", landlordAddress: "Rathausplatz 2, 12345 Musterstadt", confirm: true } });
+    res = await app.inject({ method: "POST", url: `/landlord/${token}/confirm`, payload: { landlordName: "K. Weber", landlordAddress: "Rathausplatz 2, 12345 Frankfurt", confirm: true } });
     expect(res.statusCode).toBe(200);
 
     // Changing the address afterwards invalidates the landlord's confirmation.

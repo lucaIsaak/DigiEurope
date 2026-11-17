@@ -17,10 +17,10 @@ export const DEMO_PERSONAS: DemoPersona[] = [
   },
   {
     id: "giulia",
-    label: "Giulia Rossi",
+    label: "Giulia Gerracio",
     description: "Italian citizen, moving from Milan, EU eID card",
     person: {
-      firstName: "Giulia", lastName: "Rossi", birthName: "", birthDate: "1994-09-02", birthPlace: "Milano",
+      firstName: "Giulia", lastName: "Gerracio", birthName: "", birthDate: "1994-09-02", birthPlace: "Milano",
       nationality: "IT", sex: "female", maritalStatus: "unknown", religion: "none",
     },
     identityDocument: { type: "id_card", number: "CA12345BC", issuingCountry: "IT", expiryDate: "2032-09-02" },

@@ -16,7 +16,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
           <Header />
           <main id="main" className="container page">{children}</main>
           <footer className="site-footer">
-            <div className="container">DigiEurope · Prototype · Musterstadt is a fictional municipality.</div>
+            <div className="container">DigiEurope · Prototype · Frankfurt is a fictional municipality.</div>
           </footer>
         </LanguageProvider>
       </body>

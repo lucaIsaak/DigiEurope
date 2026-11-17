@@ -165,3 +165,6 @@ Four hypotheses from the simulated set need real evidence, and each has a questi
 | Municipalities can buy outside one-off pilot funding | "How was your last digital service bought, how long did it take and who paid?" | Municipal digitalisation officers |
 
 Aim for at least three newcomers, one caseworker and one municipal contact. University international offices, expat groups and your own network are the quickest routes in. Keep one eye out for a real Anna: a person for whom the problem does not exist is as valuable as the ones who confirm it.
+
+## 8. Future Ideas
+Digital eID: An 
