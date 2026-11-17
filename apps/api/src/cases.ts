@@ -2,6 +2,10 @@ import { randomBytes, randomUUID } from "node:crypto";
 import {
   estimate,
   runChecks,
+  BUILTIN_TEMPLATES,
+  DEFAULT_CATEGORY,
+  type DocumentTemplate,
+  type ExtractionMethod,
   type Application,
   type CaseView,
   type DocumentKind,
@@ -12,10 +16,25 @@ import {
   type StayInfo,
   type StudentInfo,
 } from "@digieurope/shared";
-import { extractDocument } from "./documents.js";
+import { extractDocument, specOf } from "./documents.js";
+import { readConfigured } from "./extraction.js";
 import type { Store } from "./store.js";
 
 export const PARENT_KINDS: DocumentKind[] = ["parent_form", "parent_tax"];
+
+/** Built-in templates plus the ones accepted from proposals. */
+export const allTemplates = (store: Store): DocumentTemplate[] => [...BUILTIN_TEMPLATES, ...store.templates()];
+export const allSpecs = (store: Store) => allTemplates(store).map(specOf);
+
+/** Runs the approved rules and the inputs the office's live process requires. */
+export function checksFor(store: Store, app: Application, now: Date = new Date()) {
+  const inputs = store.process(DEFAULT_CATEGORY)?.live?.inputs;
+  return runChecks(app, store.ruleStates(), now, undefined, { inputs, templates: allTemplates(store) });
+}
+
+/** Reads a file with the method configured for its document type, knowing all accepted templates. */
+export const readFor = (store: Store, content: Buffer, mimeType: string, override?: ExtractionMethod) =>
+  readConfigured(content, mimeType, store.config(), override, fetch, allSpecs(store));
 
 const log = (app: Application, kind: HistoryEntry["kind"], now: Date, text?: string): Application => ({
   ...app,
@@ -50,7 +69,8 @@ export function view(store: Store, app: Application, webUrl: string, now: Date =
   const token = store.parentTokenFor(app.id);
   return {
     ...app,
-    report: runChecks(app, store.ruleStates(), now),
+    report: checksFor(store, app, now),
+    templateNames: Object.fromEntries(store.templates().map((t) => [t.id, t.name])),
     estimate: estimate(app, now),
     parentLink: token ? `${webUrl}/parent/${token}` : undefined,
   };
@@ -65,7 +85,7 @@ export function addDocument(
   now: Date = new Date(),
   read?: { kind: DocumentKind; extraction: Extraction },
 ): Application {
-  const { kind, extraction } = read ?? extractDocument(file.content, file.mimeType);
+  const { kind, extraction } = read ?? extractDocument(file.content, file.mimeType, allSpecs(store));
   const old = extraction.readable ? app.documents.filter((d) => d.kind === kind) : [];
   for (const o of old) store.deleteDocument(o.id);
   const meta: DocumentRef = {
@@ -104,7 +124,7 @@ export function removeDocument(store: Store, app: Application, docId: string): A
 
 /** The explicit "check my application" step. Remembers what was wrong the first time, for the office insights. */
 export function checkNow(store: Store, app: Application, now: Date = new Date()): Application {
-  const report = runChecks(app, store.ruleStates(), now);
+  const report = checksFor(store, app, now);
   let next = app;
   if (app.firstFindings.length === 0 && !app.history.some((h) => h.kind === "checked")) {
     next = { ...next, firstFindings: report.findings.filter((f) => f.severity === "blocker").map((f) => f.ruleId) };

@@ -41,7 +41,7 @@ export function Shell({ children }: { children: ReactNode }) {
     ? staff?.isOversight
       ? [["/oversight", "oversight.nav.catalogue"]]
       : staff
-      ? [...OFFICE_NAV, ...(canBuild ? ([["/office/builder", "office.nav.builder"]] as [string, MessageKey][]) : []), ...(staff.isAdmin ? ([["/office/staff", "office.nav.staff"]] as [string, MessageKey][]) : [])]
+      ? [...OFFICE_NAV, ...(canBuild || staff.canApproveTemplates ? ([["/office/templates", "office.nav.templates"]] as [string, MessageKey][]) : []), ...(canBuild ? ([["/office/builder", "office.nav.builder"]] as [string, MessageKey][]) : []), ...(staff.isAdmin ? ([["/office/staff", "office.nav.staff"]] as [string, MessageKey][]) : [])]
       : []
     : STUDENT_NAV;
   useEffect(() => {

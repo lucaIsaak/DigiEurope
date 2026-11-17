@@ -3,7 +3,7 @@
 import type { CaseView } from "@digieurope/shared";
 import Link from "next/link";
 import { use, useCallback, useEffect, useState } from "react";
-import { DocumentChecklist, EstimateCard, FindingList, Inbox, Timeline } from "@/components/CaseParts";
+import { DocumentChecklist, EstimateCard, FindingList, Inbox, InfoQuestions, Timeline } from "@/components/CaseParts";
 import { DropZone, Field, Spinner, StatusPill, useAsyncError } from "@/components/ui";
 import { api } from "@/lib/api";
 import { useI18n } from "@/lib/i18n";
@@ -116,6 +116,8 @@ export default function CasePage({ params }: { params: Promise<{ id: string }> }
             <h2 id="list-h">{t("case.docs.title")}</h2>
             <DocumentChecklist c={c} showRemove={editable} onRemove={async (docId) => setC(await api.removeDocument(id, docId))} />
           </section>
+
+          <InfoQuestions c={c} onSave={async (key, value) => { const r = await run(() => api.setInfo(id, key, value)); if (r) setC(r); }} />
 
           <section className="card" aria-labelledby="par-h">
             <h2 id="par-h">{t("case.parents.title")}</h2>

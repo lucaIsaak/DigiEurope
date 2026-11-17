@@ -20,6 +20,12 @@ export default function Samples() {
           <p className="muted">{bi(s.note)}</p>
           <h3>{t("samples.docs")}</h3>
           <ul>{s.docs.map((d) => <li key={d.name}><a href={sampleUrl(s.id, "docs", d.name)} download={d.name}>{d.name}</a> <span className="pill pill-muted">{t(d.audience === "parents" ? "samples.forParents" : "samples.forStudent")}</span></li>)}</ul>
+          {s.extras?.length > 0 && (
+            <>
+              <h3>{t("samples.extras")}</h3>
+              <ul>{s.extras.map((d) => <li key={d.name}><a href={sampleUrl(s.id, "extras" as "docs", d.name)} download={d.name}>{d.name}</a> <span className="pill pill-muted">{t("tpl.by.student")}</span></li>)}</ul>
+            </>
+          )}
           {s.fixes.length > 0 && (
             <>
               <h3>{t("samples.fixes")}</h3>
@@ -28,6 +34,10 @@ export default function Samples() {
           )}
         </section>
       ))}
+      <section className="card">
+        <h2>{t("samples.proposal")}</h2>
+        <ul><li><a href={sampleUrl("proposal", "docs", list.proposal)} download={list.proposal}>{list.proposal}</a></li></ul>
+      </section>
       <section className="card">
         <h2>{t("samples.letter")}</h2>
         <ul><li><a href={sampleUrl("letter", "docs", list.letter)} download={list.letter}>{list.letter}</a></li></ul>

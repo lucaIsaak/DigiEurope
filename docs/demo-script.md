@@ -22,6 +22,8 @@ Before you start: open http://localhost:3000/samples in a second tab and downloa
 | 4:45 | **Processes** | Sign out, sign in as **Frau Lindner** (process designer). The canvas shows the office's own process: rule check, AI drafts mail, caseworker decides, payment connector. Drag a "Condition" onto the canvas, connect it, "Validate", then "Run test" on a sample case. Say: the office draws this itself, and connectors to its own systems plug in later. Herr Obermeier (administrator) decides who gets this access. |
 | 4:50 | **Insights** | Parent signature is missing in 28 % of cases, with a recommended form change. Close with: rules are federal and shared, each office configures only the local parts. |
 
+Optional extra (about 60 seconds), templates: sign in as **Frau Lindner** (process designer) and open "Templates". Formblatt 6 and 8 are ready. Click "+ Add a new template proposal", drop the sample "Formblatt 7" from `/samples`: the fields are suggested. Submit. Sign in as **Frau Richter** (extractor owner), open the proposal, accept it and choose the reading method. In the builder, "Inputs" now lists it as a form the process can require.
+
 Optional extra (about 45 seconds): sign in as **Frau Weiß** (oversight). The catalogue lists every process category. Open "BAföG abroad: application": four offices side by side with a harmony score. Open the process tab, compare the reference with Nordhafen, then the settings tab for the matrix of rules, reading methods and connected systems.
 
 Optional extra (about 30 seconds): download the **Paul Neumann** sample set. One income amount on the tax notice is smudged, so after submitting, the process stops at "Review fields". In the office, open the case, correct the amount and confirm. The process continues.

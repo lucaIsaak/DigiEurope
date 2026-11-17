@@ -1,7 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { catalogVariants, DEFAULT_CATEGORY, isCatalogVariant } from "./catalog.js";
-import { compareSettings, diffProcesses, harmony, jaccard, type OfficeSettings } from "./compare.js";
-import { defaultProcess, referenceProcess, validateProcess } from "./process.js";
+import { compareSettings, diffInputs, diffProcesses, harmony, jaccard, type OfficeSettings } from "./compare.js";
+import { computeRequirements } from "./requirements.js";
+import { runChecks } from "./check.js";
+import { defaultRuleStates } from "./rules.js";
+import { BUILTIN_TEMPLATES, suggestTemplateFromLines } from "./templates.js";
+import { defaultInputs, defaultProcess, referenceProcess, validateProcess } from "./process.js";
 import { RULES } from "./rules.js";
 
 const settings = (over: Partial<OfficeSettings> = {}): OfficeSettings => ({
@@ -51,5 +55,55 @@ describe("comparison", () => {
   it("jaccard handles empty and repeated entries", () => {
     expect(jaccard([], [])).toBe(1);
     expect(jaccard(["a", "a"], ["a"])).toBe(0.5);
+  });
+});
+
+describe("required inputs", () => {
+  const app = (over = {}) => ({
+    stay: { type: "study" as const, country: "CA", city: "Toronto", institution: "X", startDate: "2027-04-01", endDate: "2027-10-14", tuitionFees: 0 },
+    documents: [], parents: { status: "not_requested" as const, email: "", married: null, siblingsInEducation: 0 },
+    student: { firstName: "A", lastName: "B", birthDate: "2003-01-01", email: "", university: "", course: "" }, ...over,
+  });
+  it("only requires what applies", () => {
+    const r = computeRequirements(defaultInputs(), app());
+    const by = (id: string) => r.find((x) => x.id === id)!;
+    expect(by("doc:host_confirmation").applies).toBe(true);
+    expect(by("doc:internship_contract").applies).toBe(false);
+    expect(by("doc:tuition_waiver_proof").applies).toBe(false);
+    expect(by("doc:fb08").applies).toBe(false);
+    expect(computeRequirements(defaultInputs(), app({ info: { parents_refuse: "yes" } })).find((x) => x.id === "doc:fb08")!.applies).toBe(true);
+    expect(computeRequirements(defaultInputs(), app({ stay: { ...app().stay, tuitionFees: 3000 } })).find((x) => x.id === "doc:tuition_waiver_proof")!.applies).toBe(true);
+  });
+  it("a required form that is missing blocks, and a rule finding is not reported twice", () => {
+    const report = runChecks(app(), defaultRuleStates(), new Date("2026-11-16"), undefined, { inputs: defaultInputs() });
+    expect(report.findings.filter((f) => f.documentKind === "fb06").map((f) => f.ruleId)).toEqual(["INPUT:fb06"]);
+    expect(report.findings.filter((f) => f.documentKind === "host_confirmation")).toHaveLength(1);
+    expect(report.ready).toBe(false);
+  });
+  it("optional and unmet-condition inputs never block", () => {
+    const only = defaultInputs().filter((i) => i.id === "doc:fb08" || i.id === "info:parents_refuse");
+    expect(runChecks(app(), {}, new Date("2026-11-16"), [], { inputs: only }).ready).toBe(true);
+  });
+  it("inputs that differ lower the comparison", () => {
+    expect(diffInputs({ inputs: defaultInputs() }, { inputs: defaultInputs() }).similarity).toBe(1);
+    const fewer = defaultInputs().filter((i) => i.ref !== "fb06");
+    const d = diffInputs({ inputs: fewer }, { inputs: defaultInputs() });
+    expect(d.onlyInB).toEqual(["document:fb06:required:null"]);
+    expect(d.similarity).toBeLessThan(1);
+  });
+});
+
+describe("templates", () => {
+  it("has Formblatt 6 and 8 ready with unique ids and titles", () => {
+    const ids = BUILTIN_TEMPLATES.map((t) => t.id);
+    expect(ids).toEqual(expect.arrayContaining(["fb06", "fb08"]));
+    expect(new Set(ids).size).toBe(ids.length);
+    expect(new Set(BUILTIN_TEMPLATES.map((t) => t.title)).size).toBe(ids.length);
+  });
+  it("suggests a template from the lines of a sample document", () => {
+    const s = suggestTemplateFromLines(["Studierendenwerk Musterstadt", "Formblatt 12: Beispiel", "Name: Ada", "Geburtsdatum: 2001-02-03", "Betrag: 120", "Wohnheim bestätigt: Ja", "Unterschrift Antragsteller:in: Ada (gezeichnet)", "BEISPIELDOKUMENT: fiktiv"]);
+    expect(s.title).toBe("Formblatt 12: Beispiel");
+    expect(s.fields.map((f) => `${f.key}:${f.type}`)).toEqual(["name:text", "geburtsdatum:date", "betrag:number", "wohnheim_bestaetigt:yesno"]);
+    expect(s.signatures).toHaveLength(1);
   });
 });

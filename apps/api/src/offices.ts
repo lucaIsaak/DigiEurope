@@ -1,4 +1,4 @@
-import { RULES, defaultConfig, type ConfigValue, type FlowEdge, type FlowNode, type NodeKind, type OfficeSettings, type ProcessDef } from "@digieurope/shared";
+import { RULES, defaultConfig, defaultInputs, type ProcessInput, type ConfigValue, type FlowEdge, type FlowNode, type NodeKind, type OfficeSettings, type ProcessDef } from "@digieurope/shared";
 
 export interface OfficeMetrics {
   medianDaysToDecision: number | null;
@@ -38,11 +38,15 @@ export const REFERENCE_SETTINGS: OfficeSettings = {
 
 const n = (id: string, kind: NodeKind, config: Record<string, ConfigValue> = {}): FlowNode => ({ id, kind, position: { x: 0, y: 0 }, config: defaultConfig(kind, config) });
 const e = (source: string, sourceHandle: string, target: string): FlowEdge => ({ id: `${source}:${sourceHandle}`, source, sourceHandle, target });
+const doc = (ref: string, when?: ProcessInput["when"], required = true): ProcessInput => ({ id: `doc:${ref}`, type: "document", ref, required, ...(when ? { when } : {}) });
+const known = (ref: string): ProcessInput => ({ id: `info:${ref}`, type: "info", ref, required: true });
+const study = { kind: "stay_type", value: "study" } as const;
+const intern = { kind: "stay_type", value: "internship" } as const;
 const notify = (to: string, subject: string, body: string) => ({ to, subject, body });
 
-function def(id: string, name: string, by: string, nodes: FlowNode[], edges: FlowEdge[]): ProcessDef {
+function def(id: string, name: string, by: string, nodes: FlowNode[], edges: FlowEdge[], inputs: ProcessInput[]): ProcessDef {
   // Positions are laid out by the viewer; stored positions only matter for editing.
-  return { id, catalogId: "bafoeg.abroad", name, version: 3, updatedAt: "2026-08-14T09:00:00.000Z", updatedBy: by, nodes, edges };
+  return { id, catalogId: "bafoeg.abroad", name, version: 3, updatedAt: "2026-08-14T09:00:00.000Z", updatedBy: by, inputs, nodes, edges };
 }
 
 /** Deliberately simple: no document reading, no systems, one generic mail for incomplete applications. */
@@ -56,7 +60,7 @@ function nordhafen(): ProcessDef {
   ], [
     e("start", "out", "rules"), e("rules", "incomplete", "notice"), e("notice", "out", "end-i"), e("rules", "complete", "human"),
     e("human", "approved", "ok"), e("ok", "out", "end-ok"), e("human", "rejected", "no"), e("no", "out", "end-no"), e("human", "info", "end-info"),
-  ]);
+  ], [doc("application_form"), doc("enrollment_cert"), doc("host_confirmation", study), doc("internship_contract", intern), doc("parent_form"), doc("parent_tax"), known("country"), known("startDate"), known("endDate")]);
 }
 
 /** Reads documents, but without a review step; high amounts go through a second check; two systems connected. */
@@ -75,7 +79,7 @@ function bergland(): ProcessDef {
     e("cond", "yes", "team2"), e("cond", "no", "human"), e("team2", "out", "human"),
     e("human", "approved", "case"), e("case", "out", "pay"), e("pay", "out", "ok"), e("ok", "out", "end-ok"),
     e("human", "rejected", "no"), e("no", "out", "end-no"), e("human", "info", "end-info"),
-  ]);
+  ], [doc("application_form"), doc("fb06"), doc("enrollment_cert"), doc("host_confirmation", study), doc("internship_contract", intern), doc("internship_uni_confirmation", intern), doc("health_insurance"), doc("tuition_waiver_proof", { kind: "tuition" }), doc("parent_form"), doc("parent_tax"), known("country"), known("startDate"), known("endDate"), known("tuitionFees")]);
 }
 
 /** The most complete one: AI reading, review of doubtful fields, AI mail with a reminder, four systems connected. */
@@ -94,6 +98,9 @@ function rheinau(): ProcessDef {
     e("rules", "complete", "team"), e("team", "out", "human"),
     e("human", "approved", "case"), e("case", "out", "pay"), e("pay", "out", "ok"), e("ok", "out", "portal"), e("portal", "out", "archive"), e("archive", "out", "end-ok"),
     e("human", "rejected", "no"), e("no", "out", "end-no"), e("human", "info", "end-info"),
+  ], [
+    ...defaultInputs(), known("parentEmail"),
+    { id: "info:flat_booked", type: "info", ref: "flat_booked", required: false, question: { label: { de: "Haben Sie schon eine Unterkunft gebucht?", en: "Have you already booked accommodation?" }, type: "yesno" } },
   ]);
 }
 

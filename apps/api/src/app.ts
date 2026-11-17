@@ -1,12 +1,10 @@
 import { randomBytes } from "node:crypto";
 import Fastify, { type FastifyReply } from "fastify";
 import {
-  DOCUMENT_KINDS,
   RULES,
   baselineFacts,
   describeCheck,
   estimate,
-  runChecks,
   runRuleTests,
   type Application,
   type CaseStatus,
@@ -20,7 +18,13 @@ import {
   harmony,
   isCatalogVariant,
   referenceProcess,
+  type FieldType,
+  type InputCondition,
   type ProcessDef,
+  type ProcessInput,
+  type TemplateField,
+  type TemplateProposal,
+  suggestTemplateFromLines,
   type StaffMember,
   type StayInfo,
   type StudentInfo,
@@ -28,13 +32,14 @@ import {
 } from "@digieurope/shared";
 import { resumeRun, startRun, type EngineCtx } from "./engine.js";
 import { PEER_OFFICES, REFERENCE_SETTINGS, type OfficeProcess } from "./offices.js";
-import { DEFAULT_MIN_CONFIDENCE, aiAvailable, methodsInfo, readConfigured } from "./extraction.js";
+import { DEFAULT_MIN_CONFIDENCE, aiAvailable, methodsInfo } from "./extraction.js";
 import { Store as ScratchStore } from "./store.js";
 import { askLive, liveAvailable, retrieve } from "./assistant.js";
-import { PARENT_KINDS, addDocument, checkNow, invite, newApplication, officeAct, open, removeDocument, submit, view, type OfficeAction } from "./cases.js";
-import { DOC_SPECS, extractDocument } from "./documents.js";
+import { PARENT_KINDS, addDocument, allSpecs, allTemplates, checksFor, readFor, checkNow, invite, newApplication, officeAct, open, removeDocument, submit, view, type OfficeAction } from "./cases.js";
+import { extractDocument } from "./documents.js";
+import { readPdfLines } from "./pdf.js";
 import { computeInsights } from "./metrics.js";
-import { SAMPLE_SETS, fixDocuments, getPerson, sampleDocuments, sampleLetter, type Defect } from "./samples.js";
+import { SAMPLE_SETS, fixDocuments, formblatt8, getPerson, proposalSample, sampleDocuments, sampleLetter, type Defect } from "./samples.js";
 import { deliverFromPortal, seedDemoData } from "./seed.js";
 import type { Store } from "./store.js";
 
@@ -61,7 +66,9 @@ export function buildApp(opts: AppOptions) {
   const app = Fastify({ logger: opts.logger ?? false, bodyLimit: 12 * 1024 * 1024 });
   app.decorateRequest("staff", null);
   const needsBuild = (method: string, url: string) =>
-    url.startsWith("/office/processes") || (method !== "GET" && (url.startsWith("/office/inputs") || url.startsWith("/office/config") || /^\/office\/rules\/[^/]+\/(approve|revoke)/.test(url)));
+    url.startsWith("/office/processes") || (method !== "GET" && /^\/office\/rules\/[^/]+\/(approve|revoke)/.test(url));
+  /** Setting up how documents are read: process designers and the extractor owner. */
+  const needsExtractorAccess = (method: string, url: string) => method !== "GET" && (url.startsWith("/office/inputs") || url.startsWith("/office/config") || url === "/office/extraction");
   app.addHook("onRequest", async (req, reply) => {
     const url = req.url.split("?")[0]!;
     const token = req.headers["x-staff-token"];
@@ -74,17 +81,18 @@ export function buildApp(opts: AppOptions) {
     if (req.staff.isOversight && url.startsWith("/office")) return reply.code(403).send({ error: "Oversight accounts do not work in an office." });
     if (url.startsWith("/office/staff") && !req.staff.isAdmin) return reply.code(403).send({ error: "Only administrators can do this." });
     if (needsBuild(req.method, url) && !req.staff.canBuild && !req.staff.isAdmin) return reply.code(403).send({ error: "You do not have access to the process builder." });
+    if (needsExtractorAccess(req.method, url) && !req.staff.canBuild && !req.staff.canApproveTemplates && !req.staff.isAdmin) return reply.code(403).send({ error: "You do not have access to document reading settings." });
   });
   const notFound = (reply: FastifyReply) => reply.code(404).send({ error: "Not found" });
   const bad = (reply: FastifyReply, error: string, code = 400) => reply.code(code).send({ error });
   const v = (a: Application) => view(store, a, webUrl, now());
   /** Hands a submitted application to the live process of the office. */
   const engineCtx = (from: Store = store): EngineCtx => ({
-    rules: store.ruleStates(),
     now: now(),
+    check: (a) => checksFor(store, a, now()),
     reread: async (doc, override) => {
       const f = from.readDocument(doc.id);
-      return f ? readConfigured(f.content, doc.mimeType, store.config(), override) : null;
+      return f ? readFor(store, f.content, doc.mimeType, override) : null;
     },
   });
   const liveDef = () => store.process(DEFAULT_CATEGORY)?.live ?? null;
@@ -132,7 +140,7 @@ export function buildApp(opts: AppOptions) {
     if (!EDITABLE.includes(a.status)) return bad(reply, "Application can no longer be edited.", 409);
     const r = readFile(req.body);
     if ("error" in r) return bad(reply, r.error!);
-    const read = await readConfigured(r.file!.content, r.file!.mimeType, store.config());
+    const read = await readFor(store, r.file!.content, r.file!.mimeType);
     return reply.code(201).send(v(addDocument(store, a, r.file!, "student", now(), read)));
   });
 
@@ -160,7 +168,7 @@ export function buildApp(opts: AppOptions) {
     const a = store.get(req.params.id);
     if (!a) return notFound(reply);
     if (!EDITABLE.includes(a.status)) return bad(reply, "Application was already submitted.", 409);
-    if (!runChecks(a, store.ruleStates(), now()).ready) return bad(reply, "There are still items to fix.", 409);
+    if (!checksFor(store, a, now()).ready) return bad(reply, "There are still items to fix.", 409);
     return v(await runLive(submit(store, a, now())));
   });
 
@@ -195,9 +203,9 @@ export function buildApp(opts: AppOptions) {
     if (!EDITABLE.includes(a.status) && a.status !== "submitted") return bad(reply, "The application is already being processed.", 409);
     const r = readFile(req.body);
     if ("error" in r) return bad(reply, r.error!);
-    const detected = extractDocument(r.file!.content, r.file!.mimeType).kind;
+    const detected = extractDocument(r.file!.content, r.file!.mimeType, allSpecs(store)).kind;
     if (detected !== "unknown" && !PARENT_KINDS.includes(detected)) return bad(reply, "This looks like a document for the student, not for the parents.");
-    const read = await readConfigured(r.file!.content, r.file!.mimeType, store.config());
+    const read = await readFor(store, r.file!.content, r.file!.mimeType);
     return reply.code(201).send(parentView(addDocument(store, a, r.file!, "parent", now(), read)));
   });
 
@@ -212,7 +220,7 @@ export function buildApp(opts: AppOptions) {
   app.post<{ Body: { filename?: string; mimeType?: string; dataBase64?: string } }>("/letter/read", async (req, reply) => {
     const r = readFile(req.body);
     if ("error" in r) return bad(reply, r.error!);
-    const { kind, extraction } = extractDocument(r.file!.content, r.file!.mimeType);
+    const { kind, extraction } = extractDocument(r.file!.content, r.file!.mimeType, allSpecs(store));
     if (kind !== "decision_letter" || !extraction.readable) return bad(reply, "We could not read this as a decision letter. Please upload the PDF of your last letter.", 422);
     const f = extraction.fields;
     const n = (k: string) => Number(f[k] ?? 0) || 0;
@@ -226,7 +234,7 @@ export function buildApp(opts: AppOptions) {
 
   // ---- Office -----------------------------------------------------------------
   const summary = (a: Application) => {
-    const r = runChecks(a, store.ruleStates(), now());
+    const r = checksFor(store, a, now());
     return {
       id: a.id, reference: a.reference, name: `${a.student.lastName}, ${a.student.firstName}`, country: a.stay.country, stayType: a.stay.type, status: a.status,
       source: a.source, submittedAt: a.submittedAt ?? null, updatedAt: a.updatedAt, blockers: r.blockers, warnings: r.warnings, estimateMonthly: estimate(a, now()).monthly,
@@ -258,7 +266,7 @@ export function buildApp(opts: AppOptions) {
     if (action === "request_info") {
       if (!message?.trim()) return bad(reply, "Please write what is missing.");
     } else if (action === "approve") {
-      if (!runChecks(a, store.ruleStates(), now()).ready) return bad(reply, "There are open blocking items. Request information first.", 409);
+      if (!checksFor(store, a, now()).ready) return bad(reply, "There are open blocking items. Request information first.", 409);
       if (typeof amount !== "number" || amount < 0 || amount > 5000) return bad(reply, "Please enter the monthly amount.");
     } else if (action === "reject") {
       if (!message?.trim()) return bad(reply, "Please give a reason.");
@@ -297,7 +305,7 @@ export function buildApp(opts: AppOptions) {
     return { ok: true };
   });
 
-  app.get("/office/config", async () => ({ config: store.config(), documentTypes: DOC_SPECS.map((s) => ({ kind: s.kind, title: s.title, fields: s.fields.map(([key, label]) => ({ key, label })), signatures: s.sigs.map(([key, label]) => ({ key, label })) })) }));
+  app.get("/office/config", async () => ({ config: store.config(), documentTypes: allSpecs(store).map((s) => ({ kind: s.kind, title: s.title, fields: s.fields.map(([key, label]) => ({ key, label })), signatures: s.sigs.map(([key, label]) => ({ key, label })) })) }));
 
   app.put<{ Body: { slaDays?: number; languages?: Lang[] } }>("/office/config", async (req) => {
     const c = store.config();
@@ -308,13 +316,13 @@ export function buildApp(opts: AppOptions) {
   app.post<{ Body: { filename?: string; mimeType?: string; dataBase64?: string } }>("/office/inputs/extract", async (req, reply) => {
     const r = readFile(req.body);
     if ("error" in r) return bad(reply, r.error!);
-    const { kind, extraction } = extractDocument(r.file!.content, r.file!.mimeType);
+    const { kind, extraction } = extractDocument(r.file!.content, r.file!.mimeType, allSpecs(store));
     return { kind, extraction };
   });
 
   app.post<{ Body: { kind?: DocumentKind; fields?: string[] } }>("/office/inputs/confirm", async (req, reply) => {
     const { kind, fields } = req.body ?? {};
-    if (!kind || !DOCUMENT_KINDS.includes(kind) || !Array.isArray(fields)) return bad(reply, "Missing document type or fields.");
+    if (!kind || !allSpecs(store).some((x) => x.kind === kind) || !Array.isArray(fields)) return bad(reply, "Missing document type or fields.");
     const c = store.config();
     store.setConfig({ ...c, expectedInputs: { ...c.expectedInputs, [kind]: { fields, confirmedAt: now().toISOString() } } });
     return store.config();
@@ -334,7 +342,7 @@ export function buildApp(opts: AppOptions) {
     if (!method || !methodsInfo().some((m) => m.id === method)) return bad(reply, "Unknown method.");
     const c = store.config();
     if (kind === "default") store.setConfig({ ...c, defaultMethod: method });
-    else if (kind && DOCUMENT_KINDS.includes(kind)) {
+    else if (kind && allSpecs(store).some((x) => x.kind === kind)) {
       const min = Math.min(1, Math.max(0.3, Number(minConfidence) || DEFAULT_MIN_CONFIDENCE));
       store.setConfig({ ...c, extraction: { ...c.extraction, [kind]: { method, minConfidence: min } } });
     } else return bad(reply, "Unknown document type.");
@@ -364,6 +372,129 @@ export function buildApp(opts: AppOptions) {
     return v(store.put(next));
   });
 
+
+  // ---- Required information (custom questions of the live process) --------------------
+  app.put<{ Params: { id: string }; Body: { key?: string; value?: string } }>("/applications/:id/info", async (req, reply) => {
+    const a = store.get(req.params.id);
+    if (!a) return notFound(reply);
+    if (!EDITABLE.includes(a.status)) return bad(reply, "Application can no longer be edited.", 409);
+    const live = store.process(DEFAULT_CATEGORY)?.live;
+    const q = live?.inputs.find((i) => i.type === "info" && i.question && i.ref === req.body?.key);
+    if (!q) return bad(reply, "Unknown question.");
+    const value = String(req.body?.value ?? "").slice(0, 300);
+    if (q.question!.type === "yesno" && value !== "" && value !== "yes" && value !== "no") return bad(reply, "Please answer yes or no.");
+    return v(store.put({ ...a, info: { ...(a.info ?? {}), [q.ref]: value }, updatedAt: now().toISOString() }));
+  });
+
+  // ---- Templates and proposals --------------------------------------------------------
+  const canApprove = (s: { isAdmin: boolean; canApproveTemplates?: boolean } | null) => Boolean(s && (s.isAdmin || s.canApproveTemplates));
+  const canPropose = (s: { isAdmin: boolean; canBuild: boolean } | null) => Boolean(s && (s.isAdmin || s.canBuild));
+  const slug = (x: string) => x.toLowerCase().replace(/ä/g, "ae").replace(/ö/g, "oe").replace(/ü/g, "ue").replace(/ß/g, "ss").replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 40);
+
+  app.get("/office/templates", async (req, reply) => {
+    if (!canApprove(req.staff) && !canPropose(req.staff)) return bad(reply, "You do not have access to templates.", 403);
+    const cfg = store.config();
+    return {
+      templates: allTemplates(store).map((t) => ({ ...t, extraction: cfg.extraction[t.id] ?? { method: cfg.defaultMethod, minConfidence: DEFAULT_MIN_CONFIDENCE } })),
+      proposals: [...store.proposals()].sort((a, b) => b.proposedAt.localeCompare(a.proposedAt)),
+      canApprove: canApprove(req.staff),
+      canPropose: canPropose(req.staff),
+    };
+  });
+
+  const cleanFields = (xs: unknown): TemplateField[] | null => {
+    if (!Array.isArray(xs) || xs.length === 0 || xs.length > 40) return null;
+    const seen = new Set<string>();
+    const out: TemplateField[] = [];
+    for (const x of xs as TemplateField[]) {
+      const key = String(x.key ?? "").trim();
+      const label = String(x.label ?? "").trim().slice(0, 120);
+      if (!/^[a-z0-9_]{1,40}$/.test(key) || !label || seen.has(key)) return null;
+      seen.add(key);
+      out.push({ key, label, type: FIELD_TYPES.includes(x.type) ? x.type : "text", required: x.required !== false });
+    }
+    return out;
+  };
+
+  const proposalFromBody = (body: Record<string, unknown>, base: Partial<TemplateProposal>): TemplateProposal | string => {
+    const name = String(body.name ?? "").trim().slice(0, 120);
+    const title = String(body.title ?? "").trim().slice(0, 200);
+    const fields = cleanFields(body.fields);
+    if (!name) return "Please give the template a name.";
+    if (!title) return "Please enter the title as printed on the document. The reader recognises the form by it.";
+    if (!fields) return "Please list the fields (unique keys, a label each).";
+    const clash = allTemplates(store).some((t) => t.title === title) || store.proposals().some((p) => p.id !== base.id && p.title === title && (p.status === "submitted" || p.status === "accepted"));
+    if (clash) return "A template or a pending proposal with this title already exists.";
+    const providedBy = ["student", "parents", "office", "third_party"].includes(String(body.providedBy)) ? (body.providedBy as TemplateProposal["providedBy"]) : "student";
+    const signatures = Array.isArray(body.signatures) ? (body.signatures as { key: string; label: string }[]).slice(0, 8).filter((x) => /^[a-z0-9_]{1,40}$/.test(String(x.key)) && String(x.label ?? "").trim()).map((x) => ({ key: String(x.key), label: String(x.label).trim().slice(0, 120) })) : [];
+    return {
+      id: base.id ?? randomBytes(8).toString("hex"),
+      status: base.status ?? "draft",
+      proposedBy: base.proposedBy ?? "",
+      proposedAt: base.proposedAt ?? now().toISOString(),
+      formblatt: body.formblatt ? String(body.formblatt).trim().slice(0, 40) : undefined,
+      name, title, purpose: String(body.purpose ?? "").trim().slice(0, 400), providedBy, fields, signatures,
+      sampleFilename: body.sampleFilename ? String(body.sampleFilename).slice(0, 120) : undefined,
+    };
+  };
+
+  /** Suggests fields from a sample document. A heuristic stand-in for an AI suggestion: it reads "label: value" lines. */
+  app.post<{ Body: { filename?: string; mimeType?: string; dataBase64?: string } }>("/office/templates/proposals/suggest", async (req, reply) => {
+    if (!canPropose(req.staff)) return bad(reply, "Only process designers can propose templates.", 403);
+    const r = readFile(req.body);
+    if ("error" in r) return bad(reply, r.error!);
+    if (r.file!.mimeType !== "application/pdf") return bad(reply, "Please upload a PDF.", 422);
+    const s = suggestTemplateFromLines(readPdfLines(r.file!.content));
+    if (!s.title || s.fields.length === 0) return bad(reply, "We could not find fields in this document. You can enter them by hand.", 422);
+    return { ...s, sampleFilename: r.file!.filename };
+  });
+
+  app.post<{ Body: Record<string, unknown> & { submit?: boolean } }>("/office/templates/proposals", async (req, reply) => {
+    if (!canPropose(req.staff)) return bad(reply, "Only process designers can propose templates.", 403);
+    const p = proposalFromBody(req.body ?? {}, { proposedBy: req.staff!.name, status: req.body?.submit ? "submitted" : "draft" });
+    if (typeof p === "string") return bad(reply, p);
+    store.putProposal(p);
+    return reply.code(201).send(p);
+  });
+
+  app.put<{ Params: { id: string }; Body: Record<string, unknown> & { submit?: boolean } }>("/office/templates/proposals/:id", async (req, reply) => {
+    const old = store.proposals().find((x) => x.id === req.params.id);
+    if (!old) return notFound(reply);
+    if (old.proposedBy !== req.staff!.name || !(old.status === "draft" || old.status === "rejected")) return bad(reply, "Only the author can change a draft or a rejected proposal.", 409);
+    const p = proposalFromBody(req.body ?? {}, { ...old, status: req.body?.submit ? "submitted" : "draft", decidedBy: undefined, decidedAt: undefined, decisionNote: undefined });
+    if (typeof p === "string") return bad(reply, p);
+    store.putProposal(p);
+    return p;
+  });
+
+  app.post<{ Params: { id: string }; Body: { method?: ExtractionMethod; minConfidence?: number } }>("/office/templates/proposals/:id/accept", async (req, reply) => {
+    if (!canApprove(req.staff)) return bad(reply, "Only the extractor owner can accept proposals.", 403);
+    const p = store.proposals().find((x) => x.id === req.params.id);
+    if (!p) return notFound(reply);
+    if (p.status !== "submitted") return bad(reply, "Only submitted proposals can be accepted.", 409);
+    const method = req.body?.method;
+    if (!method || !methodsInfo().some((m) => m.id === method)) return bad(reply, "Please choose how this template is extracted.");
+    let id = `tpl-${slug(p.name) || "form"}`;
+    for (let n = 2; allTemplates(store).some((t) => t.id === id); n++) id = `tpl-${slug(p.name)}-${n}`;
+    store.addTemplate({ id, formblatt: p.formblatt, name: { de: p.name, en: p.name }, title: p.title, purpose: { de: p.purpose, en: p.purpose }, providedBy: p.providedBy, fields: p.fields, signatures: p.signatures, source: "accepted" });
+    const c = store.config();
+    store.setConfig({ ...c, extraction: { ...c.extraction, [id]: { method, minConfidence: Math.min(1, Math.max(0.3, Number(req.body?.minConfidence) || DEFAULT_MIN_CONFIDENCE)) } } });
+    const done: TemplateProposal = { ...p, status: "accepted", decidedBy: req.staff!.name, decidedAt: now().toISOString(), templateId: id };
+    store.putProposal(done);
+    return done;
+  });
+
+  app.post<{ Params: { id: string }; Body: { comment?: string } }>("/office/templates/proposals/:id/reject", async (req, reply) => {
+    if (!canApprove(req.staff)) return bad(reply, "Only the extractor owner can reject proposals.", 403);
+    const p = store.proposals().find((x) => x.id === req.params.id);
+    if (!p) return notFound(reply);
+    if (p.status !== "submitted") return bad(reply, "Only submitted proposals can be rejected.", 409);
+    if (!req.body?.comment?.trim()) return bad(reply, "Please say what should change.");
+    const done: TemplateProposal = { ...p, status: "rejected", decidedBy: req.staff!.name, decidedAt: now().toISOString(), decisionNote: req.body.comment.trim().slice(0, 400) };
+    store.putProposal(done);
+    return done;
+  });
+
   // ---- Sample documents (for the demo) ------------------------------------
   const sampleFiles = (setId: string) => {
     const set = SAMPLE_SETS.find((s) => s.id === setId);
@@ -376,14 +507,18 @@ export function buildApp(opts: AppOptions) {
     sets: SAMPLE_SETS.map((s) => {
       const f = sampleFiles(s.id)!;
       const item = (d: { kind: string; filename: string }) => ({ name: d.filename, audience: PARENT_KINDS.includes(d.kind as DocumentKind) ? "parents" : "student" });
-      return { id: s.id, title: s.title, note: s.note, docs: f.docs.map(item), fixes: f.fixes.map(item) };
+      const extras = s.id === "mira" ? [{ name: formblatt8(getPerson("mira", now())).filename, audience: "student" }] : [];
+      return { id: s.id, title: s.title, note: s.note, docs: f.docs.map(item), fixes: f.fixes.map(item), extras };
     }),
     letter: sampleLetter(getPerson("noah", now())).filename,
+    proposal: proposalSample().filename,
   }));
 
   app.get<{ Params: { set: string; folder: string; name: string } }>("/samples/files/:set/:folder/:name", async (req, reply) => {
     let file: { filename: string; content: Buffer } | undefined;
     if (req.params.set === "letter") file = sampleLetter(getPerson("noah", now()));
+    else if (req.params.set === "proposal") file = proposalSample();
+    else if (req.params.folder === "extras") file = formblatt8(getPerson("mira", now()));
     else {
       const f = sampleFiles(req.params.set);
       file = (req.params.folder === "fixes" ? f?.fixes : f?.docs)?.find((d) => d.filename === req.params.name);
@@ -409,16 +544,42 @@ export function buildApp(opts: AppOptions) {
     return { ok: true };
   });
   app.get("/office/staff", async () => store.staff());
-  app.put<{ Params: { id: string }; Body: { canBuild?: boolean } }>("/office/staff/:id", async (req, reply) => {
+  app.put<{ Params: { id: string }; Body: { canBuild?: boolean; canApproveTemplates?: boolean } }>("/office/staff/:id", async (req, reply) => {
     const m = store.staff().find((x) => x.id === req.params.id);
     if (!m) return notFound(reply);
     if (m.isAdmin) return bad(reply, "Administrators always have access.", 409);
-    store.setStaff(m.id, { canBuild: Boolean(req.body?.canBuild) });
+    store.setStaff(m.id, {
+      ...(req.body?.canBuild !== undefined ? { canBuild: Boolean(req.body.canBuild) } : {}),
+      ...(req.body?.canApproveTemplates !== undefined ? { canApproveTemplates: Boolean(req.body.canApproveTemplates) } : {}),
+    });
     return store.staff();
   });
 
   // ---- Process builder ------------------------------------------------------------
   /** Every process belongs to one entry of the central process catalogue. */
+  const FIELD_TYPES: FieldType[] = ["text", "number", "date", "yesno"];
+  const cleanCondition = (w: unknown): InputCondition | undefined => {
+    const c = w as { kind?: string; value?: string; key?: string; equals?: string } | undefined;
+    if (c?.kind === "stay_type" && (c.value === "study" || c.value === "internship")) return { kind: "stay_type", value: c.value };
+    if (c?.kind === "tuition") return { kind: "tuition" };
+    if (c?.kind === "info" && c.key && typeof c.equals === "string") return { kind: "info", key: String(c.key).slice(0, 60), equals: c.equals.slice(0, 60) };
+    return undefined;
+  };
+  const cleanInputs = (xs: unknown): ProcessInput[] =>
+    Array.isArray(xs)
+      ? (xs as ProcessInput[]).slice(0, 60).map((i) => {
+          const when = cleanCondition(i.when);
+          const q = i.question;
+          return {
+            id: String(i.id).slice(0, 80),
+            type: i.type === "info" ? "info" : "document",
+            ref: String(i.ref).slice(0, 80),
+            required: Boolean(i.required),
+            ...(when ? { when } : {}),
+            ...(q ? { question: { label: { de: String(q.label?.de ?? "").slice(0, 200), en: String(q.label?.en ?? "").slice(0, 200) }, type: FIELD_TYPES.includes(q.type) ? q.type : "text", ...(q.help ? { help: { de: String(q.help.de ?? "").slice(0, 300), en: String(q.help.en ?? "").slice(0, 300) } } : {}) } } : {}),
+          };
+        })
+      : [];
   const cleanDef = (def: ProcessDef | undefined, by: string, version: number): ProcessDef | null => {
     if (!def || !Array.isArray(def.nodes) || !Array.isArray(def.edges) || def.nodes.length > 80 || def.edges.length > 200) return null;
     if (!isCatalogVariant(def.catalogId)) return null;
@@ -429,9 +590,16 @@ export function buildApp(opts: AppOptions) {
       version,
       updatedAt: now().toISOString(),
       updatedBy: by,
+      inputs: cleanInputs(def.inputs),
       nodes: def.nodes.map((n) => ({ id: String(n.id), kind: n.kind, position: { x: Number(n.position?.x) || 0, y: Number(n.position?.y) || 0 }, config: n.config ?? {} })),
       edges: def.edges.map((e) => ({ id: String(e.id), source: String(e.source), sourceHandle: String(e.sourceHandle), target: String(e.target) })),
     };
+  };
+  /** Process validation plus a check that every required form is a template the office knows. */
+  const inputIssues = (def: ProcessDef) => {
+    const known = new Set(allTemplates(store).map((t) => t.id));
+    const extra = def.inputs.filter((i) => i.type === "document" && !known.has(i.ref)).map((i) => ({ message: { de: `Die Vorlage „${i.ref}“ ist unbekannt.`, en: `The template “${i.ref}” is unknown.` } }));
+    return [...validateProcess(def), ...extra];
   };
   const nextVersion = (category: string) => (store.process(category)?.live?.version ?? 0) + 1;
 
@@ -452,7 +620,7 @@ export function buildApp(opts: AppOptions) {
     if (!catalogId || !isCatalogVariant(catalogId)) return bad(reply, "Please choose a category from the process catalogue.");
     if (store.process(catalogId)) return bad(reply, "This office already has a process in this category.", 409);
     const title = catalogVariant(catalogId)!.path.at(-1)!.de;
-    const draft: ProcessDef = { id: catalogId, catalogId, name: (name ?? "").trim().slice(0, 120) || title, version: 1, updatedAt: now().toISOString(), updatedBy: req.staff!.name, nodes: [{ id: "start", kind: "trigger", position: { x: 0, y: 0 }, config: { source: "any" } }], edges: [] };
+    const draft: ProcessDef = { id: catalogId, catalogId, name: (name ?? "").trim().slice(0, 120) || title, version: 1, updatedAt: now().toISOString(), updatedBy: req.staff!.name, inputs: [], nodes: [{ id: "start", kind: "trigger", position: { x: 0, y: 0 }, config: { source: "any" } }], edges: [] };
     store.setProcess(catalogId, { live: null, draft, history: [] });
     return reply.code(201).send(draft);
   });
@@ -469,7 +637,7 @@ export function buildApp(opts: AppOptions) {
 
   app.post<{ Body: { def?: ProcessDef } }>("/office/processes/validate", async (req, reply) => {
     const def = cleanDef(req.body?.def, req.staff!.name, 0);
-    return def ? { issues: validateProcess(def) } : bad(reply, "Invalid process.");
+    return def ? { issues: inputIssues(def) } : bad(reply, "Invalid process.");
   });
 
   app.post<{ Body: { def?: ProcessDef } }>("/office/processes/publish", async (req, reply) => {
@@ -478,7 +646,7 @@ export function buildApp(opts: AppOptions) {
     if (!p) return notFound(reply);
     const def = cleanDef(req.body?.def, req.staff!.name, nextVersion(cat));
     if (!def) return bad(reply, "Invalid process.");
-    const issues = validateProcess(def);
+    const issues = inputIssues(def);
     if (issues.length) return reply.code(422).send({ error: "The process has open issues.", issues });
     store.setProcess(cat, { live: def, draft: undefined, history: p.live ? [...p.history, p.live] : p.history });
     return def;
@@ -497,7 +665,7 @@ export function buildApp(opts: AppOptions) {
   app.post<{ Body: { def?: ProcessDef; sample?: string; decision?: "approved" | "rejected" | "info" | "confirmed" } }>("/office/processes/test", async (req, reply) => {
     const def = cleanDef(req.body?.def, req.staff!.name, 0);
     if (!def) return bad(reply, "Invalid process.");
-    const issues = validateProcess(def);
+    const issues = inputIssues(def);
     if (issues.length) return reply.code(422).send({ error: "The process has open issues.", issues });
     const samples: Record<string, { person: string; defects: Defect[]; source: "web" | "portal" }> = {
       unclear: { person: "paul", defects: ["unclear_income"], source: "portal" },

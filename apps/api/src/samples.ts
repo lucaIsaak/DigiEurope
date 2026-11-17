@@ -1,5 +1,6 @@
 import { addDays, isoDate, monthlyNeed, netMonthlyFromTax, parentContribution, type DocumentKind, type StayInfo, type StudentInfo } from "@digieurope/shared";
 import { renderDocument } from "./documents.js";
+import { buildPdf, type PdfLine } from "./pdf.js";
 
 export type Defect =
   | "parent_unsigned"
@@ -81,7 +82,7 @@ export function getPerson(key: string, now: Date = new Date()): SamplePerson {
 }
 
 export interface GeneratedDoc {
-  kind: Exclude<DocumentKind, "unknown">;
+  kind: DocumentKind;
   filename: string;
   content: Buffer;
 }
@@ -97,6 +98,10 @@ export function sampleDocuments(p: SamplePerson, defects: Defect[] = []): Genera
     out.push({ kind, filename, content: renderDocument(kind, values, signed) });
   const intern = p.stay.type === "internship";
   const incomeYear = Number(p.stay.startDate.slice(0, 4)) - 2;
+  add("fb06", "Formblatt6_Ausland.pdf", {
+    name, stay_type: intern ? "Praktikum" : "Studium", abroad_institution: p.stay.institution, country: p.stay.country,
+    period_from: p.stay.startDate, period_to: p.stay.endDate, credit_recognition: "Ja", tuition_fees: p.stay.tuitionFees,
+  }, { student: !d("form_unsigned") });
 
   add("application_form", "Antrag_Formblatt1.pdf", {
     name, birth_date: p.student.birthDate, university: p.student.university, destination: `${p.stay.city}, ${p.stay.country}`,
@@ -164,3 +169,32 @@ export const SAMPLE_SETS = [
   { id: "paul", person: "paul", defects: ["unclear_income"] as Defect[], title: { de: "Paul Neumann: Praktikum in Rotterdam", en: "Paul Neumann: internship in Rotterdam" }, note: { de: "Typischer Fehler: Einkommensbetrag im Steuerbescheid unleserlich (Scan). Das Lesen ist unsicher und geht zur Prüfung durch eine Person.", en: "Typical mistake: the income amount on the tax notice is smudged (scan). Reading is doubtful and goes to a person for review." } },
   { id: "lea", person: "lea", defects: [] as Defect[], title: { de: "Lea Martin: Semester in Madrid", en: "Lea Martin: semester in Madrid" }, note: { de: "Vollständig und korrekt.", en: "Complete and correct." } },
 ];
+
+/** Formblatt 8, only needed when the parents do not pay the maintenance that is counted. */
+export function formblatt8(p: SamplePerson): GeneratedDoc {
+  const name = `${p.student.firstName} ${p.student.lastName}`;
+  return {
+    kind: "fb08",
+    filename: "Formblatt8_Vorausleistung.pdf",
+    content: renderDocument("fb08", { name, parent_name: p.parents.name, reason: "Unterhalt wird nicht gezahlt", refused_since: "2026-09-01", parents_asked: "Ja" }, { student: true }),
+  };
+}
+
+/** A form the office does not know yet. Used to try the "propose a template" flow. */
+export const PROPOSAL_SAMPLE_TITLE = "Formblatt 7: Antrag auf Aktualisierung (§ 24 Abs. 3 BAföG)";
+export function proposalSample(): GeneratedDoc {
+  const lines: PdfLine[] = [
+    { text: "Studierendenwerk Musterstadt", size: 10 },
+    { text: PROPOSAL_SAMPLE_TITLE, size: 16, bold: true, gap: 10 },
+    { text: "Name der antragstellenden Person: Mira Sommer", gap: 4 },
+    { text: "Name des Elternteils: Katrin Sommer", gap: 4 },
+    { text: "Einkommensjahr laut Bescheid: 2025", gap: 4 },
+    { text: "Einkommen laut Bescheid (EUR): 78000", gap: 4 },
+    { text: "Voraussichtliches Einkommen im Bewilligungszeitraum (EUR): 52000", gap: 4 },
+    { text: "Grund der Minderung: Elternteil arbeitet in Teilzeit", gap: 4 },
+    { text: "Nachweise liegen bei: Ja", gap: 4 },
+    { text: "Unterschrift Antragsteller:in: Mira Sommer (gezeichnet)", gap: 22, rule: true },
+    { text: "BEISPIELDOKUMENT: fiktive Behörde und erfundene Daten. Kein echtes Dokument.", size: 8, gap: 60 },
+  ];
+  return { kind: "unknown", filename: "Beispiel_Formblatt7_fuer_Vorlagenvorschlag.pdf", content: buildPdf(lines) };
+}

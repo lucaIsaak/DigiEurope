@@ -2,6 +2,9 @@
 
 import {
   DOCUMENT_KINDS,
+  describeCondition,
+  knownInfoLabel,
+  type ProcessInput,
   RULES,
   compareSettings,
   diffProcesses,
@@ -19,7 +22,7 @@ import { api, type CompareResult } from "@/lib/api";
 import { useI18n } from "@/lib/i18n";
 import type { MessageKey } from "@/lib/messages";
 
-type Tab = "overview" | "structure" | "settings" | "metrics";
+type Tab = "overview" | "structure" | "inputs" | "settings" | "metrics";
 
 interface Column {
   id: string;
@@ -76,7 +79,7 @@ export default function Compare({ params }: { params: Promise<{ category: string
   };
   const title = data.variant ? data.variant.path.map((x) => bi(x)).join(" › ") : data.category;
 
-  const tabs: [Tab, MessageKey][] = [["overview", "cmp.tab.overview"], ["structure", "cmp.tab.structure"], ["settings", "cmp.tab.settings"], ["metrics", "cmp.tab.metrics"]];
+  const tabs: [Tab, MessageKey][] = [["overview", "cmp.tab.overview"], ["structure", "cmp.tab.structure"], ["inputs", "cmp.tab.inputs"], ["settings", "cmp.tab.settings"], ["metrics", "cmp.tab.metrics"]];
 
   // ---- settings matrix ----
   const ruleRows = RULES.filter((r) => columns.some((c) => c.settings.approvedRules.includes(r.id)) || true);
@@ -101,7 +104,7 @@ export default function Compare({ params }: { params: Promise<{ category: string
           <h1 style={{ margin: 0 }}>{title}</h1>
           <span className="pill pill-muted">{t("cmp.demo")}</span>
         </div>
-        <p className="muted small" style={{ marginTop: "0.4rem" }}>{ref ? t("cmp.referenceNote") : t("cmp.noRef")}</p>
+        <p className="muted small" style={{ marginTop: "0.4rem" }}>{ref ? `${t("cmp.referenceNote")} ${t("cmp.harmonyBreakdown")}` : t("cmp.noRef")}</p>
       </div>
 
       <div className="tabs" role="tablist">
@@ -113,7 +116,7 @@ export default function Compare({ params }: { params: Promise<{ category: string
           <table className="data">
             <thead>
               <tr>
-                <th>{t("cmp.office")}</th><th>{t("cmp.harmony")}</th><th>{t("cmp.structure")}</th><th>{t("cmp.settings")}</th>
+                <th>{t("cmp.office")}</th><th>{t("cmp.harmony")}</th><th>{t("cmp.structure")}</th><th>{t("cmp.settings")}</th><th>{t("cmp.inputs")}</th>
                 <th>{t("cmp.steps")}</th><th>{t("cmp.systems")}</th><th>{t("cmp.metric.days")}</th><th>{t("cmp.metric.complete")}</th>
               </tr>
             </thead>
@@ -121,7 +124,7 @@ export default function Compare({ params }: { params: Promise<{ category: string
               {ref && (
                 <tr style={{ background: "var(--bg)" }}>
                   <td><strong>{t("cmp.reference")}</strong><br /><small className="muted">v{ref.def.version}</small></td>
-                  <td>–</td><td>–</td><td>–</td>
+                  <td>–</td><td>–</td><td>–</td><td>{ref.def.inputs?.length ?? 0}</td>
                   <td>{ref.def.nodes.filter((n) => n.kind !== "end").length}</td><td>{systemsOf(ref.def).length}</td><td>–</td><td>–</td>
                 </tr>
               )}
@@ -131,6 +134,7 @@ export default function Compare({ params }: { params: Promise<{ category: string
                   <td>{o.harmony ? <Score value={o.harmony.total} /> : "–"}</td>
                   <td>{o.harmony ? `${o.harmony.structure} %` : "–"}</td>
                   <td>{o.harmony ? `${o.harmony.settings} %` : "–"}</td>
+                  <td>{o.harmony ? `${o.harmony.inputs} %` : "–"}</td>
                   <td>{o.def.nodes.filter((n) => n.kind !== "end").length}</td>
                   <td>{systemsOf(o.def).length}</td>
                   <td>{o.metrics.medianDaysToDecision ?? "–"}</td>
@@ -170,6 +174,40 @@ export default function Compare({ params }: { params: Promise<{ category: string
           </div>
         </div>
       )}
+
+      {tab === "inputs" && (() => {
+        const keyOf = (i: ProcessInput) => `${i.type}:${i.ref}`;
+        const rows: { key: string; label: string; type: ProcessInput["type"] }[] = [];
+        for (const c of columns) for (const i of c.def.inputs ?? []) if (!rows.some((r) => r.key === keyOf(i))) {
+          const label = i.type === "document" ? tk(`doc.${i.ref}`) : bi(knownInfoLabel(i.ref) ?? i.question?.label ?? { de: i.ref, en: i.ref });
+          rows.push({ key: keyOf(i), label, type: i.type });
+        }
+        const text = (i: ProcessInput | undefined) => (i ? `${i.required ? t("cmp.req") : t("cmp.opt")} · ${bi(describeCondition(i.when))}` : "–");
+        const find = (c: Column, key: string) => (c.def.inputs ?? []).find((i) => keyOf(i) === key);
+        return (
+          <div className="stack">
+            <p className="small muted" style={{ margin: 0 }}>{t("cmp.inputsHint")} {t("cmp.harmonyBreakdown")}</p>
+            <div className="table-wrap" style={{ overflowX: "auto" }}>
+              <table className="matrix">
+                <thead><tr><th style={{ minWidth: 260 }} />{columns.map((c) => <th key={c.id}>{c.name}</th>)}</tr></thead>
+                <tbody>
+                  {(["document", "info"] as const).map((type) => (
+                    <>
+                      <tr className="group" key={`g-${type}`}><td colSpan={columns.length + 1}>{t(type === "document" ? "inputs.document" : "inputs.info")}</td></tr>
+                      {rows.filter((r) => r.type === type).map((r) => (
+                        <tr key={r.key}>
+                          <td>{r.label}</td>
+                          {columns.map((c) => cell(text(find(c, r.key)), ref ? text(find(ref, r.key)) : undefined, c))}
+                        </tr>
+                      ))}
+                    </>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        );
+      })()}
 
       {tab === "settings" && (
         <div className="stack">

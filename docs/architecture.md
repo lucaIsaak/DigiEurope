@@ -33,13 +33,21 @@ Connectors: `CONNECTORS` in the shared package lists systems and actions. The en
 
 `packages/shared/src/catalog.ts` holds the central catalogue (three levels). Every `ProcessDef` carries a `catalogId` of a variant, and an office has one process per category (`Store.processes` is keyed by category; only `bafoeg.abroad` is run by the engine, other categories can be drawn and compared).
 
-`compare.ts` makes processes comparable without caring about local wording: `stepSignature` reduces a step to its kind plus the settings that change its meaning (connector system and action, condition field, reading method, notification recipient). Team names, texts and subjects are ignored. `diffProcesses` compares the multisets of step signatures and of connections (step, output, next step) with a Jaccard measure and reports what exists only on one side; `compareSettings` compares approved rules, the reading method per document type, connected systems, reply target and languages; `harmony` combines them (60 % process, 40 % settings and systems) against a reference model (`referenceProcess`, `REFERENCE_SETTINGS`).
+`compare.ts` makes processes comparable without caring about local wording: `stepSignature` reduces a step to its kind plus the settings that change its meaning (connector system and action, condition field, reading method, notification recipient). Team names, texts and subjects are ignored. `diffProcesses` compares the multisets of step signatures and of connections (step, output, next step) with a Jaccard measure and reports what exists only on one side; `compareSettings` compares approved rules, the reading method per document type, connected systems, reply target and languages; `harmony` combines them (50 % process, 25 % settings and systems, 25 % required inputs) against a reference model (`referenceProcess`, `REFERENCE_SETTINGS`).
 
 The oversight area (`/oversight*`) is limited to accounts flagged `isOversight`, which in turn cannot open any office area. Own-office data is computed live; the other offices are seeded in `apps/api/src/offices.ts` with their own processes, settings and metrics, labelled demo data. Harmonisation is comparison only: there is no "adopt" action yet. The reference model is fixed in code and cannot be edited in the UI.
 
 ## Staff access
 
 Staff sessions are kept in the store. Every `/office/*` route needs a session, the process builder and the mutating rule and setup routes need builder access, and `/office/staff*` needs an administrator (`onRequest` hook in `app.ts`). The menu hides what a user cannot use, but the API is what enforces it.
+
+## Templates, proposals and required inputs
+
+`packages/shared/src/templates.ts` lists the built-in `DocumentTemplate`s: title as printed (the reader recognises a form by it), fields with types, signatures, who provides it, and a purpose. The reader (`documents.ts`) is data-driven: it reads built-in templates plus the templates accepted from proposals, so a new form needs no code. How a template is read (method, confidence) is configured separately (`OfficeConfig.extraction`), by the extractor owner.
+
+A process designer files a `TemplateProposal` (draft, submitted). A sample PDF can be attached: `suggestTemplateFromLines` reads "label: value" lines and proposes the fields, types and signatures (a heuristic stand-in for an AI suggestion). A staff member with `canApproveTemplates` (granted by an administrator; administrators can always) accepts it, choosing the reading method and confidence, which creates the template and makes the reader recognise it, or rejects it with a comment. The author can then change and resubmit.
+
+Every `ProcessDef` has `inputs`: documents (template ids) and information (known application fields or custom questions), each required or optional, with an optional condition (study, internship, tuition fees, or a yes answer to a custom question). `computeRequirements` evaluates them for an application, and `runChecks` reports a missing required input as a blocker (unless a rule already reports that document). Custom answers are stored on the application (`info`). The student's checklist, the readiness check and the oversight comparison all use the same inputs. Harmony is 50 % process, 25 % settings and systems, 25 % required inputs.
 
 ## Reading documents
 

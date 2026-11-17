@@ -1,4 +1,4 @@
-import { CONNECTORS, NODE_CATALOG, type FlowNode, type ProcessDef } from "./process.js";
+import { CONNECTORS, NODE_CATALOG, type FlowNode, type ProcessDef, type ProcessInput } from "./process.js";
 import { DOCUMENT_KINDS, type Bilingual, type DocumentKind, type ExtractionMethod, type Lang } from "./types.js";
 
 /** Office-level settings that influence how a process behaves. Compared next to the process itself. */
@@ -145,12 +145,33 @@ export interface Harmony {
   /** All 0 to 100. */
   structure: number;
   settings: number;
+  inputs: number;
   total: number;
 }
 
 /** How close an office is to the reference: 60 % structure of the process, 40 % settings. */
+/** A required input as a comparable string: what it is, whether it is required, and when it applies. */
+export function inputSignature(i: ProcessInput): string {
+  return `${i.type}:${i.ref}:${i.required ? "required" : "optional"}:${JSON.stringify(i.when ?? null)}`;
+}
+
+export interface InputsDiff {
+  onlyInA: string[];
+  onlyInB: string[];
+  /** 0 to 1. */
+  similarity: number;
+}
+
+export function diffInputs(a: { inputs?: ProcessInput[] }, b: { inputs?: ProcessInput[] }): InputsDiff {
+  const sa = (a.inputs ?? []).map(inputSignature);
+  const sb = (b.inputs ?? []).map(inputSignature);
+  return { onlyInA: onlyIn(sa, sb), onlyInB: onlyIn(sb, sa), similarity: jaccard(sa, sb) };
+}
+
+/** How close an office is to the reference: 50 % structure of the process, 25 % settings and systems, 25 % required inputs. */
 export function harmony(office: { def: ProcessDef; settings: OfficeSettings }, reference: { def: ProcessDef; settings: OfficeSettings }): Harmony {
   const structure = diffProcesses(office.def, reference.def).structure;
   const settings = compareSettings(office, reference).score;
-  return { structure: Math.round(structure * 100), settings: Math.round(settings * 100), total: Math.round((0.6 * structure + 0.4 * settings) * 100) };
+  const inputs = diffInputs(office.def, reference.def).similarity;
+  return { structure: Math.round(structure * 100), settings: Math.round(settings * 100), inputs: Math.round(inputs * 100), total: Math.round((0.5 * structure + 0.25 * settings + 0.25 * inputs) * 100) };
 }

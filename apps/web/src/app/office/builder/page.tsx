@@ -1,6 +1,8 @@
 "use client";
 
 import {
+  type DocumentTemplate,
+  type ProcessInput,
   DEFAULT_CATEGORY,
   catalogVariant,
   catalogVariants,
@@ -71,6 +73,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { InputsEditor } from "@/components/InputsEditor";
 import { CATEGORIES, ICONS, NODE_W, edgeBase, layout, ARROW, nodeTypes, toRfNode, type StepNode } from "@/components/FlowKit";
 import { Spinner } from "@/components/ui";
 import { ApiError, api, type TestRunResult } from "@/lib/api";
@@ -107,6 +110,9 @@ function Builder() {
   const [result, setResult] = useState<TestRunResult | null>(null);
   const [busy, setBusy] = useState(false);
   const [showVersions, setShowVersions] = useState(false);
+  const [inputs, setInputs] = useState<ProcessInput[]>([]);
+  const [showInputs, setShowInputs] = useState(false);
+  const [templates, setTemplates] = useState<DocumentTemplate[]>([]);
   const loaded = useRef(false);
   const past = useRef<Snapshot[]>([]);
   const future = useRef<Snapshot[]>([]);
@@ -161,6 +167,7 @@ function Builder() {
     setNodes(ns);
     setEdges(es);
     setName(def.name);
+    setInputs(def.inputs ?? []);
     setDirty(isDraft);
     setResult(null);
     setIssues([]);
@@ -173,7 +180,8 @@ function Builder() {
 
   const refresh = useCallback(async (cat?: string) => {
     const target = cat ?? category;
-    const [p, list] = await Promise.all([api.processes(target), api.processList()]);
+    const [p, list, lib] = await Promise.all([api.processes(target), api.processList(), api.templates().catch(() => null)]);
+    if (lib) setTemplates(lib.templates);
     setCategory(target);
     setProcessList(list);
     setLive(p.live);
@@ -194,9 +202,9 @@ function Builder() {
 
   const toDef = useCallback((): ProcessDef => {
     const s = snapshot();
-    return { id: live?.id ?? category, catalogId: category, name, version: (live?.version ?? 0) + 1, updatedAt: new Date().toISOString(), updatedBy: "", nodes: s.nodes, edges: s.edges };
+    return { id: live?.id ?? category, catalogId: category, name, version: (live?.version ?? 0) + 1, updatedAt: new Date().toISOString(), updatedBy: "", inputs, nodes: s.nodes, edges: s.edges };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [live, name]);
+  }, [live, name, inputs]);
 
   const onConnect = useCallback((c: Connection) => {
     if (c.source === c.target) return;
@@ -372,6 +380,7 @@ function Builder() {
           </span>
         )}
         <span className="ws-spacer" />
+        <button className={`button button-small ${showInputs ? "" : "button-ghost"}`} type="button" onClick={() => { setShowInputs((v) => !v); setSelected(null); }}><ListChecks size={15} />{t("builder.inputs")} ({inputs.length})</button>
         <button className="button button-ghost button-small" type="button" onClick={validate}><CheckCircle2 size={15} />{t("builder.validate")}</button>
         <button className={`button button-small ${drawer ? "" : "button-ghost"}`} type="button" onClick={() => setDrawer((d) => !d)}><Play size={14} />{t("builder.testRun")}</button>
         <button className="button button-ghost button-small" type="button" disabled={busy} onClick={async () => { const r = await run(() => api.saveDraft(toDef())); if (r) { setDirty(false); setToast({ text: t("builder.saved"), tone: "ok" }); } }}>{t("builder.save")}</button>
@@ -490,7 +499,17 @@ function Builder() {
             </div>
           )}
 
-          {sel && (
+          {showInputs && (
+            <aside className="ws-inspector" aria-label={t("inputs.title")}>
+              <header>
+                <span className="ico"><ListChecks size={16} strokeWidth={2.2} /></span>
+                <div style={{ flex: 1 }}><strong>{t("inputs.title")}</strong></div>
+                <button className="icon-button" type="button" aria-label={t("builder.close")} onClick={() => setShowInputs(false)}><X size={16} /></button>
+              </header>
+              <div className="body"><InputsEditor inputs={inputs} templates={templates} onChange={(next) => { setInputs(next); touch(); }} /></div>
+            </aside>
+          )}
+          {sel && !showInputs && (
             <aside className="ws-inspector" aria-label={t("builder.config")}>
               <header className={`cat-${NODE_CATALOG[sel.data.kind].category}`}>
                 <span className="ico">{(() => { const I = ICONS[sel.data.kind]; return <I size={16} strokeWidth={2.2} />; })()}</span>

@@ -2,6 +2,7 @@ import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync 
 import { join } from "node:path";
 import {
   DEFAULT_CATEGORY,
+  defaultInputs,
   defaultProcess,
   defaultRuleStates,
   type Application,
@@ -9,7 +10,9 @@ import {
   type DocumentRef,
   type ExtractionMethod,
   type Lang,
+  type DocumentTemplate,
   type ProcessDef,
+  type TemplateProposal,
   type RuleState,
   type StaffMember,
 } from "@digieurope/shared";
@@ -19,6 +22,7 @@ export const DEFAULT_STAFF: StaffMember[] = [
   { id: "s-kaya", name: "Herr Kaya", title: "Sachbearbeitung Ausland", isAdmin: false, canBuild: false },
   { id: "s-lindner", name: "Frau Lindner", title: "Prozessverantwortliche", isAdmin: false, canBuild: true },
   { id: "s-obermeier", name: "Herr Obermeier", title: "Amtsleitung (Administrator)", isAdmin: true, canBuild: true },
+  { id: "s-richter", name: "Frau Richter", title: "Verantwortliche für Extraktoren und Vorlagen", isAdmin: false, canBuild: false, canApproveTemplates: true },
   { id: "s-weiss", name: "Frau Weiß", title: "Aufsicht Bundesebene (alle Ämter)", isAdmin: false, canBuild: false, isOversight: true },
 ];
 
@@ -69,11 +73,15 @@ interface Data {
   sessions: Record<string, string>;
   /** One process per category of the process catalogue. */
   processes: Record<string, ProcessStore>;
+  /** Templates accepted from proposals. The built-in ones live in code. */
+  templates: DocumentTemplate[];
+  proposals: TemplateProposal[];
 }
 
 const fresh = (): Data => ({
   seq: 0, applications: [], documents: [], parentTokens: {}, ruleStates: defaultRuleStates(), config: defaultConfig(),
   staff: DEFAULT_STAFF.map((x) => ({ ...x })), sessions: {}, processes: { [DEFAULT_CATEGORY]: { live: defaultProcess(), history: [] } },
+  templates: [], proposals: [],
 });
 
 /** Prototype persistence: one JSON file plus an uploads folder. Without a directory everything stays in memory (tests). */
@@ -94,7 +102,7 @@ export class Store {
       const saved = JSON.parse(readFileSync(file, "utf8")) as Data;
       const old = saved.processes as unknown as { live?: ProcessDef };
       const processes = old && "live" in old ? { [DEFAULT_CATEGORY]: old as unknown as ProcessStore } : saved.processes;
-      for (const p of Object.values(processes)) for (const d of [p.live, p.draft, ...p.history]) if (d && !d.catalogId) d.catalogId = DEFAULT_CATEGORY;
+      for (const p of Object.values(processes)) for (const d of [p.live, p.draft, ...p.history]) if (d) { if (!d.catalogId) d.catalogId = DEFAULT_CATEGORY; if (!d.inputs) d.inputs = defaultInputs(); }
       const staff = [...saved.staff, ...DEFAULT_STAFF.filter((d) => !saved.staff.some((m) => m.id === d.id))];
       this.data = { ...fresh(), ...saved, staff, processes, config: { ...defaultConfig(), ...saved.config } };
     }
@@ -171,6 +179,19 @@ export class Store {
     this.save();
   }
   staffBySession = (token: string | undefined): StaffMember | undefined => (token ? this.data.staff.find((m) => m.id === this.data.sessions[token]) : undefined);
+
+  templates = (): DocumentTemplate[] => this.data.templates;
+  addTemplate(t: DocumentTemplate) {
+    this.data.templates.push(t);
+    this.save();
+  }
+  proposals = (): TemplateProposal[] => this.data.proposals;
+  putProposal(p: TemplateProposal) {
+    const i = this.data.proposals.findIndex((x) => x.id === p.id);
+    if (i === -1) this.data.proposals.push(p);
+    else this.data.proposals[i] = p;
+    this.save();
+  }
 
   processes = (): Record<string, ProcessStore> => this.data.processes;
   process = (category: string): ProcessStore | undefined => this.data.processes[category];

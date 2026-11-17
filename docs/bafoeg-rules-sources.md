@@ -33,6 +33,8 @@ Every rule and number in the prototype, with where it comes from. "Verified" mea
 | Processing takes much longer than for domestic funding, up to about six months | [Merkblatt Auslands-BAföG, FH Erfurt](https://www.fh-erfurt.de/fileadmin/Dokumente/ZIB/Infomaterial/Auslands-BAfoeG.pdf) |
 | Half grant, half interest-free loan | [FAU Erlangen-Nürnberg](https://fau.de/international/wege-ins-ausland/finanzierung-eines-auslandsaufenthaltes/externe-foerdermoeglichkeiten/auslands-bafoeg) |
 | Official online application | [bafoeg-digital.de](https://www.bafoeg-digital.de) |
+| Formblatt 6 is the supplementary sheet for training abroad, filed with Formblatt 1 | [Studierenplus: Formblatt 6](https://www.studierenplus.de/bafoeg/bafoeg-formblatt-6) |
+| Formblatt 7 is the update application (§ 24 Abs. 3), Formblatt 8 the request for advance payment (§ 36) when parents do not pay | [Stadt Wiesbaden: Vorblatt Formblätter](https://wiesbaden.de/medien/downloads/leben-in-wiesbaden/amt-40/Seite-2-5-Umschlag-Vorblatt.pdf) |
 
 Forums: I did not find forum posts I could cite reliably, so none are used. The student interview evidence in the product brief covers the same ground.
 
@@ -43,6 +45,7 @@ Forums: I did not find forum posts I could cite reliably, so none are used. The 
 - **Rounding and the ±7 % range** of the estimate.
 - **The tuition supplement ending after a year** is real (AuslandszuschlagsV § 3). The scenario numbers in the decision-letter check (income +10 %, +25 %) are examples.
 - **The "parents' income now at least X % lower" rule** is deliberately not given a number, because the law text does not give one.
+- **The field lists of Formblatt 6 and 8** (and the sample documents for them) are simplified examples, not the official layouts.
 - All people, parents, universities, companies, tax figures and the "Studierendenwerk Musterstadt" itself.
 - Demo statistics in the office insights (seeded data).
 

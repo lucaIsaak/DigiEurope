@@ -1,5 +1,5 @@
 import type { DocumentKind, Extraction, ExtractionMethod } from "@digieurope/shared";
-import { DOC_SPECS, extractDocument } from "./documents.js";
+import { DOC_SPECS, extractDocument, type DocSpec } from "./documents.js";
 import type { OfficeConfig } from "./store.js";
 
 export const DEFAULT_MIN_CONFIDENCE = 0.8;
@@ -51,10 +51,10 @@ function flagReview(e: Extraction, min: number): Extraction {
 type Read = { kind: DocumentKind; extraction: Extraction };
 
 /** Reads a file with the AI reader: the model gets the document and the field list, and must return JSON. Never guesses. */
-export async function aiExtract(content: Buffer, mimeType: string, fetchImpl: typeof fetch = fetch): Promise<Read | null> {
+export async function aiExtract(content: Buffer, mimeType: string, fetchImpl: typeof fetch = fetch, specs: DocSpec[] = DOC_SPECS): Promise<Read | null> {
   const key = process.env.ANTHROPIC_API_KEY;
   if (!key) return null;
-  const catalog = DOC_SPECS.map((s) => `- ${s.kind}: "${s.title}". Fields: ${s.fields.map(([k, l]) => `${k} (${l})`).join("; ")}.${s.sigs.length ? ` Signatures: ${s.sigs.map(([k, l]) => `${k} (${l})`).join("; ")}.` : ""}`).join("\n");
+  const catalog = specs.map((s) => `- ${s.kind}: "${s.title}". Fields: ${s.fields.map(([k, l]) => `${k} (${l})`).join("; ")}.${s.sigs.length ? ` Signatures: ${s.sigs.map(([k, l]) => `${k} (${l})`).join("; ")}.` : ""}`).join("\n");
   const system =
     "You read German administrative documents for a student funding office. Identify which document type it is from the list and extract only the listed fields. " +
     "Never guess: if a value is missing, cut off or unreadable, return an empty string with confidence 0. Report the page number (1-based) for each field. " +
@@ -84,7 +84,7 @@ export async function aiExtract(content: Buffer, mimeType: string, fetchImpl: ty
       fields?: Record<string, { value?: unknown; confidence?: unknown; page?: unknown }>;
       signatures?: Record<string, { present?: unknown }>;
     };
-    const spec = DOC_SPECS.find((s) => s.kind === parsed.documentType);
+    const spec = specs.find((s) => s.kind === parsed.documentType);
     if (!spec) return { kind: "unknown", extraction: { readable: false, fields: {}, signatures: {}, engine: "ai" } };
     const fields: Record<string, string> = {};
     const confidence: Record<string, number> = {};
@@ -112,11 +112,12 @@ export async function readWithMethod(
   method: ExtractionMethod,
   minConfidence: number,
   fetchImpl: typeof fetch = fetch,
+  specs: DocSpec[] = DOC_SPECS,
 ): Promise<Read> {
-  const base = extractDocument(content, mimeType);
+  const base = extractDocument(content, mimeType, specs);
   if (method === "builtin") return { kind: base.kind, extraction: flagReview({ ...base.extraction, engine: "builtin" }, minConfidence) };
   if (method === "ai") {
-    const live = await aiExtract(content, mimeType, fetchImpl);
+    const live = await aiExtract(content, mimeType, fetchImpl, specs);
     if (live) return { kind: live.kind, extraction: flagReview(live.extraction, minConfidence) };
     const note = aiAvailable() ? "AI reading failed; built-in reader used." : "No AI key set; simulated with the built-in reader.";
     return { kind: base.kind, extraction: flagReview({ ...base.extraction, engine: aiAvailable() ? "builtin" : "ai-simulated", note }, minConfidence) };
@@ -125,9 +126,9 @@ export async function readWithMethod(
 }
 
 /** Reads an uploaded file with the method the office configured for its document type. */
-export async function readConfigured(content: Buffer, mimeType: string, config: OfficeConfig, override?: ExtractionMethod, fetchImpl: typeof fetch = fetch): Promise<Read> {
-  const first = extractDocument(content, mimeType);
+export async function readConfigured(content: Buffer, mimeType: string, config: OfficeConfig, override?: ExtractionMethod, fetchImpl: typeof fetch = fetch, specs: DocSpec[] = DOC_SPECS): Promise<Read> {
+  const first = extractDocument(content, mimeType, specs);
   const setting = first.kind !== "unknown" ? config.extraction[first.kind] : undefined;
   const method = override ?? setting?.method ?? config.defaultMethod;
-  return readWithMethod(content, mimeType, method, setting?.minConfidence ?? DEFAULT_MIN_CONFIDENCE, fetchImpl);
+  return readWithMethod(content, mimeType, method, setting?.minConfidence ?? DEFAULT_MIN_CONFIDENCE, fetchImpl, specs);
 }

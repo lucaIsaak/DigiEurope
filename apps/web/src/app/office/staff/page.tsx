@@ -26,12 +26,12 @@ export default function StaffAccess() {
       </div>
       <div className="table-wrap">
         <table className="data">
-          <thead><tr><th>{t("staff.access.name")}</th><th>{t("staff.access.role")}</th><th>{t("staff.access.builder")}</th></tr></thead>
+          <thead><tr><th>{t("staff.access.name")}</th><th>{t("staff.access.role")}</th><th>{t("staff.access.builder")}</th><th>{t("staff.access.templates")}</th></tr></thead>
           <tbody>
             {list.map((m) => (
               <tr key={m.id}>
                 <td><strong>{m.name}</strong><br /><small className="muted">{m.title}</small></td>
-                <td><span className={`pill ${m.isAdmin ? "pill-ok" : m.canBuild ? "" : "pill-muted"}`}>{m.isAdmin ? t("staff.role.admin") : m.canBuild ? t("staff.role.builder") : t("staff.role.caseworker")}</span></td>
+                <td><span className={`pill ${m.isAdmin ? "pill-ok" : m.canBuild || m.canApproveTemplates ? "" : "pill-muted"}`}>{m.isAdmin ? t("staff.role.admin") : m.canApproveTemplates ? t("staff.role.owner") : m.canBuild ? t("staff.role.builder") : t("staff.role.caseworker")}</span></td>
                 <td>
                   <label className="row">
                     <input
@@ -39,11 +39,25 @@ export default function StaffAccess() {
                       checked={m.isAdmin || m.canBuild}
                       disabled={m.isAdmin}
                       onChange={async (e) => {
-                        const r = await run(() => api.setBuildAccess(m.id, e.target.checked));
+                        const r = await run(() => api.setAccess(m.id, { canBuild: e.target.checked }));
                         if (r) setList(r);
                       }}
                     />
                     <span className="small muted">{t("staff.access.builder")}</span>
+                  </label>
+                </td>
+                <td>
+                  <label className="row">
+                    <input
+                      type="checkbox"
+                      checked={m.isAdmin || Boolean(m.canApproveTemplates)}
+                      disabled={m.isAdmin}
+                      onChange={async (e) => {
+                        const r = await run(() => api.setAccess(m.id, { canApproveTemplates: e.target.checked }));
+                        if (r) setList(r);
+                      }}
+                    />
+                    <span className="small muted">{t("staff.access.templates")}</span>
                   </label>
                 </td>
               </tr>

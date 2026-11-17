@@ -6,8 +6,10 @@ export interface Bilingual {
 
 export type StayType = "study" | "internship";
 
-export type DocumentKind =
+export type CoreDocumentKind =
   | "application_form"
+  | "fb06"
+  | "fb08"
   | "enrollment_cert"
   | "host_confirmation"
   | "internship_contract"
@@ -19,8 +21,13 @@ export type DocumentKind =
   | "decision_letter"
   | "unknown";
 
-export const DOCUMENT_KINDS: DocumentKind[] = [
+/** Core kinds are known to the code; accepted template proposals add more ids, so any string is allowed. */
+export type DocumentKind = CoreDocumentKind | (string & {});
+
+export const DOCUMENT_KINDS: CoreDocumentKind[] = [
   "application_form",
+  "fb06",
+  "fb08",
   "enrollment_cert",
   "host_confirmation",
   "internship_contract",
@@ -129,6 +136,8 @@ export interface Application {
   assignedTeam?: string;
   /** State of the process that handles this case. */
   flow?: FlowState;
+  /** Answers to the custom questions of the process, by question id. */
+  info?: Record<string, string>;
 }
 
 export interface Mail {
@@ -230,7 +239,22 @@ export interface Finding {
   source: { label: string; url: string };
 }
 
+export interface Requirement {
+  id: string;
+  type: "document" | "info";
+  ref: string;
+  label: Bilingual;
+  required: boolean;
+  /** False when the condition of the input is not met for this application. */
+  applies: boolean;
+  state: "ok" | "missing";
+  providedBy: "student" | "parents" | "office" | "third_party";
+  /** For custom questions. */
+  question?: { type: FieldType; help?: Bilingual };
+}
+
 export interface CheckReport {
+  requirements?: Requirement[];
   ready: boolean;
   blockers: number;
   warnings: number;
@@ -256,6 +280,8 @@ export interface Estimate {
 }
 
 export interface CaseView extends Application {
+  /** Names of templates accepted from proposals, so custom forms have a readable label everywhere. */
+  templateNames?: Record<string, Bilingual>;
   report: CheckReport;
   estimate: Estimate;
   parentLink?: string;
@@ -270,4 +296,60 @@ export interface StaffMember {
   canBuild: boolean;
   /** Oversight (for example a federal body) sees and compares all offices, but works in no office. */
   isOversight?: boolean;
+  /** May accept template proposals and decide how a template is extracted. */
+  canApproveTemplates?: boolean;
+}
+
+export type FieldType = "text" | "number" | "date" | "yesno";
+
+export interface TemplateField {
+  key: string;
+  label: string;
+  type: FieldType;
+  required: boolean;
+}
+
+export interface TemplateSignature {
+  key: string;
+  label: string;
+}
+
+/** A form or document the office knows how to read. */
+export interface DocumentTemplate {
+  /** The document kind. Core templates keep their historic ids, accepted proposals get "tpl-…". */
+  id: string;
+  /** For example "Formblatt 6". */
+  formblatt?: string;
+  name: Bilingual;
+  /** The title as printed on the document. The reader recognises the template by it. */
+  title: string;
+  purpose: Bilingual;
+  providedBy: "student" | "parents" | "office" | "third_party";
+  fields: TemplateField[];
+  signatures: TemplateSignature[];
+  source: "builtin" | "accepted";
+}
+
+export type ProposalStatus = "draft" | "submitted" | "accepted" | "rejected";
+
+/** A process designer's proposal for a new template. The extractor owner accepts it, so nobody has to build it from scratch. */
+export interface TemplateProposal {
+  id: string;
+  status: ProposalStatus;
+  proposedBy: string;
+  proposedAt: string;
+  formblatt?: string;
+  name: string;
+  title: string;
+  purpose: string;
+  providedBy: DocumentTemplate["providedBy"];
+  fields: TemplateField[];
+  signatures: TemplateSignature[];
+  /** Name of the sample document the suggestion came from. */
+  sampleFilename?: string;
+  decidedBy?: string;
+  decidedAt?: string;
+  decisionNote?: string;
+  /** Template created from this proposal. */
+  templateId?: string;
 }

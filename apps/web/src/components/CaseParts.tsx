@@ -7,9 +7,23 @@ import { useI18n } from "@/lib/i18n";
 import type { MessageKey } from "@/lib/messages";
 import { SourceLink } from "./ui";
 
-export const docLabel = (t: ReturnType<typeof useI18n>["t"], kind: string) => t(`doc.${kind}` as MessageKey);
+/** Readable name of a document kind: accepted templates and the office's requirements first, then the built-in names. */
+export function useDocName(c: Pick<CaseView, "templateNames" | "report">) {
+  const { t, bi } = useI18n();
+  return (kind: string): string => {
+    const custom = c.templateNames?.[kind];
+    if (custom) return bi(custom);
+    const req = c.report.requirements?.find((r) => r.type === "document" && r.ref === kind);
+    if (req && !t(`doc.${kind}` as MessageKey).startsWith("doc.")) return t(`doc.${kind}` as MessageKey);
+    if (req) return bi(req.label);
+    return t(`doc.${kind}` as MessageKey);
+  };
+}
 
-export function requiredKinds(c: Pick<CaseView, "stay">): DocumentKind[] {
+/** The forms the office's process asks for in this case (all that apply, required or optional). */
+export function requiredKinds(c: Pick<CaseView, "stay" | "report">): DocumentKind[] {
+  const reqs = c.report.requirements;
+  if (reqs) return reqs.filter((r) => r.type === "document" && r.applies).map((r) => r.ref);
   const kinds = [...REQUIRED_DOCS[c.stay.type]];
   if (c.stay.tuitionFees > 0) kinds.push("tuition_waiver_proof");
   return kinds;
@@ -48,6 +62,7 @@ export function ExtractedFacts({ doc, office }: { doc: DocumentRef; office?: boo
 /** Lets a caseworker compare and correct the fields that were read with low confidence. */
 export function ReviewPanel({ c, onConfirm }: { c: CaseView; onConfirm: (docId: string, fields: Record<string, string>) => Promise<void> }) {
   const { t, tk } = useI18n();
+  const docName = useDocName(c);
   const [edits, setEdits] = useState<Record<string, Record<string, string>>>({});
   const docs = c.documents.filter((d) => d.extraction.needsReview);
   if (docs.length === 0) return null;
@@ -61,7 +76,7 @@ export function ReviewPanel({ c, onConfirm }: { c: CaseView; onConfirm: (docId: 
           return (
             <div key={d.id}>
               <div className="row" style={{ justifyContent: "space-between" }}>
-                <strong>{docLabel(t, d.kind)}</strong>
+                <strong>{docName(d.kind)}</strong>
                 <a className="small" href={documentUrl(d.id)} target="_blank" rel="noreferrer">{t("case.docs.view")}</a>
               </div>
               <div className="form-grid" style={{ marginTop: "0.5rem" }}>
@@ -83,6 +98,7 @@ export function ReviewPanel({ c, onConfirm }: { c: CaseView; onConfirm: (docId: 
 
 export function DocumentChecklist({ c, onRemove, showRemove, office }: { c: CaseView; onRemove?: (id: string) => void; showRemove?: boolean; office?: boolean }) {
   const { t, bi, tk } = useI18n();
+  const docName = useDocName(c);
   const checked = c.history.some((h) => h.kind === "checked") || office;
   const kinds = requiredKinds(c);
   const extra = c.documents.filter((d) => !kinds.includes(d.kind) && d.extraction.readable);
@@ -98,7 +114,7 @@ export function DocumentChecklist({ c, onRemove, showRemove, office }: { c: Case
       <div className="doc-row" key={kind}>
         <span className={`sev ${tone}`} aria-hidden>{icon}</span>
         <div>
-          <strong>{docLabel(t, kind)}</strong>{" "}
+          <strong>{docName(kind)}</strong>{c.report.requirements?.find((r) => r.ref === kind)?.required === false && <span className="pill pill-muted" style={{ marginLeft: "0.4rem" }}>{t("case.docs.optional")}</span>}{" "}
           <span className="muted small">
             {state === "missing" ? t("case.docs.missing") : state === "ok" ? t("case.docs.ok") : t("case.docs.fix")}
             {doc && ` · ${doc.filename}`}
@@ -127,7 +143,7 @@ export function DocumentChecklist({ c, onRemove, showRemove, office }: { c: Case
       {extra.map((d) => (
         <div className="doc-row" key={d.id}>
           <span className="sev sev-ok" aria-hidden>✓</span>
-          <div><strong>{docLabel(t, d.kind)}</strong> <span className="muted small">{d.filename}</span></div>
+          <div><strong>{docName(d.kind)}</strong> <span className="muted small">{d.filename}</span></div>
           <a className="small" href={documentUrl(d.id)} target="_blank" rel="noreferrer">{t("case.docs.view")}</a>
         </div>
       ))}
@@ -156,7 +172,7 @@ export function FindingList({ findings, showRule }: { findings: Finding[]; showR
             <h3>{bi(f.title)}</h3>
             <p>{bi(f.fix)}</p>
             <div className="row small">
-              <SourceLink source={f.source} />
+              {f.source.url && <SourceLink source={f.source} />}
               {showRule && <span className="muted">{t("office.case.rule", { id: f.ruleId })}</span>}
             </div>
           </div>
@@ -281,5 +297,51 @@ export function FlowPanel({ c }: { c: CaseView }) {
         </>
       )}
     </div>
+  );
+}
+
+/** Custom questions of the office's process that apply to this case. The student answers them here. */
+export function InfoQuestions({ c, onSave }: { c: CaseView; onSave: (key: string, value: string) => Promise<void> }) {
+  const { t, bi } = useI18n();
+  const qs = (c.report.requirements ?? []).filter((r) => r.type === "info" && r.question && r.applies);
+  const [draft, setDraft] = useState<Record<string, string>>({});
+  if (qs.length === 0) return null;
+  return (
+    <section className="card" aria-labelledby="info-h">
+      <h2 id="info-h">{t("case.info.card")}</h2>
+      <p className="muted small">{t("case.info.lead")}</p>
+      <div className="stack">
+        {qs.map((r) => {
+          const val = draft[r.ref] ?? c.info?.[r.ref] ?? "";
+          const type = r.question!.type;
+          return (
+            <div key={r.id}>
+              <label className="field">
+                <span>{bi(r.label)} {!r.required && <span className="small muted" style={{ fontWeight: 400 }}>({t("case.docs.optional")})</span>}</span>
+                {type === "yesno" ? (
+                  <span className="row">
+                    {(["yes", "no"] as const).map((v) => (
+                      <label key={v} className="radio-card" style={{ padding: "0.4rem 0.9rem" }}>
+                        <input type="radio" name={r.id} checked={val === v} onChange={() => { setDraft({ ...draft, [r.ref]: v }); void onSave(r.ref, v); }} disabled={c.status !== "draft" && c.status !== "info_requested"} />
+                        {t(`case.info.${v}` as MessageKey)}
+                      </label>
+                    ))}
+                  </span>
+                ) : (
+                  <input
+                    type={type === "number" ? "number" : type === "date" ? "date" : "text"}
+                    value={val}
+                    onChange={(e) => setDraft({ ...draft, [r.ref]: e.target.value })}
+                    onBlur={() => void onSave(r.ref, val)}
+                    disabled={c.status !== "draft" && c.status !== "info_requested"}
+                  />
+                )}
+                {r.question?.help && <span className="hint">{bi(r.question.help)}</span>}
+              </label>
+            </div>
+          );
+        })}
+      </div>
+    </section>
   );
 }

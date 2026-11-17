@@ -4,7 +4,6 @@ import {
   buildFacts,
   estimate,
   evaluate,
-  runChecks,
   type Application,
   type Check,
   type CheckReport,
@@ -15,13 +14,13 @@ import {
   type FlowNode,
   type Mail,
   type ProcessDef,
-  type RuleState,
   type RunLogEntry,
 } from "@digieurope/shared";
 
 export interface EngineCtx {
-  rules: Record<string, RuleState>;
   now: Date;
+  /** Runs the approved rules and the required inputs of the office. */
+  check: (app: Application) => CheckReport;
   /** Reads a stored document again with the configured (or overridden) method. */
   reread?: (doc: DocumentRef, override?: ExtractionMethod) => Promise<{ kind: DocumentKind; extraction: Extraction } | null>;
 }
@@ -104,7 +103,7 @@ async function execute(def: ProcessDef, start: string, input: Application, ctx: 
         break;
       }
       case "run_rules": {
-        report = runChecks(app, ctx.rules, ctx.now);
+        report = ctx.check(app);
         handle = report.ready ? "complete" : "incomplete";
         entry(report.ready ? "All approved rules pass" : `${report.blockers} blocking item(s): ${report.findings.filter((f) => f.severity === "blocker").map((f) => f.ruleId).join(", ")}`, handle);
         break;
@@ -138,7 +137,7 @@ async function execute(def: ProcessDef, start: string, input: Application, ctx: 
         current = undefined;
         continue;
       case "condition": {
-        report ??= runChecks(app, ctx.rules, ctx.now);
+        report ??= ctx.check(app);
         const yes = conditionHolds(node, app, report, ctx.now);
         handle = yes ? "yes" : "no";
         entry(`${node.config.field} ${node.config.op} ${node.config.value}: ${handle}`, handle);
@@ -152,7 +151,7 @@ async function execute(def: ProcessDef, start: string, input: Application, ctx: 
         entry(`Reminder planned in ${node.config.days} day(s) (simulated, not waited)`);
         break;
       case "ai_draft_mail":
-        report ??= runChecks(app, ctx.rules, ctx.now);
+        report ??= ctx.check(app);
         mailDraft = draftMail(app, report, String(node.config.tone));
         entry("Mail drafted by AI (simulated)");
         break;

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { buildApp } from "./app.js";
-import { SAMPLE_SETS, fixDocuments, getPerson, sampleDocuments, sampleLetter } from "./samples.js";
+import { PROPOSAL_SAMPLE_TITLE, SAMPLE_SETS, fixDocuments, formblatt8, getPerson, proposalSample, sampleDocuments, sampleLetter } from "./samples.js";
 import { extractDocument } from "./documents.js";
 import { seedDemoData } from "./seed.js";
 import { Store } from "./store.js";
@@ -357,5 +357,141 @@ describe("process categories and comparison across offices", () => {
     expect((await app.inject({ method: "GET", url: "/office/cases" })).statusCode).toBe(403);
     store.login("s-beispiel", "cw");
     expect((await app.inject({ method: "GET", url: "/oversight/compare", headers: { "x-staff-token": "cw" } })).statusCode).toBe(403);
+  });
+});
+
+describe("required inputs drive the student's requirements", () => {
+  it("a missing required form blocks, a conditional form applies after the answer, and the process can change it", async () => {
+    const { app } = setup();
+    const { id, person } = await create(app, "lea");
+    const docs = sampleDocuments(person);
+    for (const d of docs.filter((x) => x.kind !== "fb06")) await upload(app, `/applications/${id}/documents`, d.filename, d.content);
+    let c = (await app.inject({ method: "GET", url: `/applications/${id}` })).json();
+    expect(c.report.findings.map((f: { ruleId: string }) => f.ruleId)).toEqual(["INPUT:fb06"]);
+    const req = (key: string) => c.report.requirements.find((r: { id: string }) => r.id === key);
+    expect(req("doc:fb06").state).toBe("missing");
+    expect(req("doc:fb08").applies).toBe(false);
+
+    const fb06 = docs.find((x) => x.kind === "fb06")!;
+    await upload(app, `/applications/${id}/documents`, fb06.filename, fb06.content);
+    c = (await app.inject({ method: "GET", url: `/applications/${id}` })).json();
+    expect(c.report.ready).toBe(true);
+
+    // The answer to a custom question makes Formblatt 8 required.
+    expect((await app.inject({ method: "PUT", url: `/applications/${id}/info`, payload: { key: "parents_refuse", value: "maybe" } })).statusCode).toBe(400);
+    expect((await app.inject({ method: "PUT", url: `/applications/${id}/info`, payload: { key: "unknown", value: "yes" } })).statusCode).toBe(400);
+    c = (await app.inject({ method: "PUT", url: `/applications/${id}/info`, payload: { key: "parents_refuse", value: "yes" } })).json();
+    expect(c.report.findings.map((f: { ruleId: string }) => f.ruleId)).toEqual(["INPUT:fb08"]);
+    const fb08 = formblatt8(person);
+    await upload(app, `/applications/${id}/documents`, fb08.filename, fb08.content);
+    c = (await app.inject({ method: "GET", url: `/applications/${id}` })).json();
+    expect(c.report.ready).toBe(true);
+    expect(c.documents.find((d: { kind: string }) => d.kind === "fb08").extraction.fields.parent_name).toBeTruthy();
+
+    // The office drops Formblatt 6 from its process: it is no longer required.
+    const { live } = (await app.inject({ method: "GET", url: "/office/processes" })).json();
+    const without = { ...live, inputs: live.inputs.filter((i: { ref: string }) => i.ref !== "fb06") };
+    expect((await app.inject({ method: "POST", url: "/office/processes/publish", payload: { def: without } })).statusCode).toBe(200);
+    const { id: id2, person: p2 } = await create(app, "lea");
+    for (const d of sampleDocuments(p2).filter((x) => x.kind !== "fb06")) await upload(app, `/applications/${id2}/documents`, d.filename, d.content);
+    expect((await app.inject({ method: "GET", url: `/applications/${id2}` })).json().report.ready).toBe(true);
+  });
+
+  it("refuses to publish a process that requires an unknown template", async () => {
+    const { app } = setup();
+    const { live } = (await app.inject({ method: "GET", url: "/office/processes" })).json();
+    const bad = { ...live, inputs: [...live.inputs, { id: "doc:nope", type: "document", ref: "nope", required: true }] };
+    const res = await app.inject({ method: "POST", url: "/office/processes/publish", payload: { def: bad } });
+    expect(res.statusCode).toBe(422);
+    expect(res.json().issues.some((i: { message: { en: string } }) => i.message.en.includes("unknown"))).toBe(true);
+  });
+});
+
+describe("template proposals", () => {
+  const body = (over = {}) => ({
+    name: "Aktualisierungsantrag", formblatt: "Formblatt 7", title: PROPOSAL_SAMPLE_TITLE, purpose: "Wenn das Einkommen der Eltern sinkt.", providedBy: "student",
+    fields: [{ key: "name_der_antragstellenden_person", label: "Name der antragstellenden Person", type: "text", required: true }, { key: "einkommen_laut_bescheid_eur", label: "Einkommen laut Bescheid (EUR)", type: "number", required: true }],
+    signatures: [{ key: "antragsteller_in", label: "Unterschrift Antragsteller:in" }], ...over,
+  });
+  const as = (store: Store, id: string, token: string) => store.login(id, token);
+
+  it("Formblatt 6 and 8 are ready as templates", async () => {
+    const { app } = setup("s-lindner");
+    const r = (await app.inject({ method: "GET", url: "/office/templates" })).json();
+    expect(r.templates.map((t: { id: string }) => t.id)).toEqual(expect.arrayContaining(["fb06", "fb08"]));
+    expect(r.canPropose).toBe(true);
+    expect(r.canApprove).toBe(false);
+  });
+
+  it("suggests fields from a sample document", async () => {
+    const { app } = setup("s-lindner");
+    const sample = proposalSample();
+    const res = await upload(app, "/office/templates/proposals/suggest", sample.filename, sample.content);
+    expect(res.statusCode).toBe(200);
+    const s = res.json();
+    expect(s.title).toBe(PROPOSAL_SAMPLE_TITLE);
+    expect(s.fields.length).toBeGreaterThanOrEqual(6);
+    expect(s.signatures).toHaveLength(1);
+    expect((await upload(app, "/office/templates/proposals/suggest", "x.pdf", Buffer.from("%PDF-1.4 nothing"))).statusCode).toBe(422);
+  });
+
+  it("a designer proposes, the extractor owner accepts, and the new template is read and usable in a process", async () => {
+    const { app, store } = setup("s-lindner");
+    const created = await app.inject({ method: "POST", url: "/office/templates/proposals", payload: { ...body(), submit: true } });
+    expect(created.statusCode).toBe(201);
+    const id = created.json().id;
+    expect((await app.inject({ method: "POST", url: "/office/templates/proposals", payload: { ...body(), submit: true } })).statusCode).toBe(400); // same title again
+    expect((await app.inject({ method: "POST", url: `/office/templates/proposals/${id}/accept`, payload: { method: "builtin" } })).statusCode).toBe(403); // designers cannot accept
+    as(store, "s-richter", "owner");
+    const h = { "x-staff-token": "owner" };
+    expect((await app.inject({ method: "POST", url: `/office/templates/proposals/${id}/accept`, payload: {}, headers: h })).statusCode).toBe(400); // needs a method
+    const accepted = (await app.inject({ method: "POST", url: `/office/templates/proposals/${id}/accept`, payload: { method: "ai", minConfidence: 0.9 }, headers: h })).json();
+    expect(accepted.status).toBe("accepted");
+    const tplId = accepted.templateId;
+    const lib = (await app.inject({ method: "GET", url: "/office/templates", headers: h })).json();
+    const t = lib.templates.find((x: { id: string }) => x.id === tplId);
+    expect(t.source).toBe("accepted");
+    expect(t.extraction).toEqual({ method: "ai", minConfidence: 0.9 });
+
+    // The reader now recognises the new form.
+    const sample = proposalSample();
+    const read = (await app.inject({ method: "POST", url: "/office/inputs/extract", payload: { filename: sample.filename, mimeType: "application/pdf", dataBase64: sample.content.toString("base64") }, headers: h })).json();
+    expect(read.kind).toBe(tplId);
+    expect(read.extraction.fields.name_der_antragstellenden_person).toBe("Mira Sommer");
+
+    // A process can require it, and then the student's checklist asks for it.
+    const { live } = (await app.inject({ method: "GET", url: "/office/processes" })).json();
+    const withIt = { ...live, inputs: [...live.inputs, { id: `doc:${tplId}`, type: "document", ref: tplId, required: true }] };
+    expect((await app.inject({ method: "POST", url: "/office/processes/publish", payload: { def: withIt } })).statusCode).toBe(200);
+    const { id: cid, person } = await create(app, "lea");
+    for (const d of sampleDocuments(person)) await upload(app, `/applications/${cid}/documents`, d.filename, d.content);
+    let c = (await app.inject({ method: "GET", url: `/applications/${cid}` })).json();
+    expect(c.report.findings.map((f: { ruleId: string }) => f.ruleId)).toEqual([`INPUT:${tplId}`]);
+    await upload(app, `/applications/${cid}/documents`, sample.filename, sample.content);
+    c = (await app.inject({ method: "GET", url: `/applications/${cid}` })).json();
+    expect(c.report.ready).toBe(true);
+  });
+
+  it("a rejected proposal needs a comment and can be changed and resubmitted by its author", async () => {
+    const { app, store } = setup("s-lindner");
+    const id = (await app.inject({ method: "POST", url: "/office/templates/proposals", payload: { ...body(), submit: true } })).json().id;
+    as(store, "s-obermeier", "admin");
+    const h = { "x-staff-token": "admin" };
+    expect((await app.inject({ method: "POST", url: `/office/templates/proposals/${id}/reject`, payload: {}, headers: h })).statusCode).toBe(400);
+    const rejected = (await app.inject({ method: "POST", url: `/office/templates/proposals/${id}/reject`, payload: { comment: "Bitte Titel prüfen." }, headers: h })).json();
+    expect(rejected.status).toBe("rejected");
+    expect((await app.inject({ method: "PUT", url: `/office/templates/proposals/${id}`, payload: body(), headers: h })).statusCode).toBe(409); // not the author
+    const again = (await app.inject({ method: "PUT", url: `/office/templates/proposals/${id}`, payload: { ...body({ title: PROPOSAL_SAMPLE_TITLE + " (neu)" }), submit: true } })).json();
+    expect(again.status).toBe("submitted");
+    expect(again.decisionNote).toBeUndefined();
+  });
+
+  it("caseworkers without builder access cannot propose, and admins can grant the extractor-owner permission", async () => {
+    const { app, store } = setup("s-kaya");
+    expect((await app.inject({ method: "POST", url: "/office/templates/proposals", payload: body() })).statusCode).toBe(403);
+    expect((await app.inject({ method: "GET", url: "/office/templates" })).statusCode).toBe(403);
+    as(store, "s-obermeier", "admin");
+    expect((await app.inject({ method: "PUT", url: "/office/staff/s-kaya", payload: { canApproveTemplates: true }, headers: { "x-staff-token": "admin" } })).statusCode).toBe(200);
+    expect((await app.inject({ method: "GET", url: "/office/templates" })).statusCode).toBe(200);
   });
 });

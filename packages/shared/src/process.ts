@@ -1,5 +1,5 @@
 import { isCatalogVariant } from "./catalog.js";
-import type { Bilingual } from "./types.js";
+import type { Bilingual, FieldType } from "./types.js";
 
 export type NodeKind =
   | "trigger"
@@ -33,6 +33,24 @@ export interface FlowEdge {
 }
 
 /** A process as an office draws it: steps and the connections between them. */
+/** When a required input applies. Undefined means always. */
+export type InputCondition =
+  | { kind: "stay_type"; value: "study" | "internship" }
+  | { kind: "tuition" }
+  | { kind: "info"; key: string; equals: string };
+
+/** One thing the applicant (or someone for them) has to provide for this process: a form or a piece of information. */
+export interface ProcessInput {
+  id: string;
+  type: "document" | "info";
+  /** document: template id. info: a known application field (see KNOWN_INFO) or the id of a custom question. */
+  ref: string;
+  required: boolean;
+  when?: InputCondition;
+  /** Custom question: the wording and the answer type. */
+  question?: { label: Bilingual; type: FieldType; help?: Bilingual };
+}
+
 export interface ProcessDef {
   id: string;
   /** Entry of the central process catalogue this process belongs to, for example "bafoeg.abroad". */
@@ -41,6 +59,8 @@ export interface ProcessDef {
   version: number;
   updatedAt: string;
   updatedBy: string;
+  /** What the applicant has to provide. Drives the student's checklist and the readiness check. */
+  inputs: ProcessInput[];
   nodes: FlowNode[];
   edges: FlowEdge[];
 }
@@ -246,9 +266,15 @@ export interface ProcessIssue {
 }
 
 /** Checks that a drawn process can run: one start, no loose ends, no loops, valid settings. */
-export function validateProcess(def: Pick<ProcessDef, "nodes" | "edges"> & { catalogId?: string }): ProcessIssue[] {
+export function validateProcess(def: Pick<ProcessDef, "nodes" | "edges"> & { catalogId?: string; inputs?: ProcessInput[] }): ProcessIssue[] {
   const issues: ProcessIssue[] = [];
   if (def.catalogId !== undefined && !isCatalogVariant(def.catalogId)) issues.push({ message: { de: "Dem Ablauf ist keine Kategorie aus dem Prozesskatalog zugeordnet.", en: "The process is not assigned to a category from the process catalogue." } });
+  const seenInputs = new Set<string>();
+  for (const i of def.inputs ?? []) {
+    if (seenInputs.has(i.id)) issues.push({ message: { de: `Die Eingabe „${i.ref}“ ist doppelt aufgeführt.`, en: `The input “${i.ref}” is listed twice.` } });
+    seenInputs.add(i.id);
+    if (i.type === "info" && i.question && !i.question.label.de.trim() && !i.question.label.en.trim()) issues.push({ message: { de: "Eine eigene Frage hat keinen Text.", en: "A custom question has no text." } });
+  }
   const byId = new Map(def.nodes.map((n) => [n.id, n]));
   const triggers = def.nodes.filter((n) => n.kind === "trigger");
   if (triggers.length !== 1) issues.push({ message: { de: "Es braucht genau einen Startpunkt „Antrag geht ein“.", en: "There must be exactly one “Application arrives” start." } });
@@ -280,6 +306,27 @@ export function validateProcess(def: Pick<ProcessDef, "nodes" | "edges"> & { cat
     for (const n of def.nodes) if (!seen.has(n.id)) issues.push({ nodeId: n.id, message: { de: `„${NODE_CATALOG[n.kind].title.de}“ ist vom Start aus nicht erreichbar.`, en: `“${NODE_CATALOG[n.kind].title.en}” cannot be reached from the start.` } });
   }
   return issues;
+}
+
+/** The inputs of the standard process: the forms and information the abroad application needs. */
+export function defaultInputs(): ProcessInput[] {
+  const doc = (ref: string, when?: InputCondition, required = true): ProcessInput => ({ id: `doc:${ref}`, type: "document", ref, required, ...(when ? { when } : {}) });
+  const known = (ref: string): ProcessInput => ({ id: `info:${ref}`, type: "info", ref, required: true });
+  return [
+    doc("application_form"), doc("fb06"), doc("enrollment_cert"),
+    doc("host_confirmation", { kind: "stay_type", value: "study" }),
+    doc("internship_contract", { kind: "stay_type", value: "internship" }),
+    doc("internship_uni_confirmation", { kind: "stay_type", value: "internship" }),
+    doc("health_insurance"),
+    doc("tuition_waiver_proof", { kind: "tuition" }),
+    doc("parent_form"), doc("parent_tax"),
+    doc("fb08", { kind: "info", key: "parents_refuse", equals: "yes" }),
+    known("country"), known("startDate"), known("endDate"), known("tuitionFees"),
+    {
+      id: "info:parents_refuse", type: "info", ref: "parents_refuse", required: false,
+      question: { label: { de: "Zahlen Ihre Eltern den angerechneten Unterhalt nicht?", en: "Are your parents not paying the maintenance that is counted?" }, type: "yesno", help: { de: "Dann können Sie eine Vorausleistung beantragen (Formblatt 8).", en: "Then you can request an advance payment (Formblatt 8)." } },
+    },
+  ];
 }
 
 let seq = 0;
@@ -318,7 +365,7 @@ export function defaultProcess(now = "2026-09-01T09:00:00.000Z"): ProcessDef {
     e("human", "rejected", "notify-no"), e("notify-no", "out", "end-no"),
     e("human", "info", "end-info"),
   ];
-  return { id: "bafoeg-ausland", catalogId: "bafoeg.abroad", name: "Auslands-BAföG: Standardablauf", version: 1, updatedAt: now, updatedBy: "Fachbereich Ausland (Muster)", nodes, edges };
+  return { id: "bafoeg-ausland", catalogId: "bafoeg.abroad", name: "Auslands-BAföG: Standardablauf", version: 1, updatedAt: now, updatedBy: "Fachbereich Ausland (Muster)", inputs: defaultInputs(), nodes, edges };
 }
 
 /**

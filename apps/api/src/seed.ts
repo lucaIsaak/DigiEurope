@@ -1,5 +1,5 @@
-import { addDays, estimate, isoDate, runChecks, type Application, type Lang, type StayInfo, type StudentInfo } from "@digieurope/shared";
-import { addDocument, newApplication, officeAct } from "./cases.js";
+import { addDays, estimate, isoDate, type Application, type Lang, type StayInfo, type StudentInfo } from "@digieurope/shared";
+import { addDocument, checksFor, newApplication, officeAct } from "./cases.js";
 import { sampleDocuments, type Defect, type SamplePerson } from "./samples.js";
 import type { Store } from "./store.js";
 
@@ -82,7 +82,7 @@ export function buildCase(
   };
   const minutes = (n: number) => new Date(t.getTime() + n * 60_000);
   upload(sampleDocuments(p, opts.defects), minutes(20));
-  const first = runChecks(app, store.ruleStates(), minutes(25));
+  const first = checksFor(store, app, minutes(25));
   app = {
     ...app,
     firstFindings: first.findings.filter((f) => f.severity === "blocker").map((f) => f.ruleId),

@@ -1,4 +1,4 @@
-import type { Application, CaseView, CatalogNode, CatalogVariant, Harmony, OfficeSettings, ProcessDef, StaffMember, RunLogEntry, Mail, IntegrationEntry, ProcessIssue, DocumentKind, Extraction, LetterFields, Lang, Rule, RuleState, StayInfo, StudentInfo } from "@digieurope/shared";
+import type { Application, CaseView, DocumentTemplate, FieldType, TemplateField, TemplateProposal, CatalogNode, CatalogVariant, Harmony, OfficeSettings, ProcessDef, StaffMember, RunLogEntry, Mail, IntegrationEntry, ProcessIssue, DocumentKind, Extraction, LetterFields, Lang, Rule, RuleState, StayInfo, StudentInfo } from "@digieurope/shared";
 
 export class ApiError extends Error {
   issues?: ProcessIssue[];
@@ -98,6 +98,34 @@ export interface OfficeConfigResponse {
   documentTypes: { kind: DocumentKind; title: string; fields: { key: string; label: string }[]; signatures: { key: string; label: string }[] }[];
 }
 
+export interface TemplateLibrary {
+  templates: (DocumentTemplate & { extraction: { method: MethodInfo["id"]; minConfidence: number } })[];
+  proposals: TemplateProposal[];
+  canApprove: boolean;
+  canPropose: boolean;
+}
+
+export interface TemplateSuggestion {
+  title: string;
+  fields: TemplateField[];
+  signatures: { key: string; label: string }[];
+  sampleFilename: string;
+}
+
+export interface ProposalBody {
+  name: string;
+  formblatt?: string;
+  title: string;
+  purpose: string;
+  providedBy: DocumentTemplate["providedBy"];
+  fields: TemplateField[];
+  signatures: { key: string; label: string }[];
+  sampleFilename?: string;
+  submit?: boolean;
+}
+
+export type { FieldType };
+
 export interface MethodInfo {
   id: "builtin" | "ai" | "ocr_rules" | "external";
   name: { de: string; en: string };
@@ -118,8 +146,9 @@ export interface SampleFile {
 }
 
 export interface SampleList {
-  sets: { id: string; title: { de: string; en: string }; note: { de: string; en: string }; docs: SampleFile[]; fixes: SampleFile[] }[];
+  sets: { id: string; title: { de: string; en: string }; note: { de: string; en: string }; docs: SampleFile[]; fixes: SampleFile[]; extras: SampleFile[] }[];
   letter: string;
+  proposal: string;
 }
 
 export interface OfficeMetrics {
@@ -195,7 +224,13 @@ export const api = {
   staffMe: () => call<StaffMember | null>("/staff/me"),
   staffLogout: () => call<{ ok: true }>("/staff/logout", { method: "POST" }),
   staffList: () => call<StaffMember[]>("/office/staff"),
-  setBuildAccess: (id: string, canBuild: boolean) => call<StaffMember[]>(`/office/staff/${id}`, { method: "PUT", json: { canBuild } }),
+  setAccess: (id: string, access: { canBuild?: boolean; canApproveTemplates?: boolean }) => call<StaffMember[]>(`/office/staff/${id}`, { method: "PUT", json: access }),
+  setInfo: (id: string, key: string, value: string) => call<CaseView>(`/applications/${id}/info`, { method: "PUT", json: { key, value } }),
+  templates: () => call<TemplateLibrary>("/office/templates"),
+  suggestTemplate: async (file: File) => call<TemplateSuggestion>("/office/templates/proposals/suggest", { method: "POST", json: await filePayload(file) }),
+  saveProposal: (body: ProposalBody, id?: string) => call<TemplateProposal>(id ? `/office/templates/proposals/${id}` : "/office/templates/proposals", { method: id ? "PUT" : "POST", json: body }),
+  acceptProposal: (id: string, method: MethodInfo["id"], minConfidence: number) => call<TemplateProposal>(`/office/templates/proposals/${id}/accept`, { method: "POST", json: { method, minConfidence } }),
+  rejectProposal: (id: string, comment: string) => call<TemplateProposal>(`/office/templates/proposals/${id}/reject`, { method: "POST", json: { comment } }),
 
   processes: (category = "bafoeg.abroad") =>
     call<{ catalogId: string; live: ProcessDef | null; draft: ProcessDef | null; history: { version: number; updatedAt: string; updatedBy: string; name: string }[] }>(`/office/processes?category=${encodeURIComponent(category)}`),
