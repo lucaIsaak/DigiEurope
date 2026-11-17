@@ -69,6 +69,27 @@ function useCountUp(value: number) {
   return shown;
 }
 
+function Ring({ done, total }: { done: number; total: number }) {
+  const { t } = useI18n();
+  const r = 56;
+  const c = 2 * Math.PI * r;
+  const p = total ? done / total : 0;
+  return (
+    <div className="ring" role="img" aria-label={t("my.progress", { done, total })}>
+      <svg width="132" height="132" viewBox="0 0 132 132">
+        <circle cx="66" cy="66" r={r} fill="none" stroke="rgba(255,255,255,0.18)" strokeWidth="10" />
+        <circle cx="66" cy="66" r={r} fill="none" stroke="#fff" strokeWidth="10" strokeLinecap="round" strokeDasharray={c} strokeDashoffset={c * (1 - p)} style={{ transition: "stroke-dashoffset 0.8s cubic-bezier(.2,.8,.2,1)" }} />
+      </svg>
+      <div className="label">
+        <div>
+          <strong className="num">{done}/{total}</strong>
+          <br />
+          <span>{t("my.progress.label")}</span>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 export default function MyApplication({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
@@ -243,32 +264,40 @@ export default function MyApplication({ params }: { params: Promise<{ id: string
     <div className="my">
       <input ref={fileInput} type="file" multiple accept="application/pdf,image/png,image/jpeg" className="visually-hidden" onChange={(ev) => { const f = [...(ev.target.files ?? [])]; if (f.length) void upload(f); ev.target.value = ""; }} />
 
-      <header className="gv-head" aria-live="polite">
-        <p className="gv-kicker">{t("my.kicker", { ref: c.reference })}</p>
-        {c.status === "approved" ? (
-          <div className="gv-confirm"><h1>{title}</h1><p>{sub}</p></div>
-        ) : (
-          <>
-            <h1 className="gv-h1">{title}</h1>
-            <p className="gv-lead">{sub}</p>
-          </>
-        )}
-        <dl className="gv-summary">
-          <div><dt>{t("office.case.stay")}</dt><dd>{tk(`stay.${c.stay.type}`)} · {c.stay.city}, {country(c.stay.country)}</dd></div>
-          <div><dt>{t("my.dates")}</dt><dd>{date(c.stay.startDate)} – {date(c.stay.endDate)}</dd></div>
-          <div><dt>{t("my.status")}</dt><dd>{t("my.stepOf", { n: stepIdx + 1, m: steps.length, name: t(steps[Math.min(stepIdx, steps.length - 1)]!.key) })}</dd></div>
-        </dl>
-        <div className="row">
-          {next && (
-            <button type="button" className="button gv-start" onClick={next.run}>
-              {next.label}
-            </button>
-          )}
-          {waiting && <span className="gv-inset-inline">{waiting}</span>}
-          {c.decision && <Link href="/letter" className="button button-ghost">{t("my.next.letter")}</Link>}
-          {reading && <span className="muted"><span className="spinner" style={{ width: 14, height: 14, borderWidth: 2 }} /> {t("my.reading")}</span>}
+      <section className={`my-hero${heroState ? ` state-${heroState}` : ""}`} aria-live="polite">
+        <div>
+          <div className="kicker">{t("my.kicker", { ref: c.reference })}</div>
+          <h1>{title}</h1>
+          <p>{sub}</p>
+          <div className="meta">
+            <span className="chip"><MapPin size={13} />{c.stay.city}, {country(c.stay.country)}</span>
+            <span className="chip">{date(c.stay.startDate)} – {date(c.stay.endDate)}</span>
+            <span className="chip">{tk(`stay.${c.stay.type}`)}</span>
+          </div>
+          <div className="row">
+            {next && (
+              <button type="button" className={`btn-hero${next.tone === "accent" ? " accent" : ""}`} onClick={next.run}>
+                {next.icon}
+                {next.label}
+                <ArrowRight size={16} />
+              </button>
+            )}
+            {waiting && <span className="chip"><Mail size={13} />{waiting}</span>}
+            {c.decision && <Link href="/letter" className="btn-hero">{t("my.next.letter")} <ArrowRight size={16} /></Link>}
+            {reading && <span className="chip"><span className="spinner" style={{ width: 14, height: 14, borderWidth: 2 }} />{t("my.reading")}</span>}
+          </div>
         </div>
-      </header>
+        {editable ? <Ring done={done} total={total} /> : <div className="ring"><div className="label">{c.status === "approved" ? <CheckCircle2 size={56} /> : <InboxIcon size={52} />}</div></div>}
+      </section>
+
+      <ol className="stepper" aria-label={t("case.status.title")}>
+        {steps.map((s, i) => (
+          <li key={s.key} className={i < stepIdx ? "done" : i === stepIdx ? "now" : ""}>
+            <span className="dot">{i < stepIdx ? <Check size={15} /> : s.icon}</span>
+            {t(s.key)}
+          </li>
+        ))}
+      </ol>
 
       {error && <p className="banner banner-bad" role="alert" style={{ margin: 0 }}>{error}</p>}
 
@@ -375,8 +404,7 @@ export default function MyApplication({ params }: { params: Promise<{ id: string
                         <input style={{ marginTop: "0.5rem", maxWidth: 280 }} type={i.req.question.type === "number" ? "number" : i.req.question.type === "date" ? "date" : "text"} defaultValue={c.info?.[i.req.ref] ?? ""} disabled={!editable} onBlur={async (ev) => setC(await api.setInfo(id, i.req!.ref, ev.target.value))} />
                       )}
                     </div>
-                    <div className="row" style={{ gap: "0.5rem" }}>
-                      <strong className={`gv-tag ${i.state}`}>{stateText(i.state)}</strong>
+                    <div className="row" style={{ gap: "0.4rem" }}>
                       {i.docId && <a className="mini-btn" href={documentUrl(i.docId)} target="_blank" rel="noreferrer">{t("my.view")}</a>}
                       {editable && i.req?.type === "document" && i.group !== "parents" && (
                         <button type="button" className={`mini-btn${i.state === "todo" || i.state === "fix" ? " primary" : ""}`} onClick={() => fileInput.current?.click()}>
