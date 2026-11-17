@@ -1,3 +1,4 @@
+import { randomBytes } from "node:crypto";
 import Fastify, { type FastifyReply } from "fastify";
 import {
   DOCUMENT_KINDS,
@@ -11,16 +12,27 @@ import {
   type CaseStatus,
   type DocumentKind,
   type Lang,
+  type ProcessDef,
+  type StaffMember,
   type StayInfo,
   type StudentInfo,
+  validateProcess,
 } from "@digieurope/shared";
+import { resumeRun, startRun } from "./engine.js";
+import { Store as ScratchStore } from "./store.js";
 import { askLive, liveAvailable, retrieve } from "./assistant.js";
 import { PARENT_KINDS, addDocument, checkNow, invite, newApplication, officeAct, open, removeDocument, submit, view, type OfficeAction } from "./cases.js";
 import { DOC_SPECS, extractDocument } from "./documents.js";
 import { computeInsights } from "./metrics.js";
-import { SAMPLE_SETS, fixDocuments, getPerson, sampleDocuments, sampleLetter } from "./samples.js";
+import { SAMPLE_SETS, fixDocuments, getPerson, sampleDocuments, sampleLetter, type Defect } from "./samples.js";
 import { deliverFromPortal, seedDemoData } from "./seed.js";
 import type { Store } from "./store.js";
+
+declare module "fastify" {
+  interface FastifyRequest {
+    staff: StaffMember | null;
+  }
+}
 
 export interface AppOptions {
   store: Store;
@@ -37,9 +49,24 @@ export function buildApp(opts: AppOptions) {
   const now = opts.now ?? (() => new Date());
   const webUrl = opts.webUrl ?? "http://localhost:3000";
   const app = Fastify({ logger: opts.logger ?? false, bodyLimit: 12 * 1024 * 1024 });
+  app.decorateRequest("staff", null);
+  const needsBuild = (method: string, url: string) =>
+    url.startsWith("/office/processes") || (method !== "GET" && (url.startsWith("/office/inputs") || url.startsWith("/office/config") || /^\/office\/rules\/[^/]+\/(approve|revoke)/.test(url)));
+  app.addHook("onRequest", async (req, reply) => {
+    const url = req.url.split("?")[0]!;
+    const token = req.headers["x-staff-token"];
+    req.staff = store.staffBySession(typeof token === "string" ? token : undefined) ?? null;
+    const protectedRoute = url.startsWith("/office") || url === "/staff/me" || url === "/staff/logout";
+    if (!protectedRoute) return;
+    if (!req.staff) return reply.code(401).send({ error: "Please sign in as staff." });
+    if (url.startsWith("/office/staff") && !req.staff.isAdmin) return reply.code(403).send({ error: "Only administrators can do this." });
+    if (needsBuild(req.method, url) && !req.staff.canBuild && !req.staff.isAdmin) return reply.code(403).send({ error: "You do not have access to the process builder." });
+  });
   const notFound = (reply: FastifyReply) => reply.code(404).send({ error: "Not found" });
   const bad = (reply: FastifyReply, error: string, code = 400) => reply.code(code).send({ error });
   const v = (a: Application) => view(store, a, webUrl, now());
+  /** Hands a submitted application to the live process of the office. */
+  const runLive = (a: Application) => store.put(startRun(store.processes().live, a, { rules: store.ruleStates(), now: now() }));
 
   function readFile(body: { filename?: string; mimeType?: string; dataBase64?: string } | undefined) {
     const { filename, mimeType, dataBase64 } = body ?? {};
@@ -108,7 +135,7 @@ export function buildApp(opts: AppOptions) {
     if (!a) return notFound(reply);
     if (!EDITABLE.includes(a.status)) return bad(reply, "Application was already submitted.", 409);
     if (!runChecks(a, store.ruleStates(), now()).ready) return bad(reply, "There are still items to fix.", 409);
-    return v(submit(store, a, now()));
+    return v(runLive(submit(store, a, now())));
   });
 
   app.get<{ Querystring: { reference?: string; birthDate?: string } }>("/status/lookup", async (req, reply) => {
@@ -207,10 +234,12 @@ export function buildApp(opts: AppOptions) {
     } else if (action === "reject") {
       if (!message?.trim()) return bad(reply, "Please give a reason.");
     } else return bad(reply, "Unknown action.");
-    return v(officeAct(store, a, action, { message, amount, by: "Sachbearbeitung (Demo)" }, now()));
+    const acted = officeAct(store, a, action, { message, amount, by: req.staff?.name ?? "Sachbearbeitung" }, now());
+    const outcome = action === "approve" ? "approved" : action === "reject" ? "rejected" : "info";
+    return v(store.put(resumeRun(store.processes().live, acted, outcome, { rules: store.ruleStates(), now: now() })));
   });
 
-  app.post("/office/portal/deliver", async (_req, reply) => reply.code(201).send(summary(deliverFromPortal(store, now()))));
+  app.post("/office/portal/deliver", async (_req, reply) => reply.code(201).send(summary(runLive(deliverFromPortal(store, now())))));
 
   app.get("/office/insights", async () => computeInsights(store.list(), now()));
 
@@ -287,6 +316,109 @@ export function buildApp(opts: AppOptions) {
     }
     if (!file) return notFound(reply);
     return reply.header("Content-Type", "application/pdf").header("Content-Disposition", `inline; filename="${file.filename}"`).send(file.content);
+  });
+
+
+  // ---- Staff and access -------------------------------------------------------
+  app.get("/staff/accounts", async () => store.staff().map(({ id, name, title }) => ({ id, name, title })));
+  app.post<{ Body: { staffId?: string } }>("/staff/login", async (req, reply) => {
+    const member = store.staff().find((m) => m.id === req.body?.staffId);
+    if (!member) return bad(reply, "Unknown account.", 401);
+    const token = randomBytes(18).toString("hex");
+    store.login(member.id, token);
+    return { token, staff: member };
+  });
+  app.get("/staff/me", async (req) => req.staff);
+  app.post("/staff/logout", async (req) => {
+    const t = req.headers["x-staff-token"];
+    if (typeof t === "string") store.logout(t);
+    return { ok: true };
+  });
+  app.get("/office/staff", async () => store.staff());
+  app.put<{ Params: { id: string }; Body: { canBuild?: boolean } }>("/office/staff/:id", async (req, reply) => {
+    const m = store.staff().find((x) => x.id === req.params.id);
+    if (!m) return notFound(reply);
+    if (m.isAdmin) return bad(reply, "Administrators always have access.", 409);
+    store.setStaff(m.id, { canBuild: Boolean(req.body?.canBuild) });
+    return store.staff();
+  });
+
+  // ---- Process builder ------------------------------------------------------------
+  const cleanDef = (def: ProcessDef | undefined, by: string, version: number): ProcessDef | null => {
+    if (!def || !Array.isArray(def.nodes) || !Array.isArray(def.edges) || def.nodes.length > 80 || def.edges.length > 200) return null;
+    return {
+      id: store.processes().live.id,
+      name: String(def.name ?? "Process").slice(0, 120),
+      version,
+      updatedAt: now().toISOString(),
+      updatedBy: by,
+      nodes: def.nodes.map((n) => ({ id: String(n.id), kind: n.kind, position: { x: Number(n.position?.x) || 0, y: Number(n.position?.y) || 0 }, config: n.config ?? {} })),
+      edges: def.edges.map((e) => ({ id: String(e.id), source: String(e.source), sourceHandle: String(e.sourceHandle), target: String(e.target) })),
+    };
+  };
+
+  app.get("/office/processes", async () => {
+    const p = store.processes();
+    return { live: p.live, draft: p.draft ?? null, history: p.history.map(({ version, updatedAt, updatedBy, name }) => ({ version, updatedAt, updatedBy, name })) };
+  });
+
+  app.put<{ Body: { def?: ProcessDef } }>("/office/processes/draft", async (req, reply) => {
+    const def = cleanDef(req.body?.def, req.staff!.name, store.processes().live.version + 1);
+    if (!def) return bad(reply, "This process cannot be saved.");
+    store.setProcesses({ ...store.processes(), draft: def });
+    return def;
+  });
+
+  app.post<{ Body: { def?: ProcessDef } }>("/office/processes/validate", async (req, reply) => {
+    const def = cleanDef(req.body?.def, req.staff!.name, 0);
+    return def ? { issues: validateProcess(def) } : bad(reply, "Invalid process.");
+  });
+
+  app.post<{ Body: { def?: ProcessDef } }>("/office/processes/publish", async (req, reply) => {
+    const p = store.processes();
+    const def = cleanDef(req.body?.def, req.staff!.name, p.live.version + 1);
+    if (!def) return bad(reply, "Invalid process.");
+    const issues = validateProcess(def);
+    if (issues.length) return reply.code(422).send({ error: "The process has open issues.", issues });
+    store.setProcesses({ live: def, draft: undefined, history: [...p.history, p.live] });
+    return def;
+  });
+
+  app.post<{ Body: { version?: number } }>("/office/processes/restore", async (req, reply) => {
+    const p = store.processes();
+    const old = p.history.find((h) => h.version === req.body?.version);
+    if (!old) return notFound(reply);
+    store.setProcesses({ ...p, draft: { ...old, version: p.live.version + 1, updatedAt: now().toISOString(), updatedBy: req.staff!.name } });
+    return store.processes().draft;
+  });
+
+  /** Runs a process on a sample case in a scratch store. Nothing real is touched. */
+  app.post<{ Body: { def?: ProcessDef; sample?: string; decision?: "approved" | "rejected" | "info" } }>("/office/processes/test", async (req, reply) => {
+    const def = cleanDef(req.body?.def, req.staff!.name, 0);
+    if (!def) return bad(reply, "Invalid process.");
+    const issues = validateProcess(def);
+    if (issues.length) return reply.code(422).send({ error: "The process has open issues.", issues });
+    const samples: Record<string, { person: string; defects: Defect[]; source: "web" | "portal" }> = {
+      incomplete: { person: "mira", defects: ["parent_unsigned", "host_missing"], source: "portal" },
+      complete: { person: "lea", defects: [], source: "web" },
+      internship: { person: "jonas", defects: ["contract_unsigned"], source: "portal" },
+    };
+    const sample = samples[req.body?.sample ?? "complete"] ?? samples.complete!;
+    const scratch = new ScratchStore();
+    const person = getPerson(sample.person, now());
+    let a = newApplication(scratch, { student: person.student, stay: person.stay, language: "de", source: sample.source }, now());
+    for (const d of sampleDocuments(person, sample.defects)) a = addDocument(scratch, a, { filename: d.filename, mimeType: "application/pdf", content: d.content }, "student", now());
+    a = { ...a, status: "submitted", submittedAt: now().toISOString() };
+    const ctx = { rules: store.ruleStates(), now: now() };
+    a = startRun(def, a, ctx);
+    const decision = req.body?.decision;
+    if (decision && a.flow?.waiting) {
+      if (decision === "approved") a = { ...a, status: "approved", decision: { outcome: "approved", monthlyAmount: estimate(a, now()).monthly, note: "", decidedAt: now().toISOString(), decidedBy: "Test" } };
+      if (decision === "rejected") a = { ...a, status: "rejected" };
+      if (decision === "info") a = { ...a, status: "info_requested" };
+      a = resumeRun(def, a, decision, ctx);
+    }
+    return { log: a.flow?.log ?? [], status: a.status, waiting: a.flow?.waiting ?? null, finished: a.flow?.finished ?? false, mails: a.outbox ?? [], integrations: a.integrations ?? [], team: a.assignedTeam ?? null };
   });
 
   // ---- Demo reset (not linked from the UI) ----------------------------------

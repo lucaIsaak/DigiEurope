@@ -16,12 +16,13 @@ Before you start: open http://localhost:3000/samples in a second tab and downloa
 | 2:50 | **Status** | The case is "Received", with the history. |
 | 3:00 | **Questions** | Click "Are tuition fees covered?". The answer names its source. Ask something off-topic: it says it does not know. |
 | 3:25 | **Check my letter** | "Use sample letter". Explain how the amount came about. Set parents' income to 25 % higher: "Likely to be rejected". Show what would change it. |
-| 3:55 | **Office → Inbox** | "For the office" at the top. Click "Simulate a new portal delivery": a new case arrives with its check already run. Open Mira's case. |
+| 3:55 | **Office → Inbox** | Footer link "Staff login", sign in as **Frau Beispiel** (caseworker; note there is no "Processes" in the menu). Click "Simulate a new portal delivery": the case arrives and the process has already asked for the missing documents with an AI-drafted mail. Open it and show "Process of this case". Open Mira's case. |
 | 4:15 | **Caseworker** | Rule results, fields read from documents, estimate. "The software reads and applies fixed rules. You decide." Approve with the amount. |
 | 4:35 | **Rules** | The AI-drafted rule "Insurance covers the destination country" waits for approval. Show plain text, the fixed check and the passing sample cases. Approve it. |
+| 4:45 | **Processes** | Sign out, sign in as **Frau Lindner** (process designer). The canvas shows the office's own process: rule check, AI drafts mail, caseworker decides, payment connector. Drag a "Condition" onto the canvas, connect it, "Validate", then "Run test" on a sample case. Say: the office draws this itself, and connectors to its own systems plug in later. Herr Obermeier (administrator) decides who gets this access. |
 | 4:50 | **Insights** | Parent signature is missing in 28 % of cases, with a recommended form change. Close with: rules are federal and shared, each office configures only the local parts. |
 
-Not shown but available: **Inputs & setup** (define expected inputs from a sample document, local settings).
+Not shown but available: **Access** (administrator), **Inputs & setup** (define expected inputs from a sample document, local settings).
 
 ## If something goes wrong
 

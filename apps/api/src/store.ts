@@ -1,6 +1,29 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { defaultRuleStates, type Application, type DocumentKind, type DocumentRef, type Lang, type RuleState } from "@digieurope/shared";
+import {
+  defaultProcess,
+  defaultRuleStates,
+  type Application,
+  type DocumentKind,
+  type DocumentRef,
+  type Lang,
+  type ProcessDef,
+  type RuleState,
+  type StaffMember,
+} from "@digieurope/shared";
+
+export const DEFAULT_STAFF: StaffMember[] = [
+  { id: "s-beispiel", name: "Frau Beispiel", title: "Sachbearbeitung Ausland", isAdmin: false, canBuild: false },
+  { id: "s-kaya", name: "Herr Kaya", title: "Sachbearbeitung Ausland", isAdmin: false, canBuild: false },
+  { id: "s-lindner", name: "Frau Lindner", title: "Prozessverantwortliche", isAdmin: false, canBuild: true },
+  { id: "s-obermeier", name: "Herr Obermeier", title: "Amtsleitung (Administrator)", isAdmin: true, canBuild: true },
+];
+
+export interface ProcessStore {
+  live: ProcessDef;
+  draft?: ProcessDef;
+  history: ProcessDef[];
+}
 
 export interface OfficeConfig {
   name: string;
@@ -33,9 +56,15 @@ interface Data {
   parentTokens: Record<string, string>;
   ruleStates: Record<string, RuleState>;
   config: OfficeConfig;
+  staff: StaffMember[];
+  sessions: Record<string, string>;
+  processes: ProcessStore;
 }
 
-const fresh = (): Data => ({ seq: 0, applications: [], documents: [], parentTokens: {}, ruleStates: defaultRuleStates(), config: defaultConfig() });
+const fresh = (): Data => ({
+  seq: 0, applications: [], documents: [], parentTokens: {}, ruleStates: defaultRuleStates(), config: defaultConfig(),
+  staff: DEFAULT_STAFF.map((x) => ({ ...x })), sessions: {}, processes: { live: defaultProcess(), history: [] },
+});
 
 /** Prototype persistence: one JSON file plus an uploads folder. Without a directory everything stays in memory (tests). */
 export class Store {
@@ -63,7 +92,8 @@ export class Store {
 
   /** Wipes all demo data and returns to the factory state. */
   clear() {
-    this.data = fresh();
+    const sessions = this.data.sessions;
+    this.data = { ...fresh(), sessions };
     this.files.clear();
     if (this.dir) {
       rmSync(join(this.dir, "uploads"), { recursive: true, force: true });
@@ -107,6 +137,27 @@ export class Store {
   ruleStates = (): Record<string, RuleState> => this.data.ruleStates;
   setRuleState(id: string, state: RuleState) {
     this.data.ruleStates[id] = state;
+    this.save();
+  }
+
+  staff = (): StaffMember[] => this.data.staff;
+  setStaff(id: string, patch: Partial<StaffMember>) {
+    this.data.staff = this.data.staff.map((m) => (m.id === id ? { ...m, ...patch } : m));
+    this.save();
+  }
+  login(staffId: string, token: string) {
+    this.data.sessions[token] = staffId;
+    this.save();
+  }
+  logout(token: string) {
+    delete this.data.sessions[token];
+    this.save();
+  }
+  staffBySession = (token: string | undefined): StaffMember | undefined => (token ? this.data.staff.find((m) => m.id === this.data.sessions[token]) : undefined);
+
+  processes = (): ProcessStore => this.data.processes;
+  setProcesses(p: ProcessStore) {
+    this.data.processes = p;
     this.save();
   }
 

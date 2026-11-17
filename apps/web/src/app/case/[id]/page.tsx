@@ -3,7 +3,7 @@
 import type { CaseView } from "@digieurope/shared";
 import Link from "next/link";
 import { use, useCallback, useEffect, useState } from "react";
-import { DocumentChecklist, EstimateCard, FindingList, Timeline } from "@/components/CaseParts";
+import { DocumentChecklist, EstimateCard, FindingList, Inbox, Timeline } from "@/components/CaseParts";
 import { DropZone, Field, Spinner, StatusPill, useAsyncError } from "@/components/ui";
 import { api } from "@/lib/api";
 import { useI18n } from "@/lib/i18n";
@@ -99,6 +99,8 @@ export default function CasePage({ params }: { params: Promise<{ id: string }> }
           <Link href="/letter">{t("case.decision.next")}</Link>
         </div>
       )}
+
+      <Inbox c={c} />
 
       <div className="grid-2">
         <div className="stack">

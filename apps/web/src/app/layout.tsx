@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import { Shell } from "@/components/Shell";
 import { LanguageProvider } from "@/lib/i18n";
+import { StaffProvider } from "@/lib/staff";
 import "./globals.css";
 
 export const metadata = {
@@ -13,7 +14,9 @@ export default function RootLayout({ children }: { children: ReactNode }) {
     <html lang="de">
       <body>
         <LanguageProvider>
-          <Shell>{children}</Shell>
+          <StaffProvider>
+            <Shell>{children}</Shell>
+          </StaffProvider>
         </LanguageProvider>
       </body>
     </html>

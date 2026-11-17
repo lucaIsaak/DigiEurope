@@ -197,3 +197,36 @@ pre.code { background: var(--bg); border: 1px solid var(--line); border-radius: 
 .spinner { width: 18px; height: 18px; border: 3px solid var(--line); border-top-color: var(--primary); border-radius: 50%; animation: spin 0.8s linear infinite; display: inline-block; }
 @keyframes spin { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) { .spinner { animation-duration: 3s; } }
+
+/* Process builder */
+.builder-wide { width: min(1560px, 100vw - 2rem); position: relative; left: 50%; transform: translateX(-50%); }
+.builder { display: grid; grid-template-columns: 210px minmax(0, 1fr) 320px; gap: 1rem; align-items: start; }
+@media (max-width: 1100px) { .builder { grid-template-columns: 1fr; } }
+.canvas-wrap { height: 80vh; min-height: 640px; border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; background: var(--surface); }
+.palette { display: grid; gap: 0.35rem; }
+.palette h3 { font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); margin: 0.75rem 0 0.15rem; }
+.palette-item { border: 1px solid var(--line); background: var(--surface); border-radius: 9px; padding: 0.45rem 0.6rem; font-size: 0.88rem; cursor: grab; display: flex; align-items: center; gap: 0.5rem; user-select: none; }
+.palette-item:hover { border-color: var(--primary); }
+.dot { width: 10px; height: 10px; border-radius: 3px; flex: none; }
+.cat-start .dot, .cat-start .flow-head { --c: #2f6f4f; }
+.cat-check .dot, .cat-check .flow-head { --c: #1d4f91; }
+.cat-decide .dot, .cat-decide .flow-head { --c: #8a4fbf; }
+.cat-message .dot, .cat-message .flow-head { --c: #b3621d; }
+.cat-route .dot, .cat-route .flow-head { --c: #51606f; }
+.cat-connector .dot, .cat-connector .flow-head { --c: #0f7b8a; }
+.cat-finish .dot, .cat-finish .flow-head { --c: #6b7280; }
+.dot { background: var(--c, #888); }
+.flow-node { width: 210px; background: var(--surface); color: var(--ink); border: 2px solid var(--line); border-radius: 10px; font-size: 0.82rem; box-shadow: var(--shadow); }
+.flow-node.sel { border-color: var(--primary); }
+.flow-node.visited { border-color: var(--ok); box-shadow: 0 0 0 3px var(--ok-soft); }
+.flow-node.issue { border-color: var(--bad); box-shadow: 0 0 0 3px var(--bad-soft); }
+.flow-head { background: var(--c, #888); color: #fff; padding: 0.35rem 0.6rem; border-radius: 7px 7px 0 0; font-weight: 600; display: flex; justify-content: space-between; gap: 0.4rem; align-items: center; }
+.flow-badge { background: rgba(255, 255, 255, 0.25); border-radius: 6px; padding: 0 0.35rem; font-size: 0.7rem; }
+.flow-body { padding: 0.4rem 0.6rem; color: var(--muted); min-height: 1.6rem; overflow-wrap: anywhere; }
+.flow-outs { display: flex; border-top: 1px dashed var(--line); }
+.flow-out { flex: 1; position: relative; text-align: center; padding: 0.15rem 0 0.7rem; font-size: 0.72rem; color: var(--muted); }
+.react-flow__handle { width: 11px; height: 11px; background: var(--primary); border: 2px solid var(--surface); }
+.log-line { display: grid; grid-template-columns: auto 1fr; gap: 0.5rem; font-size: 0.85rem; padding: 0.25rem 0; border-top: 1px solid var(--line); }
+.log-line:first-child { border-top: 0; }
+.mail { border: 1px solid var(--line); border-radius: 10px; padding: 0.7rem 0.85rem; background: var(--bg); }
+.mail pre { margin: 0.4rem 0 0; white-space: pre-wrap; font: inherit; font-size: 0.88rem; }

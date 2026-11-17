@@ -46,8 +46,12 @@ Optional live AI for the question assistant: copy `.env.example` to `.env` and s
 | Rules | Plain-language rules, the fixed check that runs, sample cases, approval. Federal rules are shared; offices only set local things |
 | Inputs & setup | Define expected inputs by uploading a sample document and confirming the fields read; local settings |
 | Insights | Most frequent first-check issues and recommended changes to the application form |
+| **Processes** (process builder) | A drag-and-drop canvas (React Flow) where the office draws its own process: trigger, rule check, AI steps (read documents, draft a mail), branches, routing to a team, "caseworker decides", messages and placeholder connectors to office systems (case software, e-file, payment, portal). Validate, **test-run on a sample case**, publish. The published process then really drives new applications |
+| Access | Only administrators grant access to the builder |
 
-The caseworker always decides. Checks are deterministic code; AI only reads documents (simulated here) and helps draft rules.
+**Staff access.** The office area needs a staff sign-in (footer link "Staff login"). Demo accounts: Frau Beispiel and Herr Kaya (caseworkers, no builder), Frau Lindner (process designer), Herr Obermeier (administrator, also grants builder access). The API enforces this, not just the menu. Demo sign-in has no password; a real system would use the administration's single sign-on.
+
+The caseworker always decides. Checks are deterministic code; AI only reads documents and drafts mails (both simulated here) and helps draft rules.
 
 ## Demo
 
@@ -68,5 +72,6 @@ Hidden demo helpers: press © in the footer five times (or Shift+Alt+R) to reset
 - **Official portal**: a button creates a delivery.
 - **E-mail to parents**: the link is shown on screen.
 - **Live AI**: optional and off unless a key is set.
-- **Login**: none. Anyone who can reach the server can open the office area.
+- **Login**: a demo staff sign-in with roles and no password. The student side has no login.
+- **Connectors**: placeholders with sample responses; no real system is called.
 - **Figures**: statutory amounts are taken from the law text ([sources](docs/bafoeg-rules-sources.md)). Country surcharges and some deductions are illustrative and labelled so.

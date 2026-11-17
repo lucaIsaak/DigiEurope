@@ -3,7 +3,7 @@
 import type { CaseView } from "@digieurope/shared";
 import Link from "next/link";
 import { use, useCallback, useEffect, useState } from "react";
-import { DocumentChecklist, EstimateCard, FindingList, Timeline } from "@/components/CaseParts";
+import { DocumentChecklist, EstimateCard, FindingList, FlowPanel, Timeline } from "@/components/CaseParts";
 import { Spinner, StatusPill, useAsyncError } from "@/components/ui";
 import { api } from "@/lib/api";
 import { useI18n } from "@/lib/i18n";
@@ -68,6 +68,10 @@ export default function OfficeCase({ params }: { params: Promise<{ id: string }>
           <section className="card">
             <h2>{t("office.case.documents")}</h2>
             <DocumentChecklist c={c} office />
+          </section>
+          <section className="card">
+            <h2>{t("flow.title")}</h2>
+            <FlowPanel c={c} />
           </section>
           <section className="card">
             <h2>{t("case.timeline")}</h2>

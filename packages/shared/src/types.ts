@@ -110,6 +110,51 @@ export interface Application {
   firstFindings: string[];
   officeMessage?: string;
   decision?: Decision;
+  /** Messages sent by the process. Students see those addressed to them. */
+  outbox?: Mail[];
+  /** Calls to connected systems made by the process. */
+  integrations?: IntegrationEntry[];
+  assignedTeam?: string;
+  /** State of the process that handles this case. */
+  flow?: FlowState;
+}
+
+export interface Mail {
+  id: string;
+  to: "student" | "parents" | "office";
+  subject: string;
+  body: string;
+  at: string;
+  /** True when the text was drafted by AI. */
+  aiDraft: boolean;
+  nodeId: string;
+}
+
+export interface IntegrationEntry {
+  at: string;
+  nodeId: string;
+  system: string;
+  action: string;
+  request: Record<string, unknown>;
+  response: Record<string, unknown>;
+}
+
+export interface RunLogEntry {
+  at: string;
+  nodeId: string;
+  kind: string;
+  handle?: string;
+  note: string;
+}
+
+export interface FlowState {
+  processId: string;
+  version: number;
+  startedAt: string;
+  log: RunLogEntry[];
+  /** Node a person has to act on. */
+  waiting?: string;
+  finished: boolean;
 }
 
 // ---- Rules -------------------------------------------------------------
@@ -202,4 +247,13 @@ export interface CaseView extends Application {
   report: CheckReport;
   estimate: Estimate;
   parentLink?: string;
+}
+
+/** An employee of the office. Admins can unlock the process builder for others. */
+export interface StaffMember {
+  id: string;
+  name: string;
+  title: string;
+  isAdmin: boolean;
+  canBuild: boolean;
 }

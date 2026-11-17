@@ -1,6 +1,6 @@
 "use client";
 
-import { REQUIRED_DOCS, type CaseView, type DocumentKind, type DocumentRef, type Finding } from "@digieurope/shared";
+import { NODE_CATALOG, REQUIRED_DOCS, type CaseView, type DocumentKind, type DocumentRef, type Finding, type NodeKind } from "@digieurope/shared";
 import { documentUrl } from "@/lib/api";
 import { useI18n } from "@/lib/i18n";
 import type { MessageKey } from "@/lib/messages";
@@ -171,5 +171,70 @@ export function Timeline({ c }: { c: CaseView }) {
         </li>
       ))}
     </ul>
+  );
+}
+
+/** Messages the process sent to the student. */
+export function Inbox({ c }: { c: CaseView }) {
+  const { t, dateTime } = useI18n();
+  const mails = (c.outbox ?? []).filter((m) => m.to === "student");
+  if (mails.length === 0) return null;
+  return (
+    <section className="card" aria-labelledby="inbox-h">
+      <h2 id="inbox-h">{t("inbox.title")}</h2>
+      <div className="stack" style={{ gap: "0.6rem" }}>
+        {[...mails].reverse().map((m) => (
+          <div className="mail" key={m.id}>
+            <div className="row" style={{ justifyContent: "space-between" }}>
+              <strong>{m.subject}</strong>
+              <span className="small muted">{dateTime(m.at)}</span>
+            </div>
+            <pre>{m.body}</pre>
+            {m.aiDraft && <p className="small muted" style={{ margin: "0.5rem 0 0" }}>{t("inbox.auto")}</p>}
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+/** What the office's process did with this case: steps, messages, calls to systems. */
+export function FlowPanel({ c }: { c: CaseView }) {
+  const { t, bi, dateTime } = useI18n();
+  if (!c.flow) return <p className="muted small">{t("flow.none")}</p>;
+  return (
+    <div className="stack" style={{ gap: "0.75rem" }}>
+      <p className="small muted" style={{ margin: 0 }}>
+        {t("flow.version", { name: c.flow.processId, v: c.flow.version })}{c.assignedTeam ? ` · ${t("flow.team", { t: c.assignedTeam })}` : ""}
+      </p>
+      <div>
+        {c.flow.log.map((l, i) => (
+          <div className="log-line" key={i}>
+            <span aria-hidden>{l.handle === "info" || l.note.startsWith("Waiting") ? "…" : "✓"}</span>
+            <span>
+              <strong>{bi(NODE_CATALOG[l.kind as NodeKind]?.title ?? { de: l.kind, en: l.kind })}</strong> <span className="muted small">{dateTime(l.at)}</span>
+              <br /><span className="muted">{l.note}</span>
+            </span>
+          </div>
+        ))}
+      </div>
+      {(c.outbox ?? []).length > 0 && (
+        <>
+          <h3 style={{ margin: 0 }}>{t("flow.mails")}</h3>
+          {(c.outbox ?? []).map((m) => (
+            <div className="mail" key={m.id}>
+              <strong className="small">→ {m.to}: {m.subject}</strong> {m.aiDraft && <span className="pill">{t("flow.aiDraft")}</span>}
+              <pre>{m.body}</pre>
+            </div>
+          ))}
+        </>
+      )}
+      {(c.integrations ?? []).length > 0 && (
+        <>
+          <h3 style={{ margin: 0 }}>{t("flow.calls")}</h3>
+          {(c.integrations ?? []).map((i, k) => <p key={k} className="small" style={{ margin: 0 }}><code>{i.system}.{i.action}</code> → {String((i.response as { externalId?: string }).externalId)}</p>)}
+        </>
+      )}
+    </div>
   );
 }

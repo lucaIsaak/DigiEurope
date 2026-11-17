@@ -8,9 +8,13 @@ import { Store } from "./store.js";
 const NOW = new Date("2026-11-16T10:00:00Z");
 const b64 = (b: Buffer) => b.toString("base64");
 
-function setup() {
+function setup(staffId = "s-obermeier") {
   const store = new Store();
   const app = buildApp({ store, now: () => NOW });
+  // Every request carries the session of the chosen employee, as the web app does.
+  store.login(staffId, "test-token");
+  const inject = app.inject.bind(app) as (o: Record<string, unknown>) => ReturnType<typeof app.inject>;
+  (app as unknown as { inject: unknown }).inject = (o: Record<string, unknown>) => inject({ ...o, headers: { "x-staff-token": "test-token", ...(o.headers as object) } });
   return { store, app };
 }
 
@@ -156,5 +160,89 @@ describe("demo data", () => {
     expect(insights.firstTimeComplete).toBeLessThan(80);
     const reset = (await app.inject({ method: "POST", url: "/admin/reset" })).json();
     expect(reset.ok).toBe(true);
+  });
+});
+
+describe("staff access", () => {
+  it("keeps the office area closed without a login", async () => {
+    const store = new Store();
+    const app = buildApp({ store, now: () => NOW });
+    expect((await app.inject({ method: "GET", url: "/office/cases" })).statusCode).toBe(401);
+    expect((await app.inject({ method: "GET", url: "/office/processes" })).statusCode).toBe(401);
+    const login = (await app.inject({ method: "POST", url: "/staff/login", payload: { staffId: "s-beispiel" } })).json();
+    expect(login.token).toBeTruthy();
+    expect((await app.inject({ method: "GET", url: "/office/cases", headers: { "x-staff-token": login.token } })).statusCode).toBe(200);
+  });
+
+  it("hides the process builder from caseworkers and unlocks it through an administrator", async () => {
+    const { app, store } = setup("s-beispiel");
+    expect((await app.inject({ method: "GET", url: "/office/processes" })).statusCode).toBe(403);
+    expect((await app.inject({ method: "PUT", url: "/office/staff/s-beispiel", payload: { canBuild: true } })).statusCode).toBe(403);
+    store.login("s-obermeier", "admin-token");
+    const unlock = await app.inject({ method: "PUT", url: "/office/staff/s-beispiel", payload: { canBuild: true }, headers: { "x-staff-token": "admin-token" } });
+    expect(unlock.statusCode).toBe(200);
+    expect((await app.inject({ method: "GET", url: "/office/processes" })).statusCode).toBe(200);
+  });
+
+  it("only designers may approve rules", async () => {
+    const { app } = setup("s-kaya");
+    expect((await app.inject({ method: "POST", url: "/office/rules/R-HEALTH-ABROAD/approve", payload: {} })).statusCode).toBe(403);
+    expect((await app.inject({ method: "GET", url: "/office/rules" })).statusCode).toBe(200);
+  });
+});
+
+describe("process builder and engine", () => {
+  it("the live process answers an incomplete portal delivery with an AI-drafted mail within the same request", async () => {
+    const { app } = setup();
+    const delivered = (await app.inject({ method: "POST", url: "/office/portal/deliver" })).json();
+    expect(delivered.status).toBe("info_requested");
+    const c = (await app.inject({ method: "GET", url: `/office/cases/${delivered.id}` })).json();
+    expect(c.outbox).toHaveLength(1);
+    expect(c.outbox[0].aiDraft).toBe(true);
+    expect(c.outbox[0].to).toBe("student");
+    expect(c.flow.log.some((l: { kind: string }) => l.kind === "ai_draft_mail")).toBe(true);
+  });
+
+  it("a complete case waits for the caseworker, then the decision continues the process", async () => {
+    const { app } = setup();
+    const { id, person } = await create(app, "lea");
+    for (const d of sampleDocuments(person)) await upload(app, `/applications/${id}/documents`, d.filename, d.content);
+    const submitted = (await app.inject({ method: "POST", url: `/applications/${id}/submit` })).json();
+    expect(submitted.assignedTeam).toBe("Team Ausland");
+    expect(submitted.flow.waiting).toBe("human");
+    const done = (await app.inject({ method: "POST", url: `/office/cases/${id}/actions`, payload: { action: "approve", amount: 900 } })).json();
+    expect(done.integrations[0].system).toBe("payment");
+    expect(done.outbox.some((m: { subject: string }) => m.subject.includes("bewilligt"))).toBe(true);
+    expect(done.flow.finished).toBe(true);
+  });
+
+  it("a changed process changes what happens, and publishing needs a valid process", async () => {
+    const { app } = setup();
+    const { live } = (await app.inject({ method: "GET", url: "/office/processes" })).json();
+    const broken = { ...live, edges: live.edges.filter((e: { id: string }) => e.id !== "rules:incomplete") };
+    const bad = await app.inject({ method: "POST", url: "/office/processes/publish", payload: { def: broken } });
+    expect(bad.statusCode).toBe(422);
+    // Variant: the incomplete branch only ends, no mail is sent.
+    const gone = ["draft", "ask"];
+    const quiet = {
+      ...live,
+      nodes: live.nodes.filter((n: { id: string }) => !gone.includes(n.id)),
+      edges: live.edges.filter((e: { source: string }) => !gone.includes(e.source)).map((e: { id: string; target: string }) => (e.id === "rules:incomplete" ? { ...e, target: "end-incomplete" } : e)),
+    };
+    expect((await app.inject({ method: "POST", url: "/office/processes/publish", payload: { def: quiet } })).statusCode).toBe(200);
+    const delivered = (await app.inject({ method: "POST", url: "/office/portal/deliver" })).json();
+    expect(delivered.status).toBe("submitted");
+    const hist = (await app.inject({ method: "GET", url: "/office/processes" })).json();
+    expect(hist.live.version).toBe(2);
+    expect(hist.history).toHaveLength(1);
+  });
+
+  it("test runs use a scratch store and leave real data untouched", async () => {
+    const { app, store } = setup();
+    const { live } = (await app.inject({ method: "GET", url: "/office/processes" })).json();
+    const res = (await app.inject({ method: "POST", url: "/office/processes/test", payload: { def: live, sample: "complete", decision: "approved" } })).json();
+    expect(res.integrations[0].action).toBe("create_payment_order");
+    expect(res.finished).toBe(true);
+    expect(store.list()).toHaveLength(0);
   });
 });

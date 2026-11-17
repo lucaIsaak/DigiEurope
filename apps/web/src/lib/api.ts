@@ -1,6 +1,7 @@
-import type { Application, CaseView, DocumentKind, Extraction, LetterFields, Lang, Rule, RuleState, StayInfo, StudentInfo } from "@digieurope/shared";
+import type { Application, CaseView, ProcessDef, StaffMember, RunLogEntry, Mail, IntegrationEntry, ProcessIssue, DocumentKind, Extraction, LetterFields, Lang, Rule, RuleState, StayInfo, StudentInfo } from "@digieurope/shared";
 
 export class ApiError extends Error {
+  issues?: ProcessIssue[];
   constructor(message: string, readonly status: number) {
     super(message);
   }
@@ -8,15 +9,22 @@ export class ApiError extends Error {
 
 async function call<T>(path: string, init?: RequestInit & { json?: unknown }): Promise<T> {
   const { json, ...rest } = init ?? {};
+  const token = typeof window !== "undefined" ? (sessionStorage.getItem("ms.staffToken") ?? undefined) : undefined;
   const res = await fetch(`/api${path}`, {
     ...rest,
-    headers: json !== undefined ? { "Content-Type": "application/json" } : undefined,
+    headers: { ...(json !== undefined ? { "Content-Type": "application/json" } : {}), ...(token ? { "x-staff-token": token } : {}) },
     body: json !== undefined ? JSON.stringify(json) : undefined,
     cache: "no-store",
   });
   if (!res.ok) {
-    const body = (await res.json().catch(() => ({}))) as { error?: string };
-    throw new ApiError(body.error ?? res.statusText, res.status);
+    const body = (await res.json().catch(() => ({}))) as { error?: string; issues?: ProcessIssue[] };
+    if (res.status === 401 && path.startsWith("/office") && typeof window !== "undefined") {
+      sessionStorage.removeItem("ms.staffToken");
+      window.location.href = "/office/login";
+    }
+    const err = new ApiError(body.error ?? res.statusText, res.status);
+    err.issues = (body as { issues?: ProcessIssue[] }).issues;
+    throw err;
   }
   return res.json() as Promise<T>;
 }
@@ -100,6 +108,16 @@ export interface SampleList {
   letter: string;
 }
 
+export interface TestRunResult {
+  log: RunLogEntry[];
+  status: string;
+  waiting: string | null;
+  finished: boolean;
+  mails: Mail[];
+  integrations: IntegrationEntry[];
+  team: string | null;
+}
+
 export const api = {
   meta: () => call<{ office: string; liveAssistant: boolean }>("/meta"),
   create: (body: { student: StudentInfo; stay: StayInfo; language: Lang }) => call<CaseView>("/applications", { method: "POST", json: body }),
@@ -131,6 +149,21 @@ export const api = {
   saveConfig: (body: { slaDays?: number; languages?: Lang[] }) => call<OfficeConfigResponse["config"]>("/office/config", { method: "PUT", json: body }),
   extractInput: async (file: File) => call<{ kind: DocumentKind; extraction: Extraction }>("/office/inputs/extract", { method: "POST", json: await filePayload(file) }),
   confirmInput: (kind: DocumentKind, fields: string[]) => call<OfficeConfigResponse["config"]>("/office/inputs/confirm", { method: "POST", json: { kind, fields } }),
+
+  staffAccounts: () => call<{ id: string; name: string; title: string }[]>("/staff/accounts"),
+  staffLogin: (staffId: string) => call<{ token: string; staff: StaffMember }>("/staff/login", { method: "POST", json: { staffId } }),
+  staffMe: () => call<StaffMember | null>("/staff/me"),
+  staffLogout: () => call<{ ok: true }>("/staff/logout", { method: "POST" }),
+  staffList: () => call<StaffMember[]>("/office/staff"),
+  setBuildAccess: (id: string, canBuild: boolean) => call<StaffMember[]>(`/office/staff/${id}`, { method: "PUT", json: { canBuild } }),
+
+  processes: () => call<{ live: ProcessDef; draft: ProcessDef | null; history: { version: number; updatedAt: string; updatedBy: string; name: string }[] }>("/office/processes"),
+  saveDraft: (def: ProcessDef) => call<ProcessDef>("/office/processes/draft", { method: "PUT", json: { def } }),
+  validateProcess: (def: ProcessDef) => call<{ issues: ProcessIssue[] }>("/office/processes/validate", { method: "POST", json: { def } }),
+  publish: (def: ProcessDef) => call<ProcessDef>("/office/processes/publish", { method: "POST", json: { def } }),
+  restore: (version: number) => call<ProcessDef>("/office/processes/restore", { method: "POST", json: { version } }),
+  testRun: (def: ProcessDef, sample: string, decision?: string) =>
+    call<TestRunResult>("/office/processes/test", { method: "POST", json: { def, sample, decision } }),
 
   samples: () => call<SampleList>("/samples"),
   reset: () => call<{ ok: true }>("/admin/reset", { method: "POST" }),
