@@ -25,7 +25,9 @@ export default function Inputs() {
     setSla(c.config.slaDays);
     setEx(await api.extraction());
   }, []);
-  useEffect(() => void load(), [load]);
+  useEffect(() => {
+    void load();
+  }, [load]);
 
   async function extract(file: File) {
     setBusy(true);

@@ -11,7 +11,9 @@ export default function Rules() {
   const [sel, setSel] = useState("R-HEALTH-ABROAD");
   const { error, run } = useAsyncError();
   const load = useCallback(async () => setRules(await api.rules()), []);
-  useEffect(() => void load(), [load]);
+  useEffect(() => {
+    void load();
+  }, [load]);
 
   if (!rules) return <Spinner label={t("common.loading")} />;
   const cur = rules.find((r) => r.rule.id === sel) ?? rules[0]!;

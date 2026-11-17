@@ -8,7 +8,9 @@ import { useI18n } from "@/lib/i18n";
 export default function Samples() {
   const { t, bi } = useI18n();
   const [list, setList] = useState<SampleList | null>(null);
-  useEffect(() => void api.samples().then(setList), []);
+  useEffect(() => {
+    void api.samples().then(setList);
+  }, []);
   if (!list) return <Spinner label={t("common.loading")} />;
   return (
     <div className="narrow stack">

@@ -8,7 +8,9 @@ import { useI18n } from "@/lib/i18n";
 export default function InsightsPage() {
   const { t, bi } = useI18n();
   const [ins, setIns] = useState<Insights | null>(null);
-  useEffect(() => void api.insights().then(setIns), []);
+  useEffect(() => {
+    void api.insights().then(setIns);
+  }, []);
   if (!ins) return <Spinner label={t("common.loading")} />;
   const max = Math.max(1, ...ins.missing.map((m) => m.count));
   const weekMax = Math.max(1, ...ins.perWeek.map((w) => w.count));

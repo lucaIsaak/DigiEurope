@@ -1,6 +1,7 @@
 "use client";
 
 import { analyzeLetter, type LetterFields, type LetterScenario } from "@digieurope/shared";
+import { FileSearch } from "lucide-react";
 import { useMemo, useState } from "react";
 import { DropZone, SourceLink, Spinner } from "@/components/ui";
 import { api, sampleUrl } from "@/lib/api";
@@ -38,14 +39,18 @@ export default function LetterPage() {
 
   return (
     <div className="stack">
-      <div>
-        <h1>{t("letter.title")}</h1>
-        <p className="lead" style={{ maxWidth: "62ch" }}>{t("letter.lead")}</p>
+      <div className="page-head" style={{ marginBottom: 0 }}>
+        <div>
+          <span className="eyebrow">{t("nav.letter")}</span>
+          <h1>{t("letter.title")}</h1>
+          <p>{t("letter.lead")}</p>
+        </div>
       </div>
       {!fields && (
         <section className="card narrow" style={{ margin: 0, width: "100%" }}>
+          <span className="icon-badge"><FileSearch size={24} /></span>
           <DropZone label={t("letter.drop")} multiple={false} accept="application/pdf" busy={busy} busyLabel={t("case.docs.reading")} onFiles={(f) => void read(f[0]!)} />
-          <p style={{ marginTop: "0.75rem", marginBottom: 0 }}><button type="button" className="link-button" onClick={useSample}>{t("letter.useSample")}</button></p>
+          <p style={{ marginTop: "0.9rem", marginBottom: 0 }}><button type="button" className="button button-ghost button-small" onClick={useSample}>{t("letter.useSample")}</button></p>
           {error && <p className="error-text" role="alert">{error}</p>}
         </section>
       )}
@@ -88,7 +93,7 @@ export default function LetterPage() {
             </section>
           </div>
           <aside className="stack sticky-side">
-            <section className={`banner ${verdictTone}`} aria-live="polite">
+            <section className={`card verdict ${verdictTone}`} aria-live="polite">
               <h2>{t(`letter.verdict.${analysis.next.verdict}` as MessageKey)}</h2>
               <p className="muted small" style={{ margin: 0 }}>{t("letter.expected")}</p>
               <div className="money">{eur(analysis.next.monthly)}</div>

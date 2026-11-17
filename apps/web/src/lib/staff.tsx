@@ -26,7 +26,10 @@ export function StaffProvider({ children }: { children: ReactNode }) {
     } catch {
       /* storage unavailable */
     }
-    if (!token) return setLoading(false);
+    if (!token) {
+      setLoading(false);
+      return;
+    }
     api.staffMe().then((m) => setStaff(m)).catch(() => setStaff(null)).finally(() => setLoading(false));
   }, []);
 

@@ -238,6 +238,7 @@ export function buildApp(opts: AppOptions) {
     return {
       id: a.id, reference: a.reference, name: `${a.student.lastName}, ${a.student.firstName}`, country: a.stay.country, stayType: a.stay.type, status: a.status,
       source: a.source, submittedAt: a.submittedAt ?? null, updatedAt: a.updatedAt, blockers: r.blockers, warnings: r.warnings, estimateMonthly: estimate(a, now()).monthly,
+      team: a.assignedTeam ?? null, waitingAt: liveDef()?.nodes.find((n) => n.id === a.flow?.waiting)?.kind ?? null,
     };
   };
 

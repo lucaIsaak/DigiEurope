@@ -53,6 +53,8 @@ export interface CaseSummary {
   blockers: number;
   warnings: number;
   estimateMonthly: number;
+  team: string | null;
+  waitingAt: string | null;
 }
 
 export interface ParentView {

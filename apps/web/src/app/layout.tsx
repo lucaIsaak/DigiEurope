@@ -1,3 +1,4 @@
+import { GeistSans } from "geist/font/sans";
 import type { ReactNode } from "react";
 import { Shell } from "@/components/Shell";
 import { LanguageProvider } from "@/lib/i18n";
@@ -12,7 +13,7 @@ export const metadata = {
 
 export default function RootLayout({ children }: { children: ReactNode }) {
   return (
-    <html lang="de" suppressHydrationWarning>
+    <html lang="de" className={GeistSans.variable} suppressHydrationWarning>
       <head>
         {/* Applies a saved theme before first paint, so there is no flash. */}
         <script dangerouslySetInnerHTML={{ __html: "try{var t=localStorage.getItem('ms.theme');if(t==='light'||t==='dark')document.documentElement.dataset.theme=t}catch(e){}" }} />

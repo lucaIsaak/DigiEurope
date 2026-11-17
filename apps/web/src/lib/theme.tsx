@@ -17,7 +17,10 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     const explicit = document.documentElement.dataset.theme;
-    if (explicit === "light" || explicit === "dark") return setTheme(explicit);
+    if (explicit === "light" || explicit === "dark") {
+      setTheme(explicit);
+      return;
+    }
     const mq = window.matchMedia("(prefers-color-scheme: dark)");
     setTheme(mq.matches ? "dark" : "light");
     const onChange = (e: MediaQueryListEvent) => {

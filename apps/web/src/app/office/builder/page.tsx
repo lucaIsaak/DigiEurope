@@ -191,7 +191,9 @@ function Builder() {
     loaded.current = true;
     setReady(true);
   }, [load, category]);
-  useEffect(() => void refresh(), []); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    void refresh();
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     setEdges((es) => es.map((e) => ({ ...e, label: edgeLabel(e.source, e.sourceHandle ?? "out", nodesRef.current) })));

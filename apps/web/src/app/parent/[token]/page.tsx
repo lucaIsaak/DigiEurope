@@ -1,5 +1,6 @@
 "use client";
 
+import { CheckCircle2, Circle, Clock, Users } from "lucide-react";
 import { use, useCallback, useEffect, useState } from "react";
 import { DropZone, Spinner } from "@/components/ui";
 import { api, type ParentView } from "@/lib/api";
@@ -20,7 +21,9 @@ export default function ParentPage({ params }: { params: Promise<{ token: string
       setMissing(true);
     }
   }, [token]);
-  useEffect(() => void load(), [load]);
+  useEffect(() => {
+    void load();
+  }, [load]);
 
   if (missing) return <p className="error-text narrow">{t("parent.notFound")}</p>;
   if (!v) return <Spinner label={t("common.loading")} />;
@@ -46,15 +49,22 @@ export default function ParentPage({ params }: { params: Promise<{ token: string
     setBusy(false);
   }
 
+  const okForm = Boolean(form && form.signed !== false);
+  const okTax = Boolean(tax && !(tax.taxYear && Number(tax.taxYear) !== v.incomeYear));
   return (
-    <div className="narrow stack">
-      <h1>{t("parent.title", { name: v.studentName })}</h1>
-      <p className="lead">{t("parent.lead")}</p>
+    <div className="center-card stack">
+      <span className="icon-badge"><Users size={24} /></span>
+      <div>
+        <h1 style={{ marginBottom: "0.4rem" }}>{t("parent.title", { name: v.studentName })}</h1>
+        <p className="muted" style={{ margin: 0 }}>{t("parent.lead")}</p>
+        <p className="small muted" style={{ marginTop: "0.5rem" }}><Clock size={13} style={{ verticalAlign: "-2px" }} /> {t("par.time")}</p>
+      </div>
       <section className="card">
-        <h2>{t("parent.need")}</h2>
-        <ul>
-          <li>{t("parent.need.form")} {form && (form.signed === false ? "✗" : "✓")}</li>
-          <li>{t("parent.need.tax", { year: v.incomeYear })} {tax && (tax.taxYear && Number(tax.taxYear) !== v.incomeYear ? "✗" : "✓")}</li>
+        <h3>{t("par.steps")}</h3>
+        <ul className="need-list" style={{ marginBottom: "1rem" }}>
+          <li>{okForm ? <CheckCircle2 size={18} color="var(--ok)" /> : <Circle size={18} />}{t("par.s1")}</li>
+          <li>{okTax ? <CheckCircle2 size={18} color="var(--ok)" /> : <Circle size={18} />}{t("par.s2", { year: v.incomeYear })}</li>
+          <li>{done ? <CheckCircle2 size={18} color="var(--ok)" /> : <Circle size={18} />}{t("par.s3")}</li>
         </ul>
         {done ? <p className="banner banner-ok" style={{ marginBottom: 0 }}>✓ {t("parent.done")}</p> : <DropZone label={t("parent.upload")} busy={busy} busyLabel={t("case.docs.reading")} onFiles={upload} />}
         {problems.map((p) => <p key={p} className="banner banner-warn" style={{ marginTop: "0.75rem", marginBottom: 0 }}>{p}</p>)}
