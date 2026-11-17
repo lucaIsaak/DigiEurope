@@ -473,6 +473,18 @@ const raw = {
   "flow.aiDraft": ["KI-Entwurf", "AI draft"],
   "inbox.title": ["Nachrichten vom Amt", "Messages from the office"],
   "inbox.auto": ["Automatisch verschickt. Der Text wurde mit KI-Unterstützung entworfen.", "Sent automatically. The text was drafted with AI assistance."],
+  "builder.tidy": ["Aufräumen", "Tidy up"],
+  "builder.undo": ["Rückgängig", "Undo"],
+  "builder.redo": ["Wiederholen", "Redo"],
+  "builder.fit": ["Alles anzeigen", "Fit to view"],
+  "builder.search": ["Bausteine suchen", "Search blocks"],
+  "builder.collapse": ["Leiste ein-/ausklappen", "Collapse or expand panel"],
+  "builder.empty": ["Ziehen Sie einen Baustein auf die Fläche oder klicken Sie ihn an.", "Drag a block onto the canvas or click one."],
+  "builder.close": ["Schließen", "Close"],
+  "builder.steps": ["Schritte", "Steps"],
+  "builder.testRun": ["Testlauf", "Test run"],
+  "builder.nothingYet": ["Starten Sie einen Testlauf, um den Weg eines Beispielfalls zu sehen.", "Run a test to see the path a sample case takes."],
+  "builder.issuesCount": ["{n} offene Punkte", "{n} open items"],
 } as const satisfies Record<string, readonly [string, string]>;
 
 export type MessageKey = keyof typeof raw;

@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
+import { LogOut } from "lucide-react";
 import { useEffect, useRef, type ReactNode } from "react";
 import { api } from "@/lib/api";
 import { useI18n } from "@/lib/i18n";
@@ -32,6 +33,7 @@ export function Shell({ children }: { children: ReactNode }) {
   const office = path.startsWith("/office");
   const { staff, loading, logout, canBuild } = useStaff();
   const onLogin = path === "/office/login";
+  const bleed = path === "/office/builder";
   const nav: [string, MessageKey][] = office
     ? staff
       ? [...OFFICE_NAV, ...(canBuild ? ([["/office/builder", "office.nav.builder"]] as [string, MessageKey][]) : []), ...(staff.isAdmin ? ([["/office/staff", "office.nav.staff"]] as [string, MessageKey][]) : [])]
@@ -66,7 +68,7 @@ export function Shell({ children }: { children: ReactNode }) {
   return (
     <>
       <header className={`site-header${office ? " office-bar" : ""}`}>
-        <div className="container header-inner">
+        <div className={`container header-inner${office ? " wide" : ""}`}>
           <Link href={office ? "/office" : "/"} className="brand">
             <span className="brand-mark" aria-hidden>SM</span>
             <span>
@@ -76,12 +78,17 @@ export function Shell({ children }: { children: ReactNode }) {
           </Link>
           <Nav items={nav} current={current} />
           {office && (
-            <span className="row small" style={{ gap: "0.6rem" }}>
-              <Link href="/" style={{ color: "inherit", opacity: 0.75 }}>{t("nav.student")}</Link>
+            <span className="header-user">
+              <Link href="/" className="header-link">{t("nav.student")}</Link>
               {staff && (
                 <>
-                  <span title={staff.title}>{staff.name}</span>
-                  <button type="button" className="link-button" style={{ color: "inherit", opacity: 0.8 }} onClick={() => void logout().then(() => router.push("/office/login"))}>{t("staff.signOut")}</button>
+                  <span className="user-chip" title={staff.title}>
+                    <span className="avatar" aria-hidden>{staff.name.split(" ").pop()?.[0]}</span>
+                    <span className="user-name">{staff.name}</span>
+                  </span>
+                  <button type="button" className="icon-button header-signout" title={t("staff.signOut")} aria-label={t("staff.signOut")} onClick={() => void logout().then(() => router.push("/office/login"))}>
+                    <LogOut size={16} />
+                  </button>
                 </>
               )}
             </span>
@@ -95,10 +102,10 @@ export function Shell({ children }: { children: ReactNode }) {
           </div>
         </div>
       </header>
-      <main id="main" className="container page">
-        {office && !onLogin && !staff ? <Spinner label={t("common.loading")} /> : children}
+      <main id="main" className={bleed ? "bleed" : "container page"}>
+        {office && !onLogin && !staff ? <div className="container page"><Spinner label={t("common.loading")} /></div> : children}
       </main>
-      <footer className="site-footer">
+      {!bleed && <footer className="site-footer">
         <div className="container">
           <span>
             <span
@@ -120,7 +127,7 @@ export function Shell({ children }: { children: ReactNode }) {
             <Link href="/office">{t("staff.footer")}</Link>
           </span>
         </div>
-      </footer>
+      </footer>}
     </>
   );
 }
