@@ -116,7 +116,7 @@ export default function Inputs() {
             const conf = c.expectedInputs[d.kind];
             return (
               <div key={d.kind} className="row" style={{ justifyContent: "space-between", borderTop: "1px solid var(--line)", paddingTop: "0.5rem" }}>
-                <div><strong>{tk(`doc.${d.kind}`)}</strong><br /><small className="muted">{d.fields.length} {t("office.inputs.fieldOk").length ? "·" : ""} {d.signatures.length ? `${d.signatures.length} ✍` : ""}</small></div>
+                <div><strong>{tk(`doc.${d.kind}`).startsWith("doc.") ? d.title : tk(`doc.${d.kind}`)}</strong><br /><small className="muted">{t("tpl.fields", { n: d.fields.length })}{d.signatures.length ? ` · ${t("tpl.signatures", { n: d.signatures.length })}` : ""}</small></div>
                 {conf ? <span className="pill pill-ok" title={dateTime(conf.confirmedAt)}>✓ {t("office.inputs.confirmed")}</span> : <span className="pill pill-warn">{t("office.inputs.notConfirmed")}</span>}
               </div>
             );

@@ -20,7 +20,7 @@ Before you start: open http://localhost:3000/samples in a second tab and downloa
 | 4:15 | **Caseworker** | Rule results, fields read from documents, estimate. "The software reads and applies fixed rules. You decide." Approve with the amount. |
 | 4:35 | **Rules** | The AI-drafted rule "Insurance covers the destination country" waits for approval. Show plain text, the fixed check and the passing sample cases. Approve it. |
 | 4:45 | **Processes** | Sign out, sign in as **Frau Lindner** (process designer). The canvas shows the office's own process: rule check, AI drafts mail, caseworker decides, payment connector. Drag a "Condition" onto the canvas, connect it, "Validate", then "Run test" on a sample case. Say: the office draws this itself, and connectors to its own systems plug in later. Herr Obermeier (administrator) decides who gets this access. |
-| 4:50 | **Insights** | Parent signature is missing in 28 % of cases, with a recommended form change. Close with: rules are federal and shared, each office configures only the local parts. |
+| 4:50 | **Insights** | Parent signature is missing in about a third of cases, with a recommended form change. Close with: rules are federal and shared, each office configures only the local parts. |
 
 Optional extra (about 60 seconds), templates: sign in as **Frau Lindner** (process designer) and open "Templates". Formblatt 6 and 8 are ready. Click "+ Add a new template proposal", drop the sample "Formblatt 7" from `/samples`: the fields are suggested. Submit. Sign in as **Frau Richter** (extractor owner), open the proposal, accept it and choose the reading method. In the builder, "Inputs" now lists it as a form the process can require.
 

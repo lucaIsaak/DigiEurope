@@ -63,7 +63,7 @@ Two sides on one platform.
 
 ## 6. Success measures (for a real pilot)
 
-- Share of applications complete at the first check (demo data: about 38 %, the target is to raise it with form changes).
+- Share of applications complete at the first check (demo data: about a third, the target is to raise it with form changes).
 - Days from submission to decision.
 - Number of "documents missing" rounds per case.
 - Share of students who book flat and flight after seeing the estimate and later find the estimate within range.

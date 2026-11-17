@@ -682,3 +682,5 @@ table.data tbody tr:hover { background: var(--surface-2); }
 .office-page > .stack > div:first-child { margin-bottom: 0.25rem; }
 
 .container.page { min-height: calc(100vh - 150px); }
+
+.brand-mark { color: #fff; }

@@ -121,7 +121,14 @@ export function seedDemoData(store: Store, now: Date = new Date()) {
   statusPlan.sort((a, b) => order[a]! - order[b]!);
   store.deferred(() => {
     statusPlan.forEach((status, i) => {
-      const ageDays = status === "approved" || status === "rejected" ? 40 + rand() * 30 : status === "draft" ? rand() * 2 : status === "submitted" ? rand() * 6 : 6 + rand() * 24;
+      // Open cases are young, so the demo inbox is mostly on time; one case in review is deliberately overdue to show the warning.
+      const firstInReview = status === "in_review" && statusPlan.indexOf("in_review") === i;
+      const ageDays =
+        status === "approved" || status === "rejected" ? 14 + rand() * 40
+        : status === "draft" ? rand() * 2
+        : status === "submitted" ? rand() * 3
+        : status === "in_review" ? (firstInReview ? 8 : 1 + rand() * 3)
+        : 2 + rand() * 10; // waiting for the student
       const p = randomPerson(rand, now);
       if (status === "rejected") p.parents = { ...p.parents, sumOfIncome: 135000, incomeTax: 34000 }; // rejected because parental income covers the need
       const source: "web" | "portal" = rand() < 0.55 ? "portal" : "web";

@@ -31,7 +31,7 @@ export default function StaffAccess() {
             {list.map((m) => (
               <tr key={m.id}>
                 <td><strong>{m.name}</strong><br /><small className="muted">{m.title}</small></td>
-                <td><span className={`pill ${m.isAdmin ? "pill-ok" : m.canBuild || m.canApproveTemplates ? "" : "pill-muted"}`}>{m.isAdmin ? t("staff.role.admin") : m.canApproveTemplates ? t("staff.role.owner") : m.canBuild ? t("staff.role.builder") : t("staff.role.caseworker")}</span></td>
+                <td><span className={`pill ${m.isAdmin ? "pill-ok" : m.canBuild || m.canApproveTemplates ? "" : "pill-muted"}`}>{m.isAdmin ? t("staff.role.admin") : m.isOversight ? t("oversight.label") : m.canApproveTemplates ? t("staff.role.owner") : m.canBuild ? t("staff.role.builder") : t("staff.role.caseworker")}</span></td>
                 <td>
                   <label className="row">
                     <input
