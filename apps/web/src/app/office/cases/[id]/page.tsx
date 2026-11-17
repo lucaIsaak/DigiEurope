@@ -1,13 +1,13 @@
 "use client";
 
 import type { CaseView, DocumentRef } from "@digieurope/shared";
-import { AlertCircle, ArrowLeft, ArrowRight, Building2, Calendar, CheckCircle2, Circle, FileText, Globe, MapPin, Send, Users, X, XCircle } from "lucide-react";
+import { ArrowLeft, ArrowRight, CheckCircle2, Send, X, XCircle } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { use, useCallback, useEffect, useMemo, useState } from "react";
 import { DecisionExplain } from "@/components/DecisionExplain";
 import { EstimateCard, FindingList, FlowPanel, ReviewPanel, Timeline, useDocName } from "@/components/CaseParts";
-import { Spinner, StatusPill, useAsyncError } from "@/components/ui";
+import { Spinner, StatusDot, useAsyncError } from "@/components/ui";
 import { api, documentUrl, type CaseSummary } from "@/lib/api";
 import { useI18n } from "@/lib/i18n";
 
@@ -82,59 +82,57 @@ function OfficeCase({ id }: { id: string }) {
   const fieldLabel = (k: string) => (tk(`field.${k}`).startsWith("field.") ? k.replace(/_/g, " ") : tk(`field.${k}`));
   const statusText = decided ? t("cd.decided") : c.status === "info_requested" ? t("cd.waiting") : blockers.length ? t("cd.blocked", { n: blockers.length }) : t("cd.ready");
 
+  const openItems = c.report.findings.length;
   return (
-    <div>
-      <div className="cd-head">
-        <div>
-          <Link href="/office" className="small" style={{ display: "inline-flex", alignItems: "center", gap: 4 }}><ArrowLeft size={14} />{t("office.inbox.title")}</Link>
-          <div className="row" style={{ marginTop: "0.6rem", gap: "0.5rem" }}>
-            <span className="small muted num">{c.reference}</span>
-            <span className="badge muted">{c.source === "portal" ? t("wl.portal") : t("wl.direct")}</span>
-            <StatusPill status={c.status} />
-          </div>
+    <div className="cp">
+      <header className="cp-head">
+        <Link href="/office" className="cp-back"><ArrowLeft size={14} />{t("office.inbox.title")}</Link>
+        <div className="cp-title">
           <h1>{c.student.firstName} {c.student.lastName}</h1>
-          <div className="small muted">{c.student.university} · {c.student.course} · {date(c.student.birthDate)}</div>
-          <div className="cd-facts">
-            <span><Globe size={13} />{tk(`stay.${c.stay.type}`)}</span>
-            <span><MapPin size={13} />{c.stay.city}, {country(c.stay.country)}</span>
-            <span><Building2 size={13} />{c.stay.institution}</span>
-            <span><Calendar size={13} />{date(c.stay.startDate)} – {date(c.stay.endDate)}</span>
-            {c.assignedTeam && <span><Users size={13} />{c.assignedTeam}</span>}
-          </div>
+          <StatusDot status={c.status} />
         </div>
-      </div>
+        <p className="cp-sub num">{c.reference} · {c.source === "portal" ? t("wl.portal") : t("wl.direct")} · {c.student.university} · {c.student.course} · {date(c.student.birthDate)}</p>
+        <p className="cp-facts">
+          <span>{tk(`stay.${c.stay.type}`)}</span>
+          <span>{c.stay.city}, {country(c.stay.country)}</span>
+          <span>{c.stay.institution}</span>
+          <span className="num">{date(c.stay.startDate)} – {date(c.stay.endDate)}</span>
+          {c.assignedTeam && <span>{c.assignedTeam}</span>}
+        </p>
+      </header>
 
-      <div className="cd-grid">
-        <div className="stack" style={{ gap: "1.25rem" }}>
+      <div className="cp-grid">
+        <div className="cp-main">
           {c.decision && <DecisionExplain c={c} />}
           <ReviewPanel c={c} onConfirm={async (docId, fields) => { const r = await run(() => api.reviewFields(id, docId, fields)); if (r) { setC(r); setAmount(r.estimate.monthly); } }} />
 
-          <section className="panel">
-            <div className="panel-head"><h2>{t("cd.openItems")} · {c.report.findings.length}</h2></div>
-            <div style={{ padding: "0 1.4rem 1rem" }}>
-              {c.report.findings.length === 0 ? <p className="banner banner-ok" style={{ margin: "0.5rem 0 0" }}><CheckCircle2 size={16} style={{ verticalAlign: "-3px" }} /> {t("office.case.noItems")}</p> : <FindingList findings={c.report.findings} showRule />}
-            </div>
+          <section className="cp-sec">
+            <h2>{t("cd.openItems")} <span className="n">{openItems}</span></h2>
+            {openItems === 0 ? <p className="q-ok"><CheckCircle2 size={14} />{t("office.case.noItems")}</p> : <FindingList findings={c.report.findings} showRule />}
           </section>
 
-          <section className="panel" style={{ overflow: "hidden" }}>
-            <div className="panel-head" style={{ paddingBottom: "0.9rem", borderBottom: "1px solid var(--line)" }}><h2>{t("cd.documents")} · {c.documents.length}</h2></div>
-            <div className="viewer2">
-              <nav className="doc-nav" aria-label={t("cd.selectDoc")}>
-                {docRows.map((r) => (
-                  <button key={r.key} type="button" aria-current={r.key === docKey} onClick={() => setDocKey(r.key)}>
-                    {!r.doc ? <Circle size={15} color={r.required ? "var(--bad)" : "var(--line-strong)"} /> : c.report.findings.some((f) => f.documentKind === r.kind && f.severity === "blocker") ? <AlertCircle size={15} color="var(--bad)" /> : r.doc.extraction.needsReview || !r.doc.extraction.readable ? <AlertCircle size={15} color="var(--warn)" /> : <CheckCircle2 size={15} color="var(--ok)" />}
-                    <span>{docName(r.kind)}</span>
-                  </button>
-                ))}
+          <section className="cp-sec">
+            <h2>{t("cd.documents")} <span className="n">{c.documents.length}</span></h2>
+            <div className="dv">
+              <nav className="dv-tabs" aria-label={t("cd.selectDoc")}>
+                {docRows.map((r) => {
+                  const tone = !r.doc ? (r.required ? "bad hollow" : "mute hollow") : c.report.findings.some((f) => f.documentKind === r.kind && f.severity === "blocker") ? "bad" : r.doc.extraction.needsReview || !r.doc.extraction.readable ? "warn" : "ok";
+                  return (
+                    <button key={r.key} type="button" aria-current={r.key === docKey} onClick={() => setDocKey(r.key)}>
+                      <i className={`dv-dot ${tone}`} />
+                      {docName(r.kind)}
+                    </button>
+                  );
+                })}
               </nav>
               {!sel?.doc ? (
-                <div className="preview-empty"><FileText size={28} /><p>{sel ? t("cd.notUploaded") : t("cd.selectDoc")}</p></div>
+                <div className="q-empty">{sel ? t("cd.notUploaded") : t("cd.selectDoc")}</div>
               ) : (
                 <div className="doc-body">
                   <div className="doc-frame"><iframe title={sel.doc.filename} src={`${documentUrl(sel.doc.id)}#toolbar=0&view=FitH`} /></div>
                   <div className="fields">
                     <div className="small muted" style={{ marginBottom: "0.4rem" }}>{sel.doc.filename} · {t("cd.readWith", { engine: tk(`read.engine.${sel.doc.extraction.engine ?? "builtin"}`) })}</div>
-                    <h3 style={{ fontSize: "0.85rem", margin: "0.6rem 0 0.2rem" }}>{t("cd.fields")}</h3>
+                    <h3>{t("cd.fields")}</h3>
                     {Object.entries(sel.doc.extraction.fields).map(([k, v]) => {
                       const conf = sel.doc!.extraction.confidence?.[k];
                       return (
@@ -147,7 +145,7 @@ function OfficeCase({ id }: { id: string }) {
                     })}
                     {Object.keys(sel.doc.extraction.signatures).length > 0 && (
                       <>
-                        <h3 style={{ fontSize: "0.85rem", margin: "0.9rem 0 0.2rem" }}>{t("cd.signatures")}</h3>
+                        <h3 style={{ marginTop: "0.9rem" }}>{t("cd.signatures")}</h3>
                         {Object.entries(sel.doc.extraction.signatures).map(([k, ok]) => (
                           <div className="f" key={k}>
                             <span className="v">{tk(`sig.${k}`).startsWith("sig.") ? k : tk(`sig.${k}`)}</span>
@@ -163,15 +161,23 @@ function OfficeCase({ id }: { id: string }) {
             </div>
           </section>
 
-          <div className="grid-2" style={{ gridTemplateColumns: "1fr 1fr" }}>
-            <section className="panel"><div className="panel-head"><h2>{t("cd.process")}</h2></div><div style={{ padding: "0.5rem 1.4rem 1.2rem" }}><FlowPanel c={c} /></div></section>
-            <section className="panel"><div className="panel-head"><h2>{t("case.timeline")}</h2></div><div style={{ padding: "0.5rem 1.4rem 1.2rem" }}><Timeline c={c} /></div></section>
+          <div className="cp-two">
+            <section className="cp-sec"><h2>{t("cd.process")}</h2><FlowPanel c={c} /></section>
+            <section className="cp-sec"><h2>{t("case.timeline")}</h2><Timeline c={c} /></section>
           </div>
         </div>
 
-        <aside className="side-stack">
+        <aside className="cp-side">
           {!decided && <EstimateCard c={c} compact />}
-          {c.parentLink && <div className="card small"><strong>{t("office.case.parentLink")}</strong><div className="muted" style={{ overflowWrap: "anywhere", marginTop: 4 }}>{c.parentLink}</div></div>}
+          {decided && (
+            <dl className="q-dl cp-dl">
+              <dt>{t("case.estimate.monthly")}</dt>
+              <dd className="num"><strong>{eur(c.decision?.monthlyAmount ?? 0)}</strong> {t("common.perMonth")}</dd>
+              <dt>{t("xp.m.by")}</dt>
+              <dd>{c.decision?.decidedBy}</dd>
+            </dl>
+          )}
+          {c.parentLink && <div className="cp-link"><strong>{t("office.case.parentLink")}</strong><span>{c.parentLink}</span></div>}
         </aside>
       </div>
 

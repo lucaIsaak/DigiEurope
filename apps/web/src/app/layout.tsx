@@ -1,3 +1,4 @@
+import "@fontsource-variable/newsreader";
 import { GeistSans } from "geist/font/sans";
 import type { ReactNode } from "react";
 import { Shell } from "@/components/Shell";

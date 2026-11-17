@@ -11,6 +11,20 @@ export function StatusPill({ status }: { status: CaseStatus }) {
   return <span className={`pill ${tone}`}>{t(`status.${status}` as MessageKey)}</span>;
 }
 
+const STATUS_TONE: Record<string, string> = { approved: "ok", rejected: "bad", info_requested: "warn", in_review: "info", submitted: "info", draft: "mute" };
+
+/** Status as a dot and a word. Colour carries only the meaning. */
+export function StatusDot({ status }: { status: CaseStatus }) {
+  const { t } = useI18n();
+  return <span className={`q-status ${STATUS_TONE[status] ?? "mute"}`}><i />{t(`status.${status}` as MessageKey)}</span>;
+}
+
+/** Status as a tinted chip, for lists where it has to be seen at a glance. */
+export function StatusChip({ status }: { status: CaseStatus }) {
+  const { t } = useI18n();
+  return <span className={`chip ${STATUS_TONE[status] ?? "mute"}`}>{t(`status.${status}` as MessageKey)}</span>;
+}
+
 export function SourceLink({ source }: { source: { label: string; url: string } }) {
   const { t } = useI18n();
   return (

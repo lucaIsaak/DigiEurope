@@ -6,6 +6,7 @@ import {
   describeCheck,
   estimate,
   runRuleTests,
+  type Rule,
   type Application,
   type CaseStatus,
   type DocumentKind,
@@ -70,7 +71,7 @@ export function buildApp(opts: AppOptions) {
   const app = Fastify({ logger: opts.logger ?? false, bodyLimit: 12 * 1024 * 1024 });
   app.decorateRequest("staff", null);
   const needsBuild = (method: string, url: string) =>
-    url.startsWith("/office/processes") || (method !== "GET" && /^\/office\/rules\/[^/]+\/(approve|revoke|draft|discard)/.test(url));
+    url.startsWith("/office/processes") || (method !== "GET" && (url === "/office/rules" || /^\/office\/rules\/[^/]+\/(approve|revoke|draft|discard)/.test(url)));
   /** Setting up how documents are read: process designers and the extractor owner. */
   const needsExtractorAccess = (method: string, url: string) => method !== "GET" && (url.startsWith("/office/inputs") || url.startsWith("/office/config"));
   /** How a template is read is decided by the extractor owner (or an administrator). */
@@ -242,7 +243,9 @@ export function buildApp(opts: AppOptions) {
   // ---- Office -----------------------------------------------------------------
   const summary = (a: Application) => {
     const r = checksFor(store, a, now());
+    const docs = (r.requirements ?? []).filter((x) => x.type === "document" && x.applies && x.required);
     return {
+      docsDone: docs.filter((x) => x.state === "ok").length, docsTotal: docs.length,
       id: a.id, reference: a.reference, name: `${a.student.lastName}, ${a.student.firstName}`, country: a.stay.country, stayType: a.stay.type, status: a.status,
       source: a.source, submittedAt: a.submittedAt ?? null, updatedAt: a.updatedAt, blockers: r.blockers, warnings: r.warnings, estimateMonthly: estimate(a, now()).monthly,
       team: a.assignedTeam ?? null, waitingAt: liveDef()?.nodes.find((n) => n.id === a.flow?.waiting)?.kind ?? null,
@@ -361,6 +364,53 @@ export function buildApp(opts: AppOptions) {
     },
   );
 
+  /** A new office rule. It starts as a draft that a second person has to approve, like every change. */
+  app.post<{ Body: { title?: Bilingual; plain?: Bilingual; fix?: Bilingual; severity?: "blocker" | "warning"; when?: Condition[]; pass?: Condition[] } }>("/office/rules", async (req, reply) => {
+    const body = req.body ?? {};
+    const known = new Set(factCatalog(allTemplates(store)).map((f) => f.path));
+    const OPS = ["present", "absent", "eq", "ne", "gte", "lte"];
+    const clean = (x: Bilingual | undefined) => ({ de: String(x?.de ?? "").trim().slice(0, 600), en: String(x?.en ?? "").trim().slice(0, 600) });
+    const title = clean(body.title);
+    const plain = clean(body.plain);
+    const fix = clean(body.fix);
+    if (!title.de || !title.en) return bad(reply, "Please name the rule in German and English.");
+    if (!plain.de || !plain.en) return bad(reply, "Please describe the rule in plain language, in German and English.");
+    if (!fix.de || !fix.en) return bad(reply, "Please write what the student sees when the rule fails, in German and English.");
+    if (!body.pass?.length) return bad(reply, "A rule needs at least one condition that must hold.");
+    for (const c of [...(body.when ?? []), ...body.pass]) {
+      if (!known.has(c.path) || !OPS.includes(c.op) || (c.valueRef && !known.has(c.valueRef))) return bad(reply, `Unknown condition: ${c.path}`);
+    }
+    if (Object.values(store.rules()).some((r) => (r.draft?.rule ?? r.live?.rule)?.title.en.toLowerCase() === title.en.toLowerCase())) return bad(reply, "A rule with this name already exists.", 409);
+    let n = Object.keys(store.rules()).filter((k) => k.startsWith("R-OFFICE-")).length + 1;
+    while (store.rules()[`R-OFFICE-${String(n).padStart(2, "0")}`]) n++;
+    const id = `R-OFFICE-${String(n).padStart(2, "0")}`;
+    // Sample cases are made from the rule itself: a complete application passes, and when the first condition is "is present", leaving it out must fail.
+    const first = body.pass[0]!;
+    const tests = [{ name: "Complete application", facts: {}, expectPass: true }];
+    if (first.op === "present") {
+      // "docs.x.sig.y" becomes { docs: { x: { sig: { y: false } } } }
+      const facts = first.path.split(".").reduceRight<unknown>((inner, key, i, all) => (i === all.length - 1 ? { [key]: false } : { [key]: inner }), undefined) as Record<string, unknown>;
+      tests.push({ name: "Without the required item", facts, expectPass: false });
+    }
+    const doc = first.path.startsWith("docs.") ? first.path.split(".")[1] : undefined;
+    const rule = {
+      id,
+      version: 1,
+      scope: "office",
+      title,
+      plain,
+      source: { label: "Local rule of the office", url: "" },
+      when: toCheck(body.when ?? []),
+      pass: toCheck(body.pass)!,
+      severity: body.severity === "warning" ? "warning" : "blocker",
+      fix,
+      documentKind: doc,
+      tests,
+    } as unknown as Rule;
+    store.setRule(id, { live: null, paused: false, draft: { rule, author: req.staff!.name, createdAt: now().toISOString() }, history: [] });
+    return reply.code(201).send(ruleView(id));
+  });
+
   app.post<{ Params: { id: string } }>("/office/rules/:id/approve", async (req, reply) => {
     const r = store.rules()[req.params.id];
     if (!r) return notFound(reply);
@@ -380,7 +430,12 @@ export function buildApp(opts: AppOptions) {
   app.post<{ Params: { id: string } }>("/office/rules/:id/discard", async (req, reply) => {
     const r = store.rules()[req.params.id];
     if (!r?.draft) return notFound(reply);
-    if (!r.live) return bad(reply, "This rule has no approved version yet. Change it instead of discarding.", 409);
+    if (!r.live) {
+      // A brand-new office rule that was never approved can be withdrawn completely; federal rules cannot be removed.
+      if (r.draft.rule.scope !== "office" || RULES.some((x) => x.id === req.params.id)) return bad(reply, "This rule has no approved version yet. Change it instead of discarding.", 409);
+      store.deleteRule(req.params.id);
+      return { id: req.params.id, deleted: true };
+    }
     store.setRule(req.params.id, { ...r, draft: undefined });
     return ruleView(req.params.id);
   });

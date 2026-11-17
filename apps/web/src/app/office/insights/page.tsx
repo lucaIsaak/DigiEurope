@@ -18,39 +18,38 @@ export default function InsightsPage() {
   const reco = ins.missing.filter((m) => m.share >= 10 && m.recommendation);
 
   return (
-    <div className="stack">
-      <div className="row" style={{ justifyContent: "space-between" }}>
-        <div>
-          <h1>{t("office.insights.title")}</h1>
-          <p className="lead" style={{ maxWidth: "70ch" }}>{t("office.insights.lead")}</p>
-        </div>
-        <span className="pill pill-muted">{t("office.insights.demo")}</span>
-      </div>
-      <div className="grid-4">
-        <div className="stat"><strong>{ins.total}</strong><span>{t("office.kpi.total")}</span></div>
-        <div className="stat"><strong>{ins.firstTimeComplete} %</strong><span>{t("office.kpi.complete")}</span></div>
-        <div className="stat"><strong>{ins.medianDaysToDecision ?? "–"}</strong><span>{t("office.kpi.days")}</span></div>
-        <div className="stat"><strong>{ins.open}</strong><span>{t("office.kpi.open")}</span></div>
-      </div>
+    <div className="ins">
+      <header className="ins-head">
+        <h1>{t("office.insights.title")}</h1>
+        <p>{t("office.insights.lead")}</p>
+        <span className="muted small">{t("office.insights.demo")}</span>
+      </header>
 
-      <div className="grid-2" style={{ gridTemplateColumns: "1.4fr 1fr" }}>
-        <section className="card">
+      <dl className="ins-kpis">
+        <div><dd className="num">{ins.total}</dd><dt>{t("office.kpi.total")}</dt></div>
+        <div><dd className="num">{ins.firstTimeComplete} %</dd><dt>{t("office.kpi.complete")}</dt></div>
+        <div><dd className="num">{ins.medianDaysToDecision ?? "–"}</dd><dt>{t("office.kpi.days")}</dt></div>
+        <div><dd className="num">{ins.open}</dd><dt>{t("office.kpi.open")}</dt></div>
+      </dl>
+
+      <div className="ins-cols">
+        <section className="ins-sec">
           <h2>{t("office.insights.missing")}</h2>
-          <div className="bars">
-            {ins.missing.map((m) => (
-              <div key={m.ruleId}>
-                <div className="row" style={{ justifyContent: "space-between" }}>
-                  <span>{bi(m.title)}</span>
-                  <span className="small muted">{t("office.insights.share", { n: m.count, p: m.share })}</span>
-                </div>
-                <div className="bar-track"><div className="bar" style={{ width: `${(m.count / max) * 100}%` }} /></div>
-              </div>
-            ))}
-          </div>
+          <table className="ins-table">
+            <tbody>
+              {ins.missing.map((m) => (
+                <tr key={m.ruleId}>
+                  <td>{bi(m.title)}</td>
+                  <td className="ins-bar" aria-hidden><span style={{ width: `${(m.count / max) * 100}%` }} /></td>
+                  <td className="r num">{t("office.insights.share", { n: m.count, p: m.share })}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </section>
-        <section className="card">
+        <section className="ins-sec">
           <h2>{t("office.insights.volume")}</h2>
-          <div className="col-chart" style={{ marginBottom: "1.5rem" }}>
+          <div className="col-chart ins-chart">
             {ins.perWeek.map((w) => (
               <div key={w.week} style={{ height: `${Math.max(2, (w.count / weekMax) * 100)}%` }} title={`${w.week}: ${w.count}`}><small>{w.week}</small></div>
             ))}
@@ -58,23 +57,23 @@ export default function InsightsPage() {
         </section>
       </div>
 
-      <section className="card">
+      <section className="ins-sec">
         <h2>{t("office.insights.reco")}</h2>
         <p className="muted">{t("office.insights.recoLead")}</p>
         {reco.length === 0 ? <p>{t("office.insights.noReco")}</p> : (
-          <div className="stack">
+          <ul className="ins-reco">
             {reco.map((m) => (
-              <div key={m.ruleId} className="banner banner-info">
-                <h3>{bi(m.title)} <span className="small muted">({m.share} %)</span></h3>
-                <p style={{ marginBottom: "0.6rem" }}>→ {bi(m.recommendation!)}</p>
-                <div className="row">
-                  {m.documentKind && <Link className="button button-small" href={`/office/templates?open=${m.documentKind}`}>{t("ins.openTemplate")}</Link>}
-                  <Link className="button button-ghost button-small" href="/office/rules">{t("ins.openRule")}</Link>
-                  <Link className="button button-ghost button-small" href="/office/builder">{t("ins.editProcess")}</Link>
+              <li key={m.ruleId}>
+                <div className="ins-reco-head"><strong>{bi(m.title)}</strong><span className="muted num">{m.share} %</span></div>
+                <p>{bi(m.recommendation!)}</p>
+                <div className="ins-links">
+                  {m.documentKind && <Link href={`/office/templates?open=${m.documentKind}`}>{t("ins.openTemplate")}</Link>}
+                  <Link href="/office/rules">{t("ins.openRule")}</Link>
+                  <Link href="/office/builder">{t("ins.editProcess")}</Link>
                 </div>
-              </div>
+              </li>
             ))}
-          </div>
+          </ul>
         )}
       </section>
     </div>

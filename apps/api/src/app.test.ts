@@ -546,6 +546,44 @@ describe("rule changes", () => {
     expect(store.liveRules().find((r) => r.id === "R-HEALTH")!.severity).toBe("warning");
   });
 
+  it("an administrator adds a new office rule; it runs only after a second person approves it", async () => {
+    const { app, store } = setup("s-obermeier");
+    const body = {
+      title: { de: "Versicherungsnachweis vorhanden", en: "Insurance certificate present" },
+      plain: { de: "Der Nachweis muss vorliegen.", en: "The certificate must be present." },
+      fix: { de: "Bitte laden Sie den Nachweis hoch.", en: "Please upload the certificate." },
+      severity: "warning",
+      when: [],
+      pass: [{ path: "docs.health_insurance.present", op: "present" }],
+    };
+    const made = await app.inject({ method: "POST", url: "/office/rules", payload: body });
+    expect(made.statusCode).toBe(201);
+    const rule = made.json();
+    expect(rule.id).toBe("R-OFFICE-01");
+    expect(rule.status).toBe("draft");
+    expect(rule.draft.rule.scope).toBe("office");
+    expect(rule.draft.tests.map((x: { ok: boolean }) => x.ok)).toEqual([true, true]); // complete case passes, missing item fails
+    expect(store.liveRules().some((r) => r.id === "R-OFFICE-01")).toBe(false);
+    expect((await app.inject({ method: "POST", url: "/office/rules/R-OFFICE-01/approve" })).statusCode).toBe(409); // author
+    expect((await app.inject({ method: "POST", url: "/office/rules", payload: { ...body, pass: [] } })).statusCode).toBe(400);
+    expect((await app.inject({ method: "POST", url: "/office/rules", payload: { ...body, fix: { de: "", en: "" } } })).statusCode).toBe(400);
+    store.login("s-lindner", "lindner");
+    const ok = (await app.inject({ method: "POST", url: "/office/rules/R-OFFICE-01/approve", headers: { "x-staff-token": "lindner" } })).json();
+    expect(ok.status).toBe("live");
+    expect(store.liveRules().some((r) => r.id === "R-OFFICE-01")).toBe(true);
+    // Caseworkers cannot add rules.
+    store.login("s-beispiel", "cw");
+    expect((await app.inject({ method: "POST", url: "/office/rules", payload: body, headers: { "x-staff-token": "cw" } })).statusCode).toBe(403);
+  });
+
+  it("a new rule that was never approved can be withdrawn", async () => {
+    const { app, store } = setup("s-obermeier");
+    await app.inject({ method: "POST", url: "/office/rules", payload: { title: { de: "A", en: "A" }, plain: { de: "a", en: "a" }, fix: { de: "a", en: "a" }, pass: [{ path: "docs.health_insurance.present", op: "present" }] } });
+    expect((await app.inject({ method: "POST", url: "/office/rules/R-OFFICE-01/discard" })).json().deleted).toBe(true);
+    expect(store.rules()["R-OFFICE-01"]).toBeUndefined();
+    expect((await app.inject({ method: "POST", url: "/office/rules/R-HEALTH/discard" })).statusCode).toBe(404);
+  });
+
   it("refuses unknown conditions and approval while sample cases fail", async () => {
     const { app, store } = setup("s-lindner");
     expect((await app.inject({ method: "PUT", url: "/office/rules/R-HEALTH/draft", payload: { pass: [{ path: "nope", op: "present" }] } })).statusCode).toBe(400);

@@ -45,6 +45,24 @@ const slug = (s: string) => s.toLowerCase().replace(/ä/g, "ae").replace(/ö/g, 
 const TYPES = ["text", "number", "date", "yesno"] as const;
 const EMPTY: ProposalBody = { name: "", formblatt: "", title: "", purpose: "", providedBy: "student", category: "official_form", fields: [], signatures: [] };
 
+/** A small picture of the form: header, title, a few fields and signature lines, drawn from the template itself. */
+function Paper({ tpl }: { tpl: LibraryTemplate }) {
+  const fields = tpl.fields.slice(0, 6);
+  return (
+    <span className="paper" aria-hidden>
+      <span className="paper-head"><b>{tpl.formblatt ?? ""}</b></span>
+      <i className="paper-title" style={{ width: `${52 + (tpl.title.length % 5) * 8}%` }} />
+      {fields.map((f, i) => (
+        <span className="paper-field" key={f.key}>
+          <i style={{ width: `${26 + ((i * 17 + f.label.length * 3) % 32)}%` }} />
+          <u />
+        </span>
+      ))}
+      {tpl.signatures.length > 0 && <span className="paper-sigs">{tpl.signatures.slice(0, 2).map((sg) => <span key={sg.key} />)}</span>}
+    </span>
+  );
+}
+
 export default function Templates() {
   const { t, tk, bi, date, dateTime } = useI18n();
   const { staff } = useStaff();
@@ -85,14 +103,20 @@ export default function Templates() {
 
   return (
     <div>
-      <div className="page-head">
-        <div>
-          <span className="eyebrow"><FileStack size={14} />{t("side.configure")}</span>
+      <header className="hero">
+        <div className="hero-text">
           <h1>{t("t2.title")}</h1>
           <p>{t("t2.lead")}</p>
         </div>
-        {lib.canPropose && <button className="button" type="button" onClick={() => setTab("proposals")}><Plus size={16} />{t("tpl.new")}</button>}
-      </div>
+        <div className="hero-actions">
+          <dl className="hero-figs">
+            <div><dd className="num">{lib.templates.length}</dd><dt>{t("t2.fig.total")}</dt></div>
+            <div><dd className="num">{lib.templates.filter((x) => x.check).length}</dd><dt>{t("t2.status.ready")}</dt></div>
+            <div><dd className="num">{lib.proposals.filter((p) => p.status === "submitted").length}</dd><dt>{t("t2.fig.proposals")}</dt></div>
+          </dl>
+          {lib.canPropose && <button className="button" type="button" onClick={() => setTab("proposals")}><Plus size={16} />{t("tpl.new")}</button>}
+        </div>
+      </header>
       <TodoBar items={todoItems} />
 
       <div className="tabs" role="tablist" style={{ marginBottom: "1.2rem" }}>
@@ -105,40 +129,52 @@ export default function Templates() {
 
       {tab === "library" && (
         <>
-          <div className="tpl-tools">
-            <div className="chips" role="group">
-              <button type="button" aria-pressed={cat === "all"} onClick={() => setCat("all")}>{t("t2.cat.all")}</button>
+          <div className="q-tools">
+            <div className="q-tabs" role="tablist">
+              <button type="button" role="tab" aria-selected={cat === "all"} onClick={() => setCat("all")}>{t("t2.cat.all")} <span className="n">{lib.templates.length}</span></button>
               {CATS.map((c) => (
-                <button key={c.id} type="button" className={`cat-${c.id}`} aria-pressed={cat === c.id} onClick={() => setCat(c.id)}>
-                  <span className="ci" />{t(`t2.cat.${c.id}` as MessageKey)}
+                <button key={c.id} type="button" role="tab" aria-selected={cat === c.id} onClick={() => setCat(c.id)}>
+                  {t(`t2.cat.${c.id}` as MessageKey)} <span className="n">{lib.templates.filter((x) => x.category === c.id).length}</span>
                 </button>
               ))}
             </div>
-            <label className="wl-search"><Search size={15} /><input value={q} onChange={(e) => setQ(e.target.value)} placeholder={t("t2.search")} aria-label={t("t2.search")} /></label>
+            <label className="q-search"><Search size={14} /><input value={q} onChange={(e) => setQ(e.target.value)} placeholder={t("t2.search")} aria-label={t("t2.search")} /></label>
           </div>
-          <div className="tpl-grid">
-            {shown.map((x) => {
-              const Icon = catIcon(x.category);
-              const P = PROVIDER_ICON[x.providedBy] ?? User;
-              return (
-                <button key={x.id} type="button" className={`tpl cat-${x.category}`} aria-current={open === x.id} onClick={() => setOpen(x.id)}>
-                  <div className="tpl-top">
-                    <span className="tpl-ico"><Icon size={20} /></span>
-                    <span>
-                      <small>{x.formblatt ?? t(`t2.cat.${x.category}` as MessageKey)}</small>
-                      <strong>{bi(x.name).replace(/\s*\(Formblatt \d+\)/, "")}</strong>
-                    </span>
+          {CATS.map((c) => {
+            const items = shown.filter((x) => x.category === c.id);
+            if (items.length === 0) return null;
+            const CIcon = c.icon;
+            const ready = items.filter((x) => x.check).length;
+            return (
+              <section key={c.id} className={`shelf cat-${c.id}`} aria-labelledby={`cat-${c.id}`}>
+                <header className="shelf-h">
+                  <span className="shelf-ico"><CIcon size={18} /></span>
+                  <div>
+                    <h2 id={`cat-${c.id}`}>{t(`t2.cat.${c.id}` as MessageKey)}</h2>
+                    <p>{t(`t2.catdesc.${c.id}` as MessageKey)}</p>
                   </div>
-                  <span className="small muted">{bi(x.purpose)}</span>
-                  <div className="tpl-meta">
-                    {x.check ? <span className="ok"><CheckCircle2 size={12} />{t("t2.status.ready")}</span> : <span className="warn"><Clock size={12} />{t("t2.status.check")}</span>}
-                    <span><P size={12} />{t(`tpl.by.${x.providedBy}` as MessageKey)}</span>
-                    <span><Workflow size={12} />{x.usedIn.length === 0 ? t("t2.unused") : x.usedIn.length === 1 ? t("t2.usedIn1") : t("t2.usedIn", { n: x.usedIn.length })}</span>
-                  </div>
-                </button>
-              );
-            })}
-          </div>
+                  <span className="shelf-n">{t("t2.sectionCount", { n: items.length, r: ready })}</span>
+                </header>
+                <div className="docs-grid" role="listbox">
+                  {items.map((x) => {
+                    const P = PROVIDER_ICON[x.providedBy] ?? User;
+                    return (
+                      <button key={x.id} type="button" role="option" className="doc" aria-selected={open === x.id} onClick={() => setOpen(x.id)}>
+                        <Paper tpl={x} />
+                        <span className="doc-name">{bi(x.name).replace(/\s*\(Formblatt \d+\)/, "")}</span>
+                        <span className="doc-sub"><P size={12} />{t(`tpl.by.${x.providedBy}` as MessageKey)}{x.formblatt ? ` · ${x.formblatt}` : ""}</span>
+                        <span className="doc-foot">
+                          <span className={`chip ${x.check ? "ok" : "warn"}`}>{x.check ? t("t2.status.ready") : t("t2.status.check")}</span>
+                          <span className="muted small">{x.usedIn.length === 0 ? t("t2.unused") : x.usedIn.length === 1 ? t("t2.usedIn1") : t("t2.usedIn", { n: x.usedIn.length })}</span>
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </section>
+            );
+          })}
+          {shown.length === 0 && <p className="muted" style={{ padding: "2rem 0" }}>{t("todo.none")}</p>}
           <p className="small muted" style={{ marginTop: "1rem" }}>{t("tpl.exampleNote")}</p>
         </>
       )}

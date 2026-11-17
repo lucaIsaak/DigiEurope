@@ -10,6 +10,7 @@ import { useStaff } from "@/lib/staff";
 import { useTheme } from "@/lib/theme";
 import { Spinner } from "./ui";
 import { useTodo } from "./TodoBar";
+import { RoleInfo } from "./RoleInfo";
 import type { MessageKey } from "@/lib/messages";
 
 function Nav({ items, current }: { items: [string, MessageKey][]; current: string }) {
@@ -238,12 +239,22 @@ export function Shell({ children }: { children: ReactNode }) {
   if (office && !onLogin && staff) {
     return (
       <OfficeShell current={current} oversight={oversightArea}>
-        {bleed ? children : <div className="office-page">{children}</div>}
+        {bleed ? (
+          <>
+            <div className="roleinfo-float"><RoleInfo path={current} /></div>
+            {children}
+          </>
+        ) : (
+          <div className="office-page">
+            {!current.startsWith("/office/cases") && <RoleInfo path={current} inline />}
+            {children}
+          </div>
+        )}
       </OfficeShell>
     );
   }
   return (
-    <>
+    <div className={office ? undefined : "student-site"}>
       <header className={`site-header${office ? " office-bar" : ""}`}>
         <div className={`container header-inner${office ? " wide" : ""}`}>
           <Link href={oversightArea ? "/oversight" : office ? "/office" : "/"} className="brand">
@@ -303,6 +314,6 @@ export function Shell({ children }: { children: ReactNode }) {
           </span>
         </div>
       </footer>}
-    </>
+    </div>
   );
 }

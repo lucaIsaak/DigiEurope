@@ -33,8 +33,13 @@ interface Column {
 }
 
 function Score({ value }: { value: number }) {
-  const c = value >= 80 ? "var(--ok)" : value >= 60 ? "var(--warn)" : "var(--bad)";
-  return <span className="score-ring" data-v={`${value}`} style={{ ["--p" as string]: value, ["--c" as string]: c }} aria-label={`${value} %`} />;
+  const tone = value >= 80 ? "ok" : value >= 60 ? "warn" : "bad";
+  return (
+    <span className={`score ${tone}`} aria-label={`${value} %`}>
+      <b className="num">{value} %</b>
+      <i aria-hidden><span style={{ width: `${value}%` }} /></i>
+    </span>
+  );
 }
 
 export default function Compare({ params }: { params: Promise<{ category: string }> }) {
@@ -97,12 +102,12 @@ export default function Compare({ params }: { params: Promise<{ category: string
   ];
 
   return (
-    <div className="stack">
+    <div className="stack ovs">
       <div>
         <p className="small"><Link href="/oversight">← {t("cmp.back")}</Link></p>
         <div className="row" style={{ justifyContent: "space-between" }}>
           <h1 style={{ margin: 0 }}>{title}</h1>
-          <span className="pill pill-muted">{t("cmp.demo")}</span>
+          <span className="muted small">{t("cmp.demo")}</span>
         </div>
         <p className="muted small" style={{ marginTop: "0.4rem" }}>{ref ? `${t("cmp.referenceNote")} ${t("cmp.harmonyBreakdown")}` : t("cmp.noRef")}</p>
       </div>

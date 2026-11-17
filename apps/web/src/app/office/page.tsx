@@ -1,11 +1,11 @@
 "use client";
 
-import { NODE_CATALOG, type CaseView, type NodeKind } from "@digieurope/shared";
-import { AlertCircle, ArrowRight, CheckCircle2, Clock, FileText, Globe, Search, Send, Users } from "lucide-react";
+import { NODE_CATALOG, type CaseStatus, type CaseView, type NodeKind } from "@digieurope/shared";
+import { ArrowRight, Check, Search, Send } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Spinner, StatusPill } from "@/components/ui";
+import { Spinner, StatusChip, StatusDot } from "@/components/ui";
 import { api, type CaseSummary, type Insights } from "@/lib/api";
 import { useI18n } from "@/lib/i18n";
 import type { MessageKey } from "@/lib/messages";
@@ -13,13 +13,6 @@ import type { MessageKey } from "@/lib/messages";
 type Tab = "needs" | "waiting" | "decided" | "all";
 const TAB_OF: Record<string, Tab> = { submitted: "needs", in_review: "needs", info_requested: "waiting", approved: "decided", rejected: "decided" };
 const DAY = 86_400_000;
-
-/** A stable, pleasant colour per person, for the initials avatar. */
-function hue(name: string) {
-  let h = 0;
-  for (const ch of name) h = (h * 31 + ch.charCodeAt(0)) % 360;
-  return `hsl(${h} 45% 45%)`;
-}
 
 export default function Inbox() {
   const { t, tk, bi, eur, date, country } = useI18n();
@@ -139,153 +132,148 @@ export default function Inbox() {
   const p = preview;
   const blockers = p?.report.findings.filter((f) => f.severity === "blocker") ?? [];
 
-  return (
-    <div>
-      <div className="wl-head">
-        <div>
-          <h1>{t("wl.title")}</h1>
-          <p className="num">{t("wl.sub", { open: ins.open, complete: ins.firstTimeComplete, days: ins.medianDaysToDecision ?? "–" })}</p>
-        </div>
-      </div>
+  const overdue = rows.filter((r) => ageClass(r) === "over").length;
+  const initials = (r: CaseSummary) => {
+    const [last, first] = r.name.split(", ");
+    return `${first?.[0] ?? ""}${last?.[0] ?? ""}`;
+  };
 
-      <div className="wl-tools">
-        <div className="seg" role="group">
+  return (
+    <div className="q-page">
+      <header className="hero">
+        <div className="hero-text">
+          <h1>{t("wl.title")}</h1>
+          <p>{t("wl.lead")}</p>
+        </div>
+        <dl className="hero-figs">
+          <div><dd className="num">{ins.open}</dd><dt>{t("office.kpi.open")}</dt></div>
+          <div className={overdue ? "hot" : ""}><dd className="num">{overdue}</dd><dt>{t("wl.overdue")}</dt></div>
+          <div><dd className="num">{ins.firstTimeComplete}<small> %</small></dd><dt>{t("office.kpi.complete")}</dt></div>
+          <div><dd className="num">{ins.medianDaysToDecision ?? "–"}</dd><dt>{t("office.kpi.days")}</dt></div>
+        </dl>
+      </header>
+
+      <div className="q-tools">
+        <div className="q-tabs" role="tablist">
           {tabs.map(([k, label]) => (
-            <button key={k} type="button" aria-pressed={tab === k} onClick={() => setTab(k)}>
+            <button key={k} type="button" role="tab" aria-selected={tab === k} onClick={() => setTab(k)}>
               {t(label)} <span className="n">{counts[k]}</span>
             </button>
           ))}
         </div>
-        <label className="wl-search">
-          <Search size={15} />
+        <label className="q-search">
+          <Search size={14} />
           <input value={q} onChange={(e) => setQ(e.target.value)} placeholder={t("wl.search")} aria-label={t("wl.search")} />
         </label>
       </div>
 
-      <div className="wl">
-        <div className="wl-list" ref={listRef} role="listbox" aria-label={t("wl.title")}>
-          <div className="wl-head-row" aria-hidden>
-            <span />
+      <div className="q-split">
+        <div className="q-table sheet" ref={listRef} role="listbox" aria-label={t("wl.title")}>
+          <div className="q-row q-th" aria-hidden>
             <span>{t("office.col.name")}</span>
             <span>{t("office.col.stay")}</span>
-            <span>{t("office.col.check")}</span>
+            <span>{t("wl.documents")}</span>
             <span>{t("office.col.status")}</span>
-            <span style={{ textAlign: "right" }}>{t("wl.estimate")}</span>
+            <span className="r">{t("wl.col.age")}</span>
+            <span className="r">{t("wl.estimate")}</span>
           </div>
-          {shown.length === 0 && <div className="preview-empty"><CheckCircle2 size={28} /><p>{t("wl.empty")}</p></div>}
+          {shown.length === 0 && <div className="q-empty">{t("wl.empty")}</div>}
           {shown.map((r) => {
-            const [last, first] = r.name.split(", ");
+            const ac = ageClass(r);
+            const pct = r.docsTotal ? Math.round((r.docsDone / r.docsTotal) * 100) : 100;
             return (
               <div
                 key={r.id}
-                className="wl-row"
+                className="q-row"
                 role="option"
                 aria-selected={r.id === selected}
                 tabIndex={-1}
                 onClick={() => setSelected(r.id)}
                 onDoubleClick={() => router.push(`/office/cases/${r.id}`)}
               >
-                <span className="av" style={{ background: hue(r.name) }} aria-hidden>{(first?.[0] ?? "") + (last?.[0] ?? "")}</span>
                 <span className="who">
-                  <strong>{first} {last} {r.id === fresh && <span className="badge new">{t("wl.new")}</span>}</strong>
-                  <span>{r.reference} · {r.source === "portal" ? t("wl.portal") : t("wl.direct")}</span>
+                  <i className="av" aria-hidden>{initials(r)}</i>
+                  <span>
+                    <strong>{r.name.split(", ").reverse().join(" ")}{r.id === fresh && <em className="q-new">{t("wl.new")}</em>}</strong>
+                    <small className="num">{r.reference} · {r.source === "portal" ? t("wl.portal") : t("wl.direct")}</small>
+                  </span>
                 </span>
-                <span className="stay">
-                  {country(r.country)}
-                  <span>{tk(`stay.${r.stayType}`)}</span>
+                <span className="two"><strong>{country(r.country)}</strong><small>{tk(`stay.${r.stayType}`)}</small></span>
+                <span className="docs">
+                  <span className={`prog${r.blockers ? " warn" : " ok"}`} aria-hidden><i style={{ width: `${pct}%` }} /></span>
+                  <small className="num">{r.docsDone}/{r.docsTotal}{r.blockers > 0 ? ` · ${t("wl.open", { n: r.blockers })}` : ""}</small>
                 </span>
-                <span>{r.blockers === 0 ? <span className="badge ok"><CheckCircle2 size={12} />{t("wl.complete")}</span> : <span className="badge bad"><AlertCircle size={12} />{t("wl.open", { n: r.blockers })}</span>}</span>
-                <span className={`age ${ageClass(r)}`}>
-                  <StatusPill status={r.status} />
-                  <span><Clock size={11} /> {t("wl.age", { n: age(r) })}{ageClass(r) === "over" ? ` · ${t("wl.overdue")}` : ageClass(r) === "soon" ? ` · ${t("wl.dueSoon")}` : ""}</span>
+                <span><StatusChip status={r.status as CaseStatus} /></span>
+                <span className="r two">
+                  <strong className={`num q-age ${ac}`}>{t("wl.age", { n: age(r) })}</strong>
+                  {ac === "over" && <small className="over">{t("wl.overdue")}</small>}
+                  {ac === "soon" && <small className="soon">{t("wl.dueSoon")}</small>}
                 </span>
-                <span className="amt">{eur(r.estimateMonthly)}</span>
+                <span className="r num amt">{eur(r.estimateMonthly)}</span>
               </div>
             );
           })}
         </div>
 
-        <aside className="preview" aria-live="polite">
+        <aside className="q-peek sheet" aria-live="polite">
           {!p ? (
-            <div className="preview-empty">{t("wl.select")}</div>
+            <div className="q-empty">{t("wl.select")}</div>
           ) : (
             <>
-              <div className="preview-head">
-                <div className="row" style={{ justifyContent: "space-between" }}>
-                  <span className="small muted num">{p.reference}</span>
-                  <StatusPill status={p.status} />
-                </div>
+              <div className="q-peek-head">
+                <div className="q-peek-ref"><span className="num">{p.reference}</span><StatusDot status={p.status} /></div>
                 <h2>{p.student.firstName} {p.student.lastName}</h2>
-                <div className="small muted">{p.student.university} · {p.student.course}</div>
-              </div>
-
-              <div className="preview-sec">
-                <dl className="kv">
-                  <dt><Globe size={13} /> {t("office.case.stay")}</dt>
-                  <dd>{tk(`stay.${p.stay.type}`)} · {p.stay.city}, {country(p.stay.country)}</dd>
-                  <dt />
-                  <dd className="small muted">{p.stay.institution} · {date(p.stay.startDate)} – {date(p.stay.endDate)}</dd>
-                  <dt><Users size={13} /> {t("wl.team")}</dt>
-                  <dd>{p.assignedTeam ?? "–"}</dd>
-                  {p.flow?.waiting && (
-                    <>
-                      <dt>⏸</dt>
-                      <dd>{t("wl.waitingAt", { step: bi(NODE_CATALOG[(p.flow.log.find((l) => l.nodeId === p.flow!.waiting)?.kind ?? "human_task") as NodeKind]?.title ?? { de: "", en: "" }) })}</dd>
-                    </>
+                <p>{p.student.university} · {p.student.course}</p>
+                <div className="q-peek-actions">
+                  <Link className="button" href={`/office/cases/${p.id}`}>{t("wl.openCase")} <ArrowRight size={14} /></Link>
+                  {blockers.length > 0 && p.status !== "info_requested" && p.status !== "approved" && p.status !== "rejected" && (
+                    <Link className="button button-ghost" href={`/office/cases/${p.id}`} title={t("office.case.request")} aria-label={t("office.case.request")}><Send size={14} /></Link>
                   )}
-                </dl>
+                </div>
               </div>
 
-              <div className="preview-sec">
-                <h3>{t("wl.findings")} · {blockers.length}</h3>
-                {blockers.length === 0 ? (
-                  <div className="mini-finding" style={{ color: "var(--ok)" }}><CheckCircle2 size={16} />{t("office.case.noItems")}</div>
-                ) : (
-                  blockers.slice(0, 4).map((f) => (
-                    <div className="mini-finding" key={f.ruleId}>
-                      <AlertCircle size={16} color="var(--bad)" />
-                      <span><strong>{bi(f.title)}</strong></span>
-                    </div>
-                  ))
+              <dl className="q-dl">
+                <dt>{t("office.case.stay")}</dt>
+                <dd>{tk(`stay.${p.stay.type}`)} · {p.stay.city}, {country(p.stay.country)}<small>{p.stay.institution}<br />{date(p.stay.startDate)} – {date(p.stay.endDate)}</small></dd>
+                <dt>{t("wl.team")}</dt>
+                <dd>{p.assignedTeam ?? "–"}</dd>
+                {p.flow?.waiting && (
+                  <>
+                    <dt>{t("wl.col.waiting")}</dt>
+                    <dd>{bi(NODE_CATALOG[(p.flow.log.find((l) => l.nodeId === p.flow!.waiting)?.kind ?? "human_task") as NodeKind]?.title ?? { de: "", en: "" })}</dd>
+                  </>
                 )}
-              </div>
+                <dt>{t("wl.estimate")}</dt>
+                <dd className="num"><strong>{eur(p.estimate.monthly)}</strong> {t("common.perMonth")}<small>{t("case.estimate.need")} {eur(p.estimate.need)} · {t("case.estimate.parents")} {eur(p.estimate.parentContribution)}</small></dd>
+              </dl>
+
+              <section className="q-sec">
+                <h3>{t("wl.findings")} <span className="n">{blockers.length}</span></h3>
+                {blockers.length === 0 ? (
+                  <p className="q-ok"><Check size={14} />{t("office.case.noItems")}</p>
+                ) : (
+                  <ul className="q-list">{blockers.slice(0, 4).map((f) => <li key={f.ruleId} className="bad">{bi(f.title)}</li>)}</ul>
+                )}
+              </section>
 
               {p.decision && (
-                <div className="preview-sec">
+                <section className="q-sec">
                   <h3>{t("xp.title")}</h3>
-                  <p className="small" style={{ margin: "0 0 0.5rem", display: "-webkit-box", WebkitLineClamp: 3, WebkitBoxOrient: "vertical", overflow: "hidden" }}>{p.decision.note}</p>
+                  <p className="q-clamp">{p.decision.note}</p>
                   <Link className="small" href={`/office/cases/${p.id}#explain`}>{t("xp.open")} →</Link>
-                </div>
+                </section>
               )}
 
-              <div className="preview-sec">
-                <h3>{t("wl.documents")} · {p.documents.length}</h3>
-                <div className="doc-dots">
+              <section className="q-sec">
+                <h3>{t("wl.documents")} <span className="n">{p.documents.length}</span></h3>
+                <ul className="q-list docs">
                   {(p.report.requirements ?? []).filter((r) => r.applies && r.type === "document").map((r) => (
-                    <span key={r.id} title={bi(r.label)}>
-                      {r.state === "ok" ? <CheckCircle2 size={12} color="var(--ok)" /> : <FileText size={12} color={r.required ? "var(--bad)" : "var(--muted)"} />}
-                      {bi(r.label).replace(/\s*\(Formblatt \d+\)/, "").slice(0, 22)}
-                    </span>
+                    <li key={r.id} className={r.state === "ok" ? "ok" : r.required ? "bad" : "mute"}>{bi(r.label).replace(/\s*\(Formblatt \d+\)/, "")}</li>
                   ))}
-                </div>
-              </div>
+                </ul>
+              </section>
 
-              <div className="preview-sec">
-                <h3>{t("wl.estimate")}</h3>
-                <div className="row" style={{ alignItems: "baseline", gap: "0.4rem" }}>
-                  <strong className="num" style={{ fontSize: "1.6rem", letterSpacing: "-0.03em" }}>{eur(p.estimate.monthly)}</strong>
-                  <span className="small muted">{t("common.perMonth")}</span>
-                </div>
-                <div className="small muted num">{t("case.estimate.need")} {eur(p.estimate.need)} · {t("case.estimate.parents")} {eur(p.estimate.parentContribution)}</div>
-              </div>
-
-              <div className="preview-actions">
-                <Link className="button" href={`/office/cases/${p.id}`} style={{ flex: 1 }}>{t("wl.openCase")} <ArrowRight size={16} /></Link>
-                {blockers.length > 0 && p.status !== "info_requested" && p.status !== "approved" && p.status !== "rejected" && (
-                  <Link className="button button-ghost" href={`/office/cases/${p.id}`} title={t("office.case.request")}><Send size={15} /></Link>
-                )}
-              </div>
-              <div className="kbd" style={{ padding: "0 1.3rem 1rem" }}>{t("wl.keys")}</div>
+              <p className="kbd q-keys">{t("wl.keys")}</p>
             </>
           )}
         </aside>

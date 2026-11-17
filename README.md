@@ -43,7 +43,7 @@ Optional live AI for the question assistant: copy `.env.example` to `.env` and s
 |---|---|
 | Inbox | Applications arrive through the simulated official portal, each already checked |
 | Case | Rule results, fields read from documents, estimate, and the **caseworker's decision** (request documents, approve, reject). Every decision has an **explanation for the student** (written by the caseworker or drafted from the calculation and confirmed) and a frozen **technical record** for audits: calculation step by step, every rule with version, result and approver, required inputs, how each document was read, process version and steps, legal basis; downloadable as JSON |
-| Rules | A filterable list ("Needs attention" first). Each rule shows its plain-language text, readable sentences for what is checked (code in a "technical view"), sample cases, who wrote and approved it, and its version history. Process designers change a rule with a no-code editor ("[document field] [is] [value]"); the change is saved as a new version, the live version keeps running, and **a second person must approve it** |
+| Rules | A filterable list ("Needs attention" first). Each rule shows its plain-language text, readable sentences for what is checked (code in a "technical view"), sample cases, who wrote and approved it, and its version history. Process designers (and administrators) add a rule of the office with **New rule** (five steps: name, when it applies, what must be true, what the student sees, sample cases made automatically) and change a rule with the same no-code editor ("[document field] [is] [value]"); the change is saved as a new version, the live version keeps running, and **a second person must approve it** |
 | Settings | Local office settings: reply target, reading method for unrecognised documents |
 | Insights | Most frequent first-check issues and recommended changes to the application form |
 | **Processes** (process builder) | A drag-and-drop canvas (React Flow) where the office draws its own process: trigger, rule check, AI steps (read documents, draft a mail), branches, routing to a team, "caseworker decides", messages and placeholder connectors to office systems (case software, e-file, payment, portal). Validate, **test-run on a sample case**, publish. The published process then really drives new applications |
@@ -57,6 +57,10 @@ Optional live AI for the question assistant: copy `.env.example` to `.env` and s
 **Staff access.** The office area needs a staff sign-in (footer link "Staff login"). Demo accounts: Frau Beispiel and Herr Kaya (caseworkers, no builder), Frau Lindner (process designer), Herr Obermeier (administrator, also grants builder access). The API enforces this, not just the menu. Demo sign-in has no password; a real system would use the administration's single sign-on.
 
 The caseworker always decides. Checks are deterministic code; AI only reads documents and drafts mails (both simulated here) and helps draft rules.
+
+## Look and feel
+
+The office area is a quiet tool (white canvas, hairline dividers, tables, one accent, status as a dot). The student side follows a service-manual style: large left-aligned type, one column, underlined links, square controls and a thick yellow focus ring. Colours are used for status only.
 
 ## Demo
 

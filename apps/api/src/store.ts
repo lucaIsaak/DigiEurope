@@ -221,6 +221,10 @@ export class Store {
     this.data.rules[id] = r;
     this.save();
   }
+  deleteRule(id: string) {
+    delete this.data.rules[id];
+    this.save();
+  }
 
   staff = (): StaffMember[] => this.data.staff;
   setStaff(id: string, patch: Partial<StaffMember>) {

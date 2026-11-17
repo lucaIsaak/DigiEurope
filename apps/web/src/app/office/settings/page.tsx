@@ -1,6 +1,6 @@
 "use client";
 
-import { CheckCircle2, Lock, SlidersHorizontal } from "lucide-react";
+import { Lock } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { Spinner, useAsyncError } from "@/components/ui";
 import { api, type ExtractionSettings, type OfficeConfigResponse } from "@/lib/api";
@@ -35,37 +35,38 @@ export default function Settings() {
   };
 
   return (
-    <div style={{ maxWidth: 820 }}>
+    <div className="set">
       <div className="page-head">
         <div>
-          <span className="eyebrow"><SlidersHorizontal size={14} />{t("side.admin")}</span>
           <h1>{t("set.title")}</h1>
           <p>{t("set.lead")}</p>
         </div>
-        {saved && <span className="badge ok"><CheckCircle2 size={13} />{t("set.saved")}</span>}
+        {saved && <span className="q-status ok"><i />{t("set.saved")}</span>}
       </div>
 
-      <section className="panel" style={{ padding: "1.4rem", display: "grid", gap: "1.2rem" }}>
-        <label className="field">{t("office.inputs.sla")}
-          <div className="row" style={{ flexWrap: "nowrap" }}>
-            <input type="number" min={1} max={60} value={sla} onChange={(e) => setSla(Number(e.target.value))} style={{ maxWidth: 120 }} />
-            <button className="button button-small" type="button" onClick={async () => { const r = await run(() => api.saveConfig({ slaDays: sla })); if (r) flash(); }}>{t("common.save")}</button>
-          </div>
-        </label>
-        <label className="field">{t("set.default")}
-          <select disabled={!owner} value={ex.config.defaultMethod} onChange={async (e) => { const r = await run(() => api.setExtraction("default", e.target.value as ExtractionSettings["config"]["defaultMethod"])); if (r) { await load(); flash(); } }}>
-            {ex.methods.map((m) => <option key={m.id} value={m.id}>{bi(m.name)} · {t(`read.status.${m.status}` as MessageKey)}</option>)}
-          </select>
-          {!owner && <span className="reason"><Lock size={13} />{t("t2.reading.owner")}</span>}
-        </label>
-        <div className="kv" style={{ fontSize: "0.92rem" }}>
-          <dt className="muted">{t("office.inputs.languages")}</dt><dd>{cfg.config.languages.map((l) => l.toUpperCase()).join(" · ")}</dd>
-          <dt className="muted">{t("office.inputs.fileTypes")}</dt><dd>PDF</dd>
-          <dt className="muted">{t("office.inputs.workflow")}</dt><dd>{cfg.config.workflow.join(" → ")}</dd>
+      <div className="set-row">
+        <div>
+          <label htmlFor="set-sla">{t("office.inputs.sla")}</label>
         </div>
-        {!ex.aiKey && <p className="small muted" style={{ margin: 0 }}>{t("read.aiNote")}</p>}
-        {error && <p className="error-text" role="alert">{error}</p>}
-      </section>
+        <div className="row" style={{ flexWrap: "nowrap" }}>
+          <input id="set-sla" type="number" min={1} max={60} value={sla} onChange={(e) => setSla(Number(e.target.value))} style={{ maxWidth: 100 }} />
+          <button className="button button-small" type="button" onClick={async () => { const r = await run(() => api.saveConfig({ slaDays: sla })); if (r) flash(); }}>{t("common.save")}</button>
+        </div>
+      </div>
+      <div className="set-row">
+        <div>
+          <label htmlFor="set-default">{t("set.default")}</label>
+          {!owner && <p className="reason"><Lock size={13} />{t("t2.reading.owner")}</p>}
+        </div>
+        <select id="set-default" disabled={!owner} value={ex.config.defaultMethod} onChange={async (e) => { const r = await run(() => api.setExtraction("default", e.target.value as ExtractionSettings["config"]["defaultMethod"])); if (r) { await load(); flash(); } }}>
+          {ex.methods.map((m) => <option key={m.id} value={m.id}>{bi(m.name)} · {t(`read.status.${m.status}` as MessageKey)}</option>)}
+        </select>
+      </div>
+      <div className="set-row"><div>{t("office.inputs.languages")}</div><div>{cfg.config.languages.map((l) => l.toUpperCase()).join(" · ")}</div></div>
+      <div className="set-row"><div>{t("office.inputs.fileTypes")}</div><div>PDF</div></div>
+      <div className="set-row"><div>{t("office.inputs.workflow")}</div><div>{cfg.config.workflow.join(" → ")}</div></div>
+      {!ex.aiKey && <p className="small muted" style={{ marginTop: "1rem" }}>{t("read.aiNote")}</p>}
+      {error && <p className="error-text" role="alert">{error}</p>}
     </div>
   );
 }

@@ -20,7 +20,7 @@ export default function StaffAccess() {
   if (!me?.isAdmin) return <p className="banner banner-warn">{t("staff.forbidden")}</p>;
   return (
     <div className="stack">
-      <div>
+      <div className="ins-head">
         <h1>{t("staff.access.title")}</h1>
         <p className="lead" style={{ maxWidth: "70ch" }}>{t("staff.access.lead")}</p>
       </div>
@@ -31,7 +31,7 @@ export default function StaffAccess() {
             {list.map((m) => (
               <tr key={m.id}>
                 <td><strong>{m.name}</strong><br /><small className="muted">{m.title}</small></td>
-                <td><span className={`pill ${m.isAdmin ? "pill-ok" : m.canBuild || m.canApproveTemplates ? "" : "pill-muted"}`}>{m.isAdmin ? t("staff.role.admin") : m.isOversight ? t("oversight.label") : m.canApproveTemplates ? t("staff.role.owner") : m.canBuild ? t("staff.role.builder") : t("staff.role.caseworker")}</span></td>
+                <td><span>{m.isAdmin ? t("staff.role.admin") : m.isOversight ? t("oversight.label") : m.canApproveTemplates ? t("staff.role.owner") : m.canBuild ? t("staff.role.builder") : t("staff.role.caseworker")}</span></td>
                 <td>
                   <label className="row">
                     <input

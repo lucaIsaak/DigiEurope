@@ -55,6 +55,9 @@ export interface CaseSummary {
   estimateMonthly: number;
   team: string | null;
   waitingAt: string | null;
+  /** Required documents that are in, and how many are required. */
+  docsDone: number;
+  docsTotal: number;
 }
 
 export interface ParentView {
@@ -272,7 +275,8 @@ export const api = {
   rules: () => call<RuleEntry[]>("/office/rules"),
   approveRule: (id: string) => call<RuleEntry>(`/office/rules/${id}/approve`, { method: "POST", json: {} }),
   revokeRule: (id: string) => call<RuleEntry>(`/office/rules/${id}/revoke`, { method: "POST" }),
-  discardRule: (id: string) => call<RuleEntry>(`/office/rules/${id}/discard`, { method: "POST" }),
+  discardRule: (id: string) => call<RuleEntry | { id: string; deleted: true }>(`/office/rules/${id}/discard`, { method: "POST" }),
+  createRule: (body: Omit<RuleDraftBody, "tests">) => call<RuleEntry>("/office/rules", { method: "POST", json: body }),
   saveRuleDraft: (id: string, body: RuleDraftBody) => call<RuleEntry>(`/office/rules/${id}/draft`, { method: "PUT", json: body }),
   todo: () => call<Todo>("/office/todo"),
   testTemplate: async (id: string, file: File) => call<{ kind: string; extraction: Extraction; matches: boolean; expected: string[] }>(`/office/templates/${id}/test`, { method: "POST", json: await filePayload(file) }),

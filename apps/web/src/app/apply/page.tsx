@@ -1,7 +1,7 @@
 "use client";
 
 import { BUILTIN_TEMPLATES, DESTINATIONS, defaultInputs, type StayType } from "@digieurope/shared";
-import { ArrowLeft, ArrowRight, Briefcase, CheckCircle2, Clock, FileText, GraduationCap } from "lucide-react";
+import { ArrowLeft, ArrowRight, Clock, FileText } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import { Field, useAsyncError } from "@/components/ui";
@@ -75,16 +75,15 @@ export default function Apply() {
         <p className="muted" style={{ marginBottom: "1.5rem" }}>{t(titles[step]![1])}</p>
 
         {step === 0 && (
-          <div className="choice-cards">
-            {([["study", GraduationCap, "apply.type.study", "wz.study.d"], ["internship", Briefcase, "apply.type.internship", "wz.intern.d"]] as const).map(([k, Icon, label, desc]) => (
-              <button key={k} type="button" className="choice" aria-pressed={f.type === k} onClick={() => { setF((x) => ({ ...x, type: k })); setStep(1); }}>
-                {f.type === k && <CheckCircle2 className="check" size={20} />}
-                <span className="ci"><Icon size={22} /></span>
-                <strong>{t(label)}</strong>
-                <span>{t(desc)}</span>
-              </button>
+          <fieldset className="gv-radios">
+            <legend className="visually-hidden">{t(titles[0]![0])}</legend>
+            {([["study", "apply.type.study", "wz.study.d"], ["internship", "apply.type.internship", "wz.intern.d"]] as const).map(([k, label, desc]) => (
+              <label key={k} className="gv-radio">
+                <input type="radio" name="stay-type" checked={f.type === k} onChange={() => setF((x) => ({ ...x, type: k }))} />
+                <span><strong>{t(label)}</strong><small>{t(desc)}</small></span>
+              </label>
             ))}
-          </div>
+          </fieldset>
         )}
 
         {step === 1 && (
@@ -114,7 +113,7 @@ export default function Apply() {
         {error && <p className="error-text" role="alert">{error}</p>}
         <div className="wz-nav">
           {step > 0 ? <button type="button" className="button button-ghost" onClick={() => setStep(step - 1)}><ArrowLeft size={16} />{t("wz.back")}</button> : <span />}
-          {step > 0 && step < 2 && <button type="button" className="button" disabled={!stepOk} onClick={() => { setError(null); setStep(step + 1); }}>{t("wz.next")} <ArrowRight size={16} /></button>}
+          {step < 2 && <button type="button" className="button" disabled={!stepOk} onClick={() => { setError(null); setStep(step + 1); }}>{t("wz.next")} <ArrowRight size={16} /></button>}
           {step === 2 && <button type="button" className="button button-accent button-lg" disabled={busy || !stepOk} onClick={() => void create()}>{t("wz.create")} <ArrowRight size={18} /></button>}
         </div>
       </section>

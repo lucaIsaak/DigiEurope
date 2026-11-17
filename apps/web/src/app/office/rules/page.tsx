@@ -13,8 +13,8 @@ import {
   type DocumentTemplate,
   type Rule,
 } from "@digieurope/shared";
-import { CheckCircle2, CircleDot, Clock, Lock, Pencil, Power, Search, ShieldCheck, Sparkles, User, XCircle } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { AlertTriangle, CheckCircle2, CircleDot, Clock, Lock, Pencil, Plus, Power, Search, ShieldCheck, Sparkles, User, XCircle } from "lucide-react";
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { ConditionBuilder } from "@/components/ConditionBuilder";
 import { TodoBar, refreshTodo, useTodo, type TodoItem } from "@/components/TodoBar";
 import { SourceLink, Spinner, useAsyncError } from "@/components/ui";
@@ -23,7 +23,7 @@ import { useI18n } from "@/lib/i18n";
 import type { MessageKey } from "@/lib/messages";
 import { useStaff } from "@/lib/staff";
 
-type Filter = "attention" | "live" | "paused" | "all";
+type Filter = "attention" | "all";
 const needsAttention = (r: RuleEntry) => r.status === "draft" || r.status === "changed";
 
 export default function Rules() {
@@ -32,10 +32,11 @@ export default function Rules() {
   const todo = useTodo();
   const [rules, setRules] = useState<RuleEntry[] | null>(null);
   const [templates, setTemplates] = useState<DocumentTemplate[]>(BUILTIN_TEMPLATES);
-  const [filter, setFilter] = useState<Filter>("attention");
+  const [filter, setFilter] = useState<Filter>("all");
   const [q, setQ] = useState("");
   const [sel, setSel] = useState<string | null>(null);
   const [editing, setEditing] = useState<RuleDraftBody | null>(null);
+  const [creating, setCreating] = useState(false);
   const { error, setError, run } = useAsyncError();
 
   const load = useCallback(async () => {
@@ -44,9 +45,7 @@ export default function Rules() {
     return list;
   }, []);
   useEffect(() => {
-    void load().then((list) => {
-      if (!list.some(needsAttention)) setFilter("all");
-    });
+    void load();
     api.templates().then((l) => setTemplates(l.templates)).catch(() => undefined);
   }, [load]);
 
@@ -54,7 +53,7 @@ export default function Rules() {
   const shown = useMemo(() => {
     const term = q.trim().toLowerCase();
     return (rules ?? [])
-      .filter((r) => filter === "all" || (filter === "attention" ? needsAttention(r) : filter === "paused" ? r.status === "paused" : r.status === "live"))
+      .filter((r) => filter === "all" || needsAttention(r))
       .filter((r) => !term || bi(r.title).toLowerCase().includes(term) || r.id.toLowerCase().includes(term))
       .sort((a, b) => Number(needsAttention(b)) - Number(needsAttention(a)));
   }, [rules, filter, q, bi]);
@@ -95,8 +94,20 @@ export default function Rules() {
     refreshTodo();
   };
 
-  const filters: [Filter, MessageKey][] = [["attention", "r.filter.attention"], ["live", "r.filter.live"], ["paused", "r.filter.paused"], ["all", "r.filter.all"]];
-  const count = (f: Filter) => rules.filter((r) => f === "all" || (f === "attention" ? needsAttention(r) : f === "paused" ? r.status === "paused" : r.status === "live")).length;
+  const attention = rules.filter(needsAttention).length;
+  const groups = ([
+    { key: "attention", label: "r.group.attention", tone: "warn", items: shown.filter(needsAttention) },
+    { key: "federal", label: "r.group.federal", tone: "fed", items: shown.filter((r) => !needsAttention(r) && r.status !== "paused" && r.scope === "federal") },
+    { key: "office", label: "r.group.office", tone: "off", items: shown.filter((r) => !needsAttention(r) && r.status !== "paused" && r.scope === "office") },
+    { key: "paused", label: "r.group.paused", tone: "mute", items: shown.filter((r) => r.status === "paused" && !needsAttention(r)) },
+  ] as { key: string; label: MessageKey; tone: string; items: RuleEntry[] }[]).filter((g) => g.items.length > 0);
+
+  const startNew = () => {
+    setError(null);
+    setSel(null);
+    setCreating(true);
+    setEditing({ title: { de: "", en: "" }, plain: { de: "", en: "" }, fix: { de: "", en: "" }, severity: "blocker", when: [], pass: [], tests: [] });
+  };
 
   return (
     <div>
@@ -106,6 +117,7 @@ export default function Rules() {
           <h1>{t("r.title")}</h1>
           <p>{t("r.lead")}</p>
         </div>
+        {canBuild && <button type="button" className="button" onClick={startNew}><Plus size={16} />{t("r.new")}</button>}
       </div>
       <TodoBar items={todoItems} />
 
@@ -116,28 +128,59 @@ export default function Rules() {
               <Search size={15} />
               <input value={q} onChange={(e) => setQ(e.target.value)} placeholder={t("r.search")} aria-label={t("r.search")} />
             </label>
-            <div className="seg" role="group" style={{ flexWrap: "wrap" }}>
-              {filters.map(([k, label]) => (
-                <button key={k} type="button" aria-pressed={filter === k} onClick={() => setFilter(k)}>{t(label)} <span className="n">{count(k)}</span></button>
-              ))}
-            </div>
+            <label className="rl-only">
+              <input type="checkbox" checked={filter === "attention"} disabled={attention === 0} onChange={(e) => setFilter(e.target.checked ? "attention" : "all")} />
+              {t("r.onlyAttention")} <span className="n">{attention}</span>
+            </label>
           </div>
           <div className="rl-rows">
-            {shown.map((r) => (
-              <button key={r.id} type="button" className="rl-row" aria-current={r.id === sel} onClick={() => { setSel(r.id); setEditing(null); }}>
-                <span className={`sdot ${r.status}`} aria-hidden />
-                <span style={{ minWidth: 0 }}>
-                  <strong>{bi(r.title)}</strong>
-                  <small>{r.id} · {t(`r.status.${r.status}` as MessageKey)}</small>
-                </span>
-                {r.draft?.rule.draftedByAi && <Sparkles size={14} color="var(--accent)" />}
-              </button>
+            {groups.map((g) => (
+              <div key={g.key} className="rl-group">
+                <div className={`rl-group-head ${g.tone}`}><span>{t(g.label)}</span><span className="n">{g.items.length}</span></div>
+                {g.items.map((r) => {
+                  const rule = (r.draft ?? r.live)!.rule;
+                  return (
+                    <button key={r.id} type="button" className="rl-item" aria-current={!creating && r.id === sel} onClick={() => { setSel(r.id); setEditing(null); setCreating(false); }}>
+                      <span className={`sdot ${r.status}`} aria-hidden />
+                      <span className="rl-main">
+                        <strong>{bi(r.title)}</strong>
+                        <small>
+                          <span className="mono">{r.id}</span>
+                          <span className={`rl-sev ${rule.severity}`}>{t(rule.severity === "blocker" ? "r.sev.short.blocker" : "r.sev.short.warning")}</span>
+                          {needsAttention(r) && <span className="rl-state">{t(`r.status.${r.status}` as MessageKey)}</span>}
+                          {r.draft?.rule.draftedByAi && <Sparkles size={11} />}
+                        </small>
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
             ))}
-            {shown.length === 0 && <p className="muted small" style={{ padding: "1rem" }}>{t("todo.none")}</p>}
+            {groups.length === 0 && <p className="muted small" style={{ padding: "1rem" }}>{t("todo.none")}</p>}
           </div>
         </aside>
 
-        {!cur ? (
+        {creating && editing ? (
+          <Editor
+            entry={null}
+            body={editing}
+            facts={facts}
+            onChange={setEditing}
+            onCancel={() => { setEditing(null); setCreating(false); }}
+            onSave={async () => {
+              const res = await run(() => api.createRule({ title: editing.title, plain: editing.plain, fix: editing.fix, severity: editing.severity, when: editing.when, pass: editing.pass }));
+              if (res) {
+                setRules((rs) => [...rs!, res]);
+                refreshTodo();
+                setCreating(false);
+                setEditing(null);
+                setFilter("all");
+                setSel(res.id);
+              }
+            }}
+            error={error}
+          />
+        ) : !cur ? (
           <div className="panel preview-empty">{t("r.select")}</div>
         ) : editing ? (
           <Editor
@@ -162,8 +205,15 @@ export default function Rules() {
             canBuild={canBuild}
             sentences={sentences}
             onEdit={() => startEdit(cur)}
-            onApprove={async () => after(await run(() => api.approveRule(cur.id)))}
-            onDiscard={async () => after(await run(() => api.discardRule(cur.id)))}
+            onApprove={async () => after((await run(() => api.approveRule(cur.id))) as RuleEntry | undefined)}
+            onDiscard={async () => {
+              const res = await run(() => api.discardRule(cur.id));
+              if (res && "deleted" in res) {
+                setRules((rs) => rs!.filter((x) => x.id !== cur.id));
+                setSel(null);
+                refreshTodo();
+              } else await after(res as RuleEntry | undefined);
+            }}
             onToggle={async () => after(await run(() => (cur.paused ? api.approveRule(cur.id) : api.revokeRule(cur.id))))}
             error={error}
             dateTime={dateTime}
@@ -200,7 +250,7 @@ function Detail(props: {
   const before = r.draft && r.live ? props.sentences(r.live.rule) : null;
 
   return (
-    <section className="panel rd" style={{ padding: "1.4rem" }}>
+    <section className="rd">
       <div className="rd-head">
         <div>
           <div className="row" style={{ gap: "0.45rem" }}>
@@ -249,7 +299,7 @@ function Detail(props: {
           {props.canBuild && (
             <div className="row">
               <button type="button" className="button button-small" disabled={ownChange || testsFail} onClick={props.onApprove}><CheckCircle2 size={14} />{r.live ? t("r.approve") : t("r.approveNew")}</button>
-              {r.live && <button type="button" className="button button-ghost button-small" onClick={props.onDiscard}>{t("r.discard")}</button>}
+              {(r.live || r.scope === "office") && <button type="button" className="button button-ghost button-small" onClick={props.onDiscard}>{r.live ? t("r.discard") : t("r.withdraw")}</button>}
             </div>
           )}
         </div>
@@ -313,8 +363,43 @@ function Detail(props: {
   );
 }
 
+/** The sample cases for a brand-new rule, the same ones the server makes. */
+function newRuleTests(pass: Condition[]) {
+  const tests: Rule["tests"] = [{ name: "Complete application", facts: {}, expectPass: true }];
+  const first = pass[0];
+  if (first?.op === "present") {
+    const facts = first.path.split(".").reduceRight<unknown>((inner, key, i, all) => (i === all.length - 1 ? { [key]: false } : { [key]: inner }), undefined) as Record<string, unknown>;
+    tests.push({ name: "Without the required item", facts, expectPass: false });
+  }
+  return tests;
+}
+
+function Step({ title, hint, children }: { n?: number; title: string; hint?: string; children: ReactNode; done?: boolean }) {
+  return (
+    <section className="re-step">
+      <header>
+        <h3>{title}</h3>
+        {hint && <p>{hint}</p>}
+      </header>
+      <div className="re-body">{children}</div>
+    </section>
+  );
+}
+
+function Bi({ label, de, en, rows = 3, onDe, onEn, multiline = true }: { label: string; de: string; en: string; rows?: number; onDe: (v: string) => void; onEn: (v: string) => void; multiline?: boolean }) {
+  return (
+    <div className="bi">
+      <div className="bi-label">{label}</div>
+      <div className="bi-pair">
+        <label><span className="lang-tag">DE</span>{multiline ? <textarea rows={rows} value={de} onChange={(e) => onDe(e.target.value)} /> : <input value={de} onChange={(e) => onDe(e.target.value)} />}</label>
+        <label><span className="lang-tag en">EN</span>{multiline ? <textarea rows={rows} value={en} onChange={(e) => onEn(e.target.value)} /> : <input value={en} onChange={(e) => onEn(e.target.value)} />}</label>
+      </div>
+    </div>
+  );
+}
+
 function Editor(props: {
-  entry: RuleEntry;
+  entry: RuleEntry | null;
   body: RuleDraftBody;
   facts: ReturnType<typeof factCatalog>;
   onChange: (b: RuleDraftBody) => void;
@@ -322,73 +407,123 @@ function Editor(props: {
   onSave: () => void;
   error: string | null;
 }) {
-  const { t } = useI18n();
+  const { t, lang } = useI18n();
   const { body, onChange } = props;
-  const base = (props.entry.draft ?? props.entry.live)!.rule;
-  const advanced = fromCheck(base.pass) === null || fromCheck(base.when) === null;
+  const isNew = props.entry === null;
+  const base: Rule = useMemo(
+    () => (props.entry ? (props.entry.draft ?? props.entry.live)!.rule : ({ id: "R-OFFICE-NEW", version: 1, scope: "office", title: body.title, plain: body.plain, source: { label: "", url: "" }, pass: { all: [] }, severity: body.severity, fix: body.fix, tests: [] } as unknown as Rule)),
+    [props.entry, body.title, body.plain, body.fix, body.severity],
+  );
+  const advanced = !isNew && (fromCheck(base.pass) === null || fromCheck(base.when) === null);
   // The sample cases run on every change, so the person sees right away what the new check does.
   const preview = useMemo(() => {
-    const rule: Rule = { ...base, when: toCheck(body.when), pass: toCheck(body.pass) ?? base.pass, tests: base.tests.map((x) => ({ ...x, expectPass: body.tests.find((y) => y.name === x.name)?.expectPass ?? x.expectPass })) };
-    return runRuleTests(rule, baselineFacts() as unknown as Record<string, unknown>);
-  }, [base, body]);
+    const tests = isNew ? newRuleTests(body.pass) : base.tests.map((x) => ({ ...x, expectPass: body.tests.find((y) => y.name === x.name)?.expectPass ?? x.expectPass }));
+    const rule: Rule = { ...base, when: toCheck(body.when), pass: toCheck(body.pass) ?? base.pass, tests };
+    return body.pass.length === 0 && isNew ? [] : runRuleTests(rule, baselineFacts() as unknown as Record<string, unknown>);
+  }, [base, body, isNew]);
   const text = (k: "title" | "plain" | "fix", l: "de" | "en", v: string) => onChange({ ...body, [k]: { ...body[k], [l]: v } });
   const set = (patch: Partial<RuleDraftBody>) => onChange({ ...body, ...patch });
+  const words = (c: Condition[]) => c.map((x) => describeRuleCondition(x, props.facts, lang));
+
+  const okName = Boolean(body.title.de.trim() && body.title.en.trim());
+  const okPlain = Boolean(body.plain.de.trim() && body.plain.en.trim());
+  const okCond = body.pass.length > 0 || advanced;
+  const okMsg = Boolean(body.fix.de.trim() && body.fix.en.trim());
+  const testsOk = preview.every((x) => x.ok);
+  const ready = isNew ? okName && okPlain && okCond && okMsg : okCond;
+  const checklist: [boolean, MessageKey][] = isNew
+    ? [[okName, "r.ck.name"], [okPlain, "r.ck.plain"], [okCond, "r.ck.cond"], [okMsg, "r.ck.msg"], [preview.length > 0 && testsOk, "r.ck.tests"]]
+    : [[okCond, "r.ck.cond"], [testsOk, "r.ck.tests"]];
 
   return (
-    <section className="panel rd" style={{ padding: "1.4rem" }}>
-      <div>
-        <h2 style={{ margin: 0 }}>{t("r.ed.title")}</h2>
-        <p className="small muted" style={{ margin: "0.3rem 0 0" }}>{t("r.ed.lead")}</p>
-      </div>
-      <div className="form-grid">
-        <label className="field">{t("r.ed.name")} · {t("r.ed.de")}<input value={body.title.de} onChange={(e) => text("title", "de", e.target.value)} /></label>
-        <label className="field">{t("r.ed.name")} · {t("r.ed.en")}<input value={body.title.en} onChange={(e) => text("title", "en", e.target.value)} /></label>
-        <label className="field">{t("r.ed.plain")} · {t("r.ed.de")}<textarea rows={3} value={body.plain.de} onChange={(e) => text("plain", "de", e.target.value)} /></label>
-        <label className="field">{t("r.ed.plain")} · {t("r.ed.en")}<textarea rows={3} value={body.plain.en} onChange={(e) => text("plain", "en", e.target.value)} /></label>
-      </div>
-      {advanced ? (
-        <p className="banner banner-info small" style={{ margin: 0 }}>{t("r.ed.advanced")}</p>
-      ) : (
-        <>
-          <div>
-            <h3>{t("r.ed.when")}</h3>
-            <ConditionBuilder facts={props.facts} lines={body.when} onChange={(when: Condition[]) => set({ when })} />
+    <div className="re">
+      <div className="re-main">
+        <div className="re-intro">
+          <h2>{isNew ? t("r.new.title") : t("r.ed.title")}</h2>
+          <p>{isNew ? t("r.new.lead") : t("r.ed.lead")}</p>
+        </div>
+
+        <Step n={1} title={t("r.step.name")} hint={t("r.step.name.hint")} done={okName && okPlain}>
+          <Bi label={t("r.ed.name")} de={body.title.de} en={body.title.en} multiline={false} onDe={(v) => text("title", "de", v)} onEn={(v) => text("title", "en", v)} />
+          <Bi label={t("r.ed.plain")} de={body.plain.de} en={body.plain.en} onDe={(v) => text("plain", "de", v)} onEn={(v) => text("plain", "en", v)} />
+        </Step>
+
+        {advanced ? (
+          <p className="banner banner-info small" style={{ margin: 0 }}>{t("r.ed.advanced")}</p>
+        ) : (
+          <>
+            <Step n={2} title={t("r.step.when")} hint={t("r.step.when.hint")} done={body.when.length > 0}>
+              <ConditionBuilder facts={props.facts} lines={body.when} onChange={(when: Condition[]) => set({ when })} />
+              {body.when.length === 0 && <p className="re-empty"><CircleDot size={13} />{t("r.always")}</p>}
+            </Step>
+            <Step n={3} title={t("r.step.pass")} hint={t("r.step.pass.hint")} done={body.pass.length > 0}>
+              <ConditionBuilder facts={props.facts} lines={body.pass} onChange={(pass: Condition[]) => set({ pass })} />
+              {body.pass.length === 0 && <p className="re-empty warn"><AlertTriangle size={13} />{t("r.step.pass.empty")}</p>}
+            </Step>
+          </>
+        )}
+
+        <Step n={4} title={t("r.step.msg")} hint={t("r.step.msg.hint")} done={okMsg}>
+          <Bi label={t("r.ed.message")} de={body.fix.de} en={body.fix.en} onDe={(v) => text("fix", "de", v)} onEn={(v) => text("fix", "en", v)} />
+          <div className="bi-label">{t("r.ed.severity")}</div>
+          <div className="sev-pick" role="radiogroup" aria-label={t("r.ed.severity")}>
+            {(["blocker", "warning"] as const).map((sv) => (
+              <button key={sv} type="button" role="radio" aria-checked={body.severity === sv} className={sv} onClick={() => set({ severity: sv })}>
+                {sv === "blocker" ? <ShieldCheck size={18} /> : <AlertTriangle size={18} />}
+                <span><strong>{t(sv === "blocker" ? "r.severity.blocker" : "r.severity.warning")}</strong><small>{t(sv === "blocker" ? "r.sev.blocker.hint" : "r.sev.warning.hint")}</small></span>
+              </button>
+            ))}
           </div>
-          <div>
-            <h3>{t("r.ed.pass")}</h3>
-            <ConditionBuilder facts={props.facts} lines={body.pass} onChange={(pass: Condition[]) => set({ pass })} />
+        </Step>
+
+        <Step n={5} title={t("r.ed.tests")} hint={isNew ? t("r.step.tests.auto") : t("r.step.tests.hint")} done={preview.length > 0 && testsOk}>
+          {preview.length === 0 && <p className="re-empty"><CircleDot size={13} />{t("r.step.tests.wait")}</p>}
+          {preview.map((x) => (
+            <div className="test-row" key={x.name}>
+              {x.ok ? <CheckCircle2 size={16} color="var(--ok)" /> : <XCircle size={16} color="var(--bad)" />}
+              <span className="nm">{x.name}</span>
+              <span className="small muted">{t("r.ed.expect")}</span>
+              {isNew ? (
+                <span className="badge muted">{x.expectPass ? t("r.ed.pass1") : t("r.ed.fail1")}</span>
+              ) : (
+                <select value={x.expectPass ? "pass" : "fail"} style={{ width: "auto", padding: "0.3rem 0.5rem", fontSize: "0.82rem" }} onChange={(e) => set({ tests: body.tests.map((y) => (y.name === x.name ? { ...y, expectPass: e.target.value === "pass" } : y)) })}>
+                  <option value="pass">{t("r.ed.pass1")}</option>
+                  <option value="fail">{t("r.ed.fail1")}</option>
+                </select>
+              )}
+            </div>
+          ))}
+        </Step>
+      </div>
+
+      <aside className="re-side">
+        <div className="re-card">
+          <h4>{t("r.ed.preview")}</h4>
+          <strong className="re-title">{(lang === "de" ? body.title.de : body.title.en) || t("r.ed.untitled")}</strong>
+          {words(body.when).length > 0 && (
+            <>
+              <p className="re-k">{t("r.appliesWhen")}</p>
+              {words(body.when).map((x, i) => <div className="sentence" key={`w${i}`}><CircleDot size={14} />{x}</div>)}
+            </>
+          )}
+          <p className="re-k">{t("r.passesWhen")}</p>
+          {words(body.pass).length === 0 ? <p className="small muted" style={{ margin: 0 }}>–</p> : words(body.pass).map((x, i) => <div className="sentence" key={`p${i}`}><CheckCircle2 size={14} />{x}</div>)}
+          <p className="re-k">{t("r.message")}</p>
+          <p className="small" style={{ margin: 0 }}>{(lang === "de" ? body.fix.de : body.fix.en) || "–"}</p>
+        </div>
+        <div className="re-card">
+          <h4>{t("r.ed.checklist")}</h4>
+          <ul className="re-check">
+            {checklist.map(([ok, k]) => <li key={k} className={ok ? "ok" : ""}>{ok ? <CheckCircle2 size={15} /> : <CircleDot size={15} />}{t(k)}</li>)}
+          </ul>
+          <p className="small muted" style={{ margin: "0.6rem 0 0.8rem" }}><Lock size={12} style={{ verticalAlign: "-1px" }} /> {t("r.ed.twoPerson")}</p>
+          {props.error && <p className="error-text" role="alert">{props.error}</p>}
+          <div className="stack" style={{ gap: "0.5rem" }}>
+            <button type="button" className="button" style={{ width: "100%" }} disabled={!ready} onClick={props.onSave}>{isNew ? t("r.new.save") : t("r.ed.save")}</button>
+            <button type="button" className="button button-ghost" style={{ width: "100%" }} onClick={props.onCancel}>{t("r.ed.cancel")}</button>
           </div>
-        </>
-      )}
-      <div className="form-grid">
-        <label className="field">{t("r.ed.message")} · {t("r.ed.de")}<textarea rows={3} value={body.fix.de} onChange={(e) => text("fix", "de", e.target.value)} /></label>
-        <label className="field">{t("r.ed.message")} · {t("r.ed.en")}<textarea rows={3} value={body.fix.en} onChange={(e) => text("fix", "en", e.target.value)} /></label>
-        <label className="field">{t("r.ed.severity")}
-          <select value={body.severity} onChange={(e) => set({ severity: e.target.value as RuleDraftBody["severity"] })}>
-            <option value="blocker">{t("r.severity.blocker")}</option>
-            <option value="warning">{t("r.severity.warning")}</option>
-          </select>
-        </label>
-      </div>
-      <div>
-        <h3>{t("r.ed.tests")} · {t("r.testsOk", { n: preview.filter((x) => x.ok).length, m: preview.length })}</h3>
-        {preview.map((x) => (
-          <div className="test-row" key={x.name}>
-            {x.ok ? <CheckCircle2 size={16} color="var(--ok)" /> : <XCircle size={16} color="var(--bad)" />}
-            <span className="nm">{x.name}</span>
-            <span className="small muted">{t("r.ed.expect")}</span>
-            <select value={x.expectPass ? "pass" : "fail"} style={{ width: "auto", padding: "0.3rem 0.5rem", fontSize: "0.82rem" }} onChange={(e) => set({ tests: body.tests.map((y) => (y.name === x.name ? { ...y, expectPass: e.target.value === "pass" } : y)) })}>
-              <option value="pass">{t("r.ed.pass1")}</option>
-              <option value="fail">{t("r.ed.fail1")}</option>
-            </select>
-          </div>
-        ))}
-      </div>
-      {props.error && <p className="error-text" role="alert">{props.error}</p>}
-      <div className="row">
-        <button type="button" className="button" disabled={body.pass.length === 0} onClick={props.onSave}>{t("r.ed.save")}</button>
-        <button type="button" className="button button-ghost" onClick={props.onCancel}>{t("r.ed.cancel")}</button>
-      </div>
-    </section>
+        </div>
+      </aside>
+    </div>
   );
 }
