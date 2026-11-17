@@ -1,61 +1,72 @@
-# DigiEurope
+# Auslands-BAföG, faster and clearer
 
-Prototype of a platform that digitalises public administration services, starting with the **address registration (Anmeldung)** for newcomers in Germany. The product idea and research are in [docs/Product-discovery.md](docs/Product-discovery.md).
+Class prototype (Product Management, NOVA SBE) for **Auslands-BAföG**, German student funding for studying or interning abroad. Students find out within minutes whether their application is complete, what to fix and what they will likely get. Offices get complete files, rules they approve themselves, and insights that improve the application form.
 
-The prototype is a **pre-checking layer in front of the existing Bürgeramt**: applicants fill in a guided, bilingual form that is checked instantly, the landlord confirms online, and a caseworker decides on a complete application. Musterstadt is a fictional pilot city.
+The product idea and the interview evidence are in [docs/Product-discovery.md](docs/Product-discovery.md). **Studierendenwerk Musterstadt is fictional.** All people, documents and statistics are made up, and no real authority branding is used. Do not use it with real personal data.
 
 ## Run it
 
-Requires Node 22+ (`nvm use`). No database or Docker is needed for the prototype.
+Requires Node 22+ (`nvm use`). No database or Docker.
 
 ```sh
 npm install
-npm run dev          # builds shared types, starts API (:4000) and web (:3000)
+npm run dev          # builds shared code, starts API (:4000) and web (:3000)
 ```
 
-Open http://localhost:3000. The API seeds ~45 demo cases on first start (stored in `apps/api/data/`). `npm run reset-demo` deletes them; the next start seeds fresh data.
+Open http://localhost:3000. The API seeds about 40 demo cases on first start (stored in `apps/api/data/`).
 
-Checks: `npm run typecheck`, `npm test`, `npm run build`.
+```sh
+npm run reset-demo   # deletes the demo data; the next start reseeds
+npm test             # rules, estimate, API flows
+npm run typecheck
+npm run build
+```
 
-## Demo walkthrough (5 minutes)
+Optional live AI for the question assistant: copy `.env.example` to `.env` and set `ANTHROPIC_API_KEY`. Without it everything works offline.
 
-The dark bar at the top switches between the three views.
+## What is in it
 
-1. **Citizen** → *Start registration* → *Continue with passport*. Fill in a non-EU nationality (e.g. India). The **instant check** on the right lists exactly what is missing.
-2. *Landlord* step → *Ask my landlord to confirm online* → *Send request*. Open the demo link (it stands in for the e-mail) and confirm as the landlord. The applicant's page updates by itself.
-3. Upload any PDF/JPG/PNG for passport and visa, then *Check and send*. You land on the **status page** (it refreshes live).
-4. **Caseworker** → open the new case → *Book express ID check*. The citizen sees the appointment and can add it to their calendar. Then *Passport checked, register* → the citizen gets the (watermarked) registration certificate and a "what's next" list.
-5. Try *Request information* with a message: the citizen sees it, updates the application and resubmits.
-6. **City dashboard**: complete-at-first-submission rate, days to decision and an estimate of freed counter hours with editable assumptions.
+**Student side** (`/`)
 
-The eID path (*Online ID* → choose a test identity) shows the fully online variant: personal data arrives verified and locked, and the caseworker can register directly.
-
-## How the discovery maps to the prototype
-
-| Finding (docs/Product-discovery.md) | In the prototype |
+| Screen | What it does |
 |---|---|
-| Anmeldung blocks everything after it (Priya) | Anmeldung first; landing page and "what's next" make the dependency explicit |
-| Landlord confirmation is a common blocker | Landlord confirms via link, no paper; confirmation is invalidated if address or date change |
-| "I need to know where it is" (Mateo) | Status page with timeline, messages, live refresh; lookup by reference + birth date |
-| German-only forms | DE/EN UI in plain language; caseworker sees the application language |
-| 1 in 3 appointments end with something missing (Frank) | Rule-based pre-check blocks submission until complete; caseworker sees it was pre-checked |
-| Must fit existing case software | JSON hand-over export per case (XMeld / FIT-Connect mapping still to do) |
-| Buyer pays for measurable results (Möller) | Dashboard: first-time-complete rate, days to decision, counter-hours estimate |
-| Trust: reuse the official ID login (Anna) | Simulated eID login with verified, locked fields; passport path for newcomers without eID |
+| Apply (`/apply`) | Describe the stay (study or internship, country, dates, tuition fees) |
+| My application (`/case/…`) | Upload documents (recognised and read automatically), invite parents, **Ready / Fix these items**, non-binding estimate, submit, status and history |
+| Parent link (`/parent/…`) | Parents upload their income documents with no account; they see nothing else |
+| Track (`/status`) | Look up a case by reference and birth date |
+| Questions (`/ask`) | General rule questions; every answer cites its official source and says when it does not know |
+| Check my letter (`/letter`) | Upload the last decision letter: why the amount, whether the next application is likely reduced or rejected (for example when the one-year tuition supplement ends), and what would change it |
+
+**Office side** (`/office`)
+
+| Screen | What it does |
+|---|---|
+| Inbox | Applications arrive through the simulated official portal, each already checked |
+| Case | Rule results, fields read from documents, estimate, and the **caseworker's decision** (request documents, approve, reject) |
+| Rules | Plain-language rules, the fixed check that runs, sample cases, approval. Federal rules are shared; offices only set local things |
+| Inputs & setup | Define expected inputs by uploading a sample document and confirming the fields read; local settings |
+| Insights | Most frequent first-check issues and recommended changes to the application form |
+
+The caseworker always decides. Checks are deterministic code; AI only reads documents (simulated here) and helps draft rules.
+
+## Demo
+
+[docs/demo-script.md](docs/demo-script.md) is a 5-minute click-by-click script. Sample documents with typical mistakes (missing parent signature, missing host-university confirmation, unsigned internship contract) and the corrected versions are at `/samples`, linked in the page footer.
+
+Hidden demo helpers: press © in the footer five times (or Shift+Alt+R) to reset the demo; Shift+Alt+D on the apply page fills in the sample student.
 
 ## Structure
 
-- `packages/shared` – domain types, the **pre-check rules** (`precheck.ts`) and patch logic, shared by API and web
-- `apps/api` – Fastify API: applications, documents, landlord confirmation, caseworker actions, metrics, demo seed
-- `apps/web` – Next.js app: citizen flow, landlord page, caseworker queue, city dashboard. Copy in `src/lib/messages.ts`
-- `docs/` – discovery, architecture notes and ADRs
+- `packages/shared`: types, the **rules and engine**, estimate calculator, letter analysis, question knowledge base
+- `apps/api`: Fastify API, document reader, sample documents, demo data
+- `apps/web`: Next.js app. Copy (DE/EN) in `src/lib/messages.ts`
+- `docs/`: discovery, [rules and sources](docs/bafoeg-rules-sources.md), architecture, demo script, ADRs
 
 ## What is simulated
 
-- **eID / BundID login**: two fictional test identities. No real identity check.
-- **E-mail to the landlord**: the link is shown to the applicant instead of being sent.
-- **Caseworker and dashboard**: no login. Anyone who can reach the server can act as caseworker.
-- **Storage**: JSON file plus upload folder, no encryption or retention rules.
-- **Certificate**: a watermarked specimen, never an official document.
-
-Do not use it with real personal data. See [docs/architecture.md](docs/architecture.md) for what has to change before that.
+- **Document reading**: parses only the prototype's own sample PDFs. Other files are reported as unreadable.
+- **Official portal**: a button creates a delivery.
+- **E-mail to parents**: the link is shown on screen.
+- **Live AI**: optional and off unless a key is set.
+- **Login**: none. Anyone who can reach the server can open the office area.
+- **Figures**: statutory amounts are taken from the law text ([sources](docs/bafoeg-rules-sources.md)). Country surcharges and some deductions are illustrative and labelled so.

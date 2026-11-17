@@ -10,3 +10,5 @@ coverage/
 
 # Prototype data (JSON store + uploads)
 apps/api/data/
+
+*.tsbuildinfo
