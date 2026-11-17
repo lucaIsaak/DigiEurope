@@ -6,6 +6,7 @@ import {
   type CaseView,
   type DocumentKind,
   type DocumentRef,
+  type Extraction,
   type HistoryEntry,
   type Lang,
   type StayInfo,
@@ -62,8 +63,9 @@ export function addDocument(
   file: { filename: string; mimeType: string; content: Buffer },
   by: DocumentRef["uploadedBy"],
   now: Date = new Date(),
+  read?: { kind: DocumentKind; extraction: Extraction },
 ): Application {
-  const { kind, extraction } = extractDocument(file.content, file.mimeType);
+  const { kind, extraction } = read ?? extractDocument(file.content, file.mimeType);
   const old = extraction.readable ? app.documents.filter((d) => d.kind === kind) : [];
   for (const o of old) store.deleteDocument(o.id);
   const meta: DocumentRef = {

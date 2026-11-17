@@ -11,14 +11,24 @@ import {
   type Application,
   type CaseStatus,
   type DocumentKind,
+  type ExtractionMethod,
   type Lang,
+  DEFAULT_CATEGORY,
+  PROCESS_CATALOG,
+  catalogVariant,
+  catalogVariants,
+  harmony,
+  isCatalogVariant,
+  referenceProcess,
   type ProcessDef,
   type StaffMember,
   type StayInfo,
   type StudentInfo,
   validateProcess,
 } from "@digieurope/shared";
-import { resumeRun, startRun } from "./engine.js";
+import { resumeRun, startRun, type EngineCtx } from "./engine.js";
+import { PEER_OFFICES, REFERENCE_SETTINGS, type OfficeProcess } from "./offices.js";
+import { DEFAULT_MIN_CONFIDENCE, aiAvailable, methodsInfo, readConfigured } from "./extraction.js";
 import { Store as ScratchStore } from "./store.js";
 import { askLive, liveAvailable, retrieve } from "./assistant.js";
 import { PARENT_KINDS, addDocument, checkNow, invite, newApplication, officeAct, open, removeDocument, submit, view, type OfficeAction } from "./cases.js";
@@ -57,8 +67,11 @@ export function buildApp(opts: AppOptions) {
     const token = req.headers["x-staff-token"];
     req.staff = store.staffBySession(typeof token === "string" ? token : undefined) ?? null;
     const protectedRoute = url.startsWith("/office") || url === "/staff/me" || url === "/staff/logout";
-    if (!protectedRoute) return;
+    const oversightArea = url.startsWith("/oversight");
+    if (!protectedRoute && !oversightArea) return;
     if (!req.staff) return reply.code(401).send({ error: "Please sign in as staff." });
+    if (oversightArea && !req.staff.isOversight) return reply.code(403).send({ error: "Only the oversight body can compare offices." });
+    if (req.staff.isOversight && url.startsWith("/office")) return reply.code(403).send({ error: "Oversight accounts do not work in an office." });
     if (url.startsWith("/office/staff") && !req.staff.isAdmin) return reply.code(403).send({ error: "Only administrators can do this." });
     if (needsBuild(req.method, url) && !req.staff.canBuild && !req.staff.isAdmin) return reply.code(403).send({ error: "You do not have access to the process builder." });
   });
@@ -66,7 +79,19 @@ export function buildApp(opts: AppOptions) {
   const bad = (reply: FastifyReply, error: string, code = 400) => reply.code(code).send({ error });
   const v = (a: Application) => view(store, a, webUrl, now());
   /** Hands a submitted application to the live process of the office. */
-  const runLive = (a: Application) => store.put(startRun(store.processes().live, a, { rules: store.ruleStates(), now: now() }));
+  const engineCtx = (from: Store = store): EngineCtx => ({
+    rules: store.ruleStates(),
+    now: now(),
+    reread: async (doc, override) => {
+      const f = from.readDocument(doc.id);
+      return f ? readConfigured(f.content, doc.mimeType, store.config(), override) : null;
+    },
+  });
+  const liveDef = () => store.process(DEFAULT_CATEGORY)?.live ?? null;
+  const runLive = async (a: Application) => {
+    const def = liveDef();
+    return def ? store.put(await startRun(def, a, engineCtx())) : a;
+  };
 
   function readFile(body: { filename?: string; mimeType?: string; dataBase64?: string } | undefined) {
     const { filename, mimeType, dataBase64 } = body ?? {};
@@ -107,7 +132,8 @@ export function buildApp(opts: AppOptions) {
     if (!EDITABLE.includes(a.status)) return bad(reply, "Application can no longer be edited.", 409);
     const r = readFile(req.body);
     if ("error" in r) return bad(reply, r.error!);
-    return reply.code(201).send(v(addDocument(store, a, r.file!, "student", now())));
+    const read = await readConfigured(r.file!.content, r.file!.mimeType, store.config());
+    return reply.code(201).send(v(addDocument(store, a, r.file!, "student", now(), read)));
   });
 
   app.delete<{ Params: { id: string; docId: string } }>("/applications/:id/documents/:docId", async (req, reply) => {
@@ -135,7 +161,7 @@ export function buildApp(opts: AppOptions) {
     if (!a) return notFound(reply);
     if (!EDITABLE.includes(a.status)) return bad(reply, "Application was already submitted.", 409);
     if (!runChecks(a, store.ruleStates(), now()).ready) return bad(reply, "There are still items to fix.", 409);
-    return v(runLive(submit(store, a, now())));
+    return v(await runLive(submit(store, a, now())));
   });
 
   app.get<{ Querystring: { reference?: string; birthDate?: string } }>("/status/lookup", async (req, reply) => {
@@ -171,7 +197,8 @@ export function buildApp(opts: AppOptions) {
     if ("error" in r) return bad(reply, r.error!);
     const detected = extractDocument(r.file!.content, r.file!.mimeType).kind;
     if (detected !== "unknown" && !PARENT_KINDS.includes(detected)) return bad(reply, "This looks like a document for the student, not for the parents.");
-    return reply.code(201).send(parentView(addDocument(store, a, r.file!, "parent", now())));
+    const read = await readConfigured(r.file!.content, r.file!.mimeType, store.config());
+    return reply.code(201).send(parentView(addDocument(store, a, r.file!, "parent", now(), read)));
   });
 
   // ---- Assistant and decision-letter reader ---------------------------------
@@ -226,6 +253,8 @@ export function buildApp(opts: AppOptions) {
     const { action, message, amount } = req.body ?? {};
     if (a.status === "approved" || a.status === "rejected") return bad(reply, "This case is already decided.", 409);
     if (a.status === "draft") return bad(reply, "This case has not been submitted.", 409);
+    const waitingKind = liveDef()?.nodes.find((n) => n.id === a.flow?.waiting)?.kind;
+    if (waitingKind === "review_fields" && (action === "approve" || action === "reject")) return bad(reply, "Check the fields that were read with low confidence first.", 409);
     if (action === "request_info") {
       if (!message?.trim()) return bad(reply, "Please write what is missing.");
     } else if (action === "approve") {
@@ -236,10 +265,11 @@ export function buildApp(opts: AppOptions) {
     } else return bad(reply, "Unknown action.");
     const acted = officeAct(store, a, action, { message, amount, by: req.staff?.name ?? "Sachbearbeitung" }, now());
     const outcome = action === "approve" ? "approved" : action === "reject" ? "rejected" : "info";
-    return v(store.put(resumeRun(store.processes().live, acted, outcome, { rules: store.ruleStates(), now: now() })));
+    const def = liveDef();
+    return v(def ? store.put(await resumeRun(def, acted, outcome, engineCtx())) : acted);
   });
 
-  app.post("/office/portal/deliver", async (_req, reply) => reply.code(201).send(summary(runLive(deliverFromPortal(store, now())))));
+  app.post("/office/portal/deliver", async (_req, reply) => reply.code(201).send(summary(await runLive(deliverFromPortal(store, now())))));
 
   app.get("/office/insights", async () => computeInsights(store.list(), now()));
 
@@ -288,6 +318,50 @@ export function buildApp(opts: AppOptions) {
     const c = store.config();
     store.setConfig({ ...c, expectedInputs: { ...c.expectedInputs, [kind]: { fields, confirmedAt: now().toISOString() } } });
     return store.config();
+  });
+
+
+  // ---- Document reading: methods, settings, human review ---------------------------
+  app.get("/office/extraction", async () => ({
+    methods: methodsInfo(),
+    config: { defaultMethod: store.config().defaultMethod, byType: store.config().extraction },
+    defaultMinConfidence: DEFAULT_MIN_CONFIDENCE,
+    aiKey: aiAvailable(),
+  }));
+
+  app.put<{ Body: { kind?: DocumentKind | "default"; method?: ExtractionMethod; minConfidence?: number } }>("/office/extraction", async (req, reply) => {
+    const { kind, method, minConfidence } = req.body ?? {};
+    if (!method || !methodsInfo().some((m) => m.id === method)) return bad(reply, "Unknown method.");
+    const c = store.config();
+    if (kind === "default") store.setConfig({ ...c, defaultMethod: method });
+    else if (kind && DOCUMENT_KINDS.includes(kind)) {
+      const min = Math.min(1, Math.max(0.3, Number(minConfidence) || DEFAULT_MIN_CONFIDENCE));
+      store.setConfig({ ...c, extraction: { ...c.extraction, [kind]: { method, minConfidence: min } } });
+    } else return bad(reply, "Unknown document type.");
+    return { config: { defaultMethod: store.config().defaultMethod, byType: store.config().extraction } };
+  });
+
+  /** A person checks the fields that were read with low confidence, corrects them and confirms. */
+  app.post<{ Params: { id: string }; Body: { docId?: string; fields?: Record<string, string> } }>("/office/cases/:id/review", async (req, reply) => {
+    const a = store.get(req.params.id);
+    if (!a) return notFound(reply);
+    const doc = a.documents.find((d) => d.id === req.body?.docId);
+    if (!doc) return notFound(reply);
+    const edits = req.body?.fields ?? {};
+    const fields = { ...doc.extraction.fields };
+    const confidence = { ...(doc.extraction.confidence ?? {}) };
+    for (const [k, val] of Object.entries(edits)) {
+      if (!(k in fields)) continue;
+      fields[k] = String(val).slice(0, 200);
+      confidence[k] = 1; // confirmed by a person
+    }
+    const still = Object.values(confidence).some((x) => x < (store.config().extraction[doc.kind]?.minConfidence ?? DEFAULT_MIN_CONFIDENCE));
+    const updated = { ...a, documents: a.documents.map((d) => (d.id === doc.id ? { ...d, extraction: { ...d.extraction, fields, confidence, needsReview: still, note: "Checked by " + (req.staff?.name ?? "staff") } } : d)) };
+    store.put(updated);
+    const open = updated.documents.some((d) => d.extraction.needsReview);
+    const def = liveDef();
+    const next = open || !def ? updated : await resumeRun(def, updated, "confirmed", engineCtx());
+    return v(store.put(next));
   });
 
   // ---- Sample documents (for the demo) ------------------------------------
@@ -344,10 +418,13 @@ export function buildApp(opts: AppOptions) {
   });
 
   // ---- Process builder ------------------------------------------------------------
+  /** Every process belongs to one entry of the central process catalogue. */
   const cleanDef = (def: ProcessDef | undefined, by: string, version: number): ProcessDef | null => {
     if (!def || !Array.isArray(def.nodes) || !Array.isArray(def.edges) || def.nodes.length > 80 || def.edges.length > 200) return null;
+    if (!isCatalogVariant(def.catalogId)) return null;
     return {
-      id: store.processes().live.id,
+      id: String(def.id ?? def.catalogId).slice(0, 80),
+      catalogId: def.catalogId,
       name: String(def.name ?? "Process").slice(0, 120),
       version,
       updatedAt: now().toISOString(),
@@ -356,16 +433,37 @@ export function buildApp(opts: AppOptions) {
       edges: def.edges.map((e) => ({ id: String(e.id), source: String(e.source), sourceHandle: String(e.sourceHandle), target: String(e.target) })),
     };
   };
+  const nextVersion = (category: string) => (store.process(category)?.live?.version ?? 0) + 1;
 
-  app.get("/office/processes", async () => {
-    const p = store.processes();
-    return { live: p.live, draft: p.draft ?? null, history: p.history.map(({ version, updatedAt, updatedBy, name }) => ({ version, updatedAt, updatedBy, name })) };
+  app.get("/office/processes/list", async () =>
+    Object.entries(store.processes()).map(([catalogId, p]) => ({ catalogId, name: (p.draft ?? p.live)?.name ?? catalogId, liveVersion: p.live?.version ?? null, hasDraft: Boolean(p.draft) })),
+  );
+
+  app.get<{ Querystring: { category?: string } }>("/office/processes", async (req, reply) => {
+    const category = req.query.category ?? DEFAULT_CATEGORY;
+    const p = store.process(category);
+    if (!p) return notFound(reply);
+    return { catalogId: category, live: p.live, draft: p.draft ?? null, history: p.history.map(({ version, updatedAt, updatedBy, name }) => ({ version, updatedAt, updatedBy, name })) };
+  });
+
+  /** Starts a new process in a catalogue category that has none yet. */
+  app.post<{ Body: { catalogId?: string; name?: string } }>("/office/processes/create", async (req, reply) => {
+    const { catalogId, name } = req.body ?? {};
+    if (!catalogId || !isCatalogVariant(catalogId)) return bad(reply, "Please choose a category from the process catalogue.");
+    if (store.process(catalogId)) return bad(reply, "This office already has a process in this category.", 409);
+    const title = catalogVariant(catalogId)!.path.at(-1)!.de;
+    const draft: ProcessDef = { id: catalogId, catalogId, name: (name ?? "").trim().slice(0, 120) || title, version: 1, updatedAt: now().toISOString(), updatedBy: req.staff!.name, nodes: [{ id: "start", kind: "trigger", position: { x: 0, y: 0 }, config: { source: "any" } }], edges: [] };
+    store.setProcess(catalogId, { live: null, draft, history: [] });
+    return reply.code(201).send(draft);
   });
 
   app.put<{ Body: { def?: ProcessDef } }>("/office/processes/draft", async (req, reply) => {
-    const def = cleanDef(req.body?.def, req.staff!.name, store.processes().live.version + 1);
+    const cat = req.body?.def?.catalogId ?? "";
+    const p = store.process(cat);
+    if (!p) return notFound(reply);
+    const def = cleanDef(req.body?.def, req.staff!.name, nextVersion(cat));
     if (!def) return bad(reply, "This process cannot be saved.");
-    store.setProcesses({ ...store.processes(), draft: def });
+    store.setProcess(cat, { ...p, draft: def });
     return def;
   });
 
@@ -375,30 +473,34 @@ export function buildApp(opts: AppOptions) {
   });
 
   app.post<{ Body: { def?: ProcessDef } }>("/office/processes/publish", async (req, reply) => {
-    const p = store.processes();
-    const def = cleanDef(req.body?.def, req.staff!.name, p.live.version + 1);
+    const cat = req.body?.def?.catalogId ?? "";
+    const p = store.process(cat);
+    if (!p) return notFound(reply);
+    const def = cleanDef(req.body?.def, req.staff!.name, nextVersion(cat));
     if (!def) return bad(reply, "Invalid process.");
     const issues = validateProcess(def);
     if (issues.length) return reply.code(422).send({ error: "The process has open issues.", issues });
-    store.setProcesses({ live: def, draft: undefined, history: [...p.history, p.live] });
+    store.setProcess(cat, { live: def, draft: undefined, history: p.live ? [...p.history, p.live] : p.history });
     return def;
   });
 
-  app.post<{ Body: { version?: number } }>("/office/processes/restore", async (req, reply) => {
-    const p = store.processes();
-    const old = p.history.find((h) => h.version === req.body?.version);
-    if (!old) return notFound(reply);
-    store.setProcesses({ ...p, draft: { ...old, version: p.live.version + 1, updatedAt: now().toISOString(), updatedBy: req.staff!.name } });
-    return store.processes().draft;
+  app.post<{ Body: { category?: string; version?: number } }>("/office/processes/restore", async (req, reply) => {
+    const cat = req.body?.category ?? DEFAULT_CATEGORY;
+    const p = store.process(cat);
+    const old = p?.history.find((h) => h.version === req.body?.version);
+    if (!p || !old) return notFound(reply);
+    store.setProcess(cat, { ...p, draft: { ...old, version: nextVersion(cat), updatedAt: now().toISOString(), updatedBy: req.staff!.name } });
+    return store.process(cat)!.draft;
   });
 
   /** Runs a process on a sample case in a scratch store. Nothing real is touched. */
-  app.post<{ Body: { def?: ProcessDef; sample?: string; decision?: "approved" | "rejected" | "info" } }>("/office/processes/test", async (req, reply) => {
+  app.post<{ Body: { def?: ProcessDef; sample?: string; decision?: "approved" | "rejected" | "info" | "confirmed" } }>("/office/processes/test", async (req, reply) => {
     const def = cleanDef(req.body?.def, req.staff!.name, 0);
     if (!def) return bad(reply, "Invalid process.");
     const issues = validateProcess(def);
     if (issues.length) return reply.code(422).send({ error: "The process has open issues.", issues });
     const samples: Record<string, { person: string; defects: Defect[]; source: "web" | "portal" }> = {
+      unclear: { person: "paul", defects: ["unclear_income"], source: "portal" },
       incomplete: { person: "mira", defects: ["parent_unsigned", "host_missing"], source: "portal" },
       complete: { person: "lea", defects: [], source: "web" },
       internship: { person: "jonas", defects: ["contract_unsigned"], source: "portal" },
@@ -409,16 +511,67 @@ export function buildApp(opts: AppOptions) {
     let a = newApplication(scratch, { student: person.student, stay: person.stay, language: "de", source: sample.source }, now());
     for (const d of sampleDocuments(person, sample.defects)) a = addDocument(scratch, a, { filename: d.filename, mimeType: "application/pdf", content: d.content }, "student", now());
     a = { ...a, status: "submitted", submittedAt: now().toISOString() };
-    const ctx = { rules: store.ruleStates(), now: now() };
-    a = startRun(def, a, ctx);
+    const ctx = engineCtx(scratch);
+    a = await startRun(def, a, ctx);
     const decision = req.body?.decision;
     if (decision && a.flow?.waiting) {
       if (decision === "approved") a = { ...a, status: "approved", decision: { outcome: "approved", monthlyAmount: estimate(a, now()).monthly, note: "", decidedAt: now().toISOString(), decidedBy: "Test" } };
       if (decision === "rejected") a = { ...a, status: "rejected" };
       if (decision === "info") a = { ...a, status: "info_requested" };
-      a = resumeRun(def, a, decision, ctx);
+      if (decision === "confirmed") a = { ...a, documents: a.documents.map((d) => ({ ...d, extraction: { ...d.extraction, needsReview: false } })) };
+      a = await resumeRun(def, a, decision, ctx);
     }
     return { log: a.flow?.log ?? [], status: a.status, waiting: a.flow?.waiting ?? null, finished: a.flow?.finished ?? false, mails: a.outbox ?? [], integrations: a.integrations ?? [], team: a.assignedTeam ?? null };
+  });
+
+  // ---- Oversight: compare the same process across offices ------------------------------
+  const ownOffice = (category: string): OfficeProcess | null => {
+    const p = store.process(category)?.live;
+    if (!p) return null;
+    const list = store.list().filter((a) => a.status !== "draft");
+    const insights = computeInsights(store.list(), now());
+    const flows = list.filter((a) => a.flow);
+    const rounds = list.length ? list.reduce((sum, a) => sum + a.history.filter((h) => h.kind === "info_requested").length, 0) / list.length : null;
+    const states = store.ruleStates();
+    const cfg = store.config();
+    return {
+      def: p,
+      settings: { approvedRules: Object.entries(states).filter(([, st]) => st.status === "approved").map(([id]) => id), extractionDefault: cfg.defaultMethod, extractionByType: cfg.extraction, slaDays: cfg.slaDays, languages: cfg.languages },
+      metrics: {
+        medianDaysToDecision: insights.medianDaysToDecision,
+        firstTimeComplete: insights.total ? insights.firstTimeComplete : null,
+        reviewShare: flows.length ? Math.round((100 * flows.filter((a) => a.flow!.log.some((l) => l.kind === "review_fields")).length) / flows.length) : null,
+        documentRounds: rounds === null ? null : Math.round(rounds * 10) / 10,
+        casesPerMonth: Math.round((insights.perWeek.reduce((x, w) => x + w.count, 0) / 8) * 4.33),
+      },
+    };
+  };
+
+  app.get("/oversight/catalogue", async () => {
+    const mine = Object.keys(store.processes());
+    return {
+      catalogue: PROCESS_CATALOG,
+      coverage: catalogVariants().map((v) => ({
+        id: v.id,
+        offices: [...(mine.includes(v.id) && store.process(v.id)?.live ? [{ id: "musterstadt", name: store.config().name }] : []), ...PEER_OFFICES.filter((o) => o.processes[v.id]).map((o) => ({ id: o.id, name: o.name }))],
+      })),
+    };
+  });
+
+  app.get<{ Querystring: { category?: string } }>("/oversight/compare", async (req, reply) => {
+    const category = req.query.category ?? DEFAULT_CATEGORY;
+    if (!isCatalogVariant(category)) return notFound(reply);
+    const reference = category === DEFAULT_CATEGORY ? { def: referenceProcess(), settings: REFERENCE_SETTINGS } : null;
+    const offices = [
+      ...(ownOffice(category) ? [{ id: "musterstadt", name: store.config().name, city: "Musterstadt", ...ownOffice(category)!, live: true }] : []),
+      ...PEER_OFFICES.filter((o) => o.processes[category]).map((o) => ({ id: o.id, name: o.name, city: o.city, ...o.processes[category]!, live: false })),
+    ];
+    return {
+      category,
+      variant: catalogVariant(category),
+      reference,
+      offices: offices.map((o) => ({ ...o, harmony: reference ? harmony(o, reference) : null })),
+    };
   });
 
   // ---- Demo reset (not linked from the UI) ----------------------------------

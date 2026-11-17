@@ -15,7 +15,7 @@ export default function StaffLogin() {
   const { error, run } = useAsyncError();
   useEffect(() => void api.staffAccounts().then(setAccounts), []);
   useEffect(() => {
-    if (staff) router.replace("/office");
+    if (staff) router.replace(staff.isOversight ? "/oversight" : "/office");
   }, [staff, router]);
 
   if (!accounts) return <Spinner label={t("common.loading")} />;

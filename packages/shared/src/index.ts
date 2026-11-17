@@ -9,3 +9,5 @@ export * from "./estimate.js";
 export * from "./letter.js";
 export * from "./knowledge.js";
 export * from "./process.js";
+export * from "./catalog.js";
+export * from "./compare.js";

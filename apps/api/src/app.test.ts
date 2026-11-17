@@ -246,3 +246,116 @@ describe("process builder and engine", () => {
     expect(store.list()).toHaveLength(0);
   });
 });
+
+describe("document reading", () => {
+  it("the template reader reports doubtful fields and flags them for review", async () => {
+    const { readWithMethod } = await import("./extraction.js");
+    const docs = sampleDocuments(getPerson("paul", NOW), ["unclear_income"]);
+    const tax = docs.find((d) => d.kind === "parent_tax")!;
+    const r = await readWithMethod(tax.content, "application/pdf", "builtin", 0.8);
+    expect(r.extraction.confidence?.sum_of_income).toBeLessThan(0.8);
+    expect(r.extraction.confidence?.tax_year).toBeGreaterThan(0.9);
+    expect(r.extraction.needsReview).toBe(true);
+    const clean = sampleDocuments(getPerson("paul", NOW)).find((d) => d.kind === "parent_tax")!;
+    expect((await readWithMethod(clean.content, "application/pdf", "builtin", 0.8)).extraction.needsReview).toBe(false);
+  });
+
+  it("the AI reader keeps only known fields, clamps confidence and falls back on errors", async () => {
+    const { aiExtract, readWithMethod } = await import("./extraction.js");
+    const tax = sampleDocuments(getPerson("paul", NOW)).find((d) => d.kind === "parent_tax")!;
+    process.env.ANTHROPIC_API_KEY = "test-key";
+    try {
+      const answer = { documentType: "parent_tax", fields: { tax_year: { value: "2025", confidence: 1.4, page: 1 }, sum_of_income: { value: "", confidence: 0.9, page: 2 }, bogus: { value: "x", confidence: 1, page: 1 } }, signatures: {} };
+      const ok = (async () => new Response(JSON.stringify({ content: [{ type: "text", text: JSON.stringify(answer) }] }), { status: 200 })) as unknown as typeof fetch;
+      const r = await aiExtract(tax.content, "application/pdf", ok);
+      expect(r?.kind).toBe("parent_tax");
+      expect(r?.extraction.fields.bogus).toBeUndefined();
+      expect(r?.extraction.confidence?.tax_year).toBe(1);
+      expect(r?.extraction.confidence?.sum_of_income).toBe(0); // empty value is never "confident"
+      expect(r?.extraction.pages?.sum_of_income).toBe(2);
+      const failing = (async () => new Response("no", { status: 500 })) as unknown as typeof fetch;
+      const fb = await readWithMethod(tax.content, "application/pdf", "ai", 0.8, failing);
+      expect(fb.kind).toBe("parent_tax");
+      expect(fb.extraction.note).toContain("failed");
+    } finally {
+      delete process.env.ANTHROPIC_API_KEY;
+    }
+    const sim = await readWithMethod(tax.content, "application/pdf", "ai", 0.8);
+    expect(sim.extraction.engine).toBe("ai-simulated");
+    const ph = await readWithMethod(tax.content, "application/pdf", "external", 0.8);
+    expect(ph.extraction.note).toContain("placeholder");
+  });
+
+  it("the office can choose the method per document type", async () => {
+    const { app } = setup();
+    expect((await app.inject({ method: "PUT", url: "/office/extraction", payload: { kind: "parent_tax", method: "nope" } })).statusCode).toBe(400);
+    expect((await app.inject({ method: "PUT", url: "/office/extraction", payload: { kind: "parent_tax", method: "ai", minConfidence: 0.9 } })).statusCode).toBe(200);
+    const { id, person } = await create(app, "lea");
+    const tax = sampleDocuments(person).find((d) => d.kind === "parent_tax")!;
+    await upload(app, `/applications/${id}/documents`, tax.filename, tax.content);
+    const c = (await app.inject({ method: "GET", url: `/applications/${id}` })).json();
+    expect(c.documents[0].extraction.engine).toBe("ai-simulated");
+    const cfg = (await app.inject({ method: "GET", url: "/office/extraction" })).json();
+    expect(cfg.config.byType.parent_tax.minConfidence).toBe(0.9);
+    expect(cfg.methods.find((m: { id: string }) => m.id === "external").status).toBe("placeholder");
+  });
+
+  it("a doubtful field sends the case to human review, and confirming continues the process", async () => {
+    const { app } = setup();
+    const { id, person } = await create(app, "paul");
+    for (const d of sampleDocuments(person, ["unclear_income"])) await upload(app, `/applications/${id}/documents`, d.filename, d.content);
+    const submitted = (await app.inject({ method: "POST", url: `/applications/${id}/submit` })).json();
+    expect(submitted.flow.waiting).toBe("review");
+    expect(submitted.estimate.provisional).toBe(true);
+    const blocked = await app.inject({ method: "POST", url: `/office/cases/${id}/actions`, payload: { action: "approve", amount: 500 } });
+    expect(blocked.statusCode).toBe(409);
+    const doc = submitted.documents.find((d: { kind: string }) => d.kind === "parent_tax");
+    const done = (await app.inject({ method: "POST", url: `/office/cases/${id}/review`, payload: { docId: doc.id, fields: { sum_of_income: "54000" } } })).json();
+    expect(done.flow.waiting).toBe("human");
+    expect(done.assignedTeam).toBe("Team Ausland");
+    expect(done.estimate.provisional).toBe(false);
+    expect(done.documents.find((d: { kind: string }) => d.kind === "parent_tax").extraction.needsReview).toBe(false);
+  });
+
+  it("the builder test run shows the review path", async () => {
+    const { app } = setup();
+    const { live } = (await app.inject({ method: "GET", url: "/office/processes" })).json();
+    const waiting = (await app.inject({ method: "POST", url: "/office/processes/test", payload: { def: live, sample: "unclear" } })).json();
+    expect(waiting.waiting).toBe("review");
+    const after = (await app.inject({ method: "POST", url: "/office/processes/test", payload: { def: live, sample: "unclear", decision: "confirmed" } })).json();
+    expect(after.waiting).toBe("human");
+  });
+});
+
+describe("process categories and comparison across offices", () => {
+  it("every process belongs to a catalogue category and one office has one process per category", async () => {
+    const { app } = setup();
+    const list = (await app.inject({ method: "GET", url: "/office/processes/list" })).json();
+    expect(list[0].catalogId).toBe("bafoeg.abroad");
+    expect((await app.inject({ method: "POST", url: "/office/processes/create", payload: { catalogId: "nope" } })).statusCode).toBe(400);
+    expect((await app.inject({ method: "POST", url: "/office/processes/create", payload: { catalogId: "bafoeg.abroad" } })).statusCode).toBe(409);
+    const created = await app.inject({ method: "POST", url: "/office/processes/create", payload: { catalogId: "bafoeg.domestic", name: "Inland" } });
+    expect(created.statusCode).toBe(201);
+    const p = (await app.inject({ method: "GET", url: "/office/processes?category=bafoeg.domestic" })).json();
+    expect(p.live).toBeNull();
+    expect(p.draft.catalogId).toBe("bafoeg.domestic");
+    const bad = { ...p.draft, catalogId: "unknown" };
+    expect((await app.inject({ method: "POST", url: "/office/processes/publish", payload: { def: bad } })).statusCode).toBe(404);
+  });
+
+  it("the oversight body compares offices; office staff cannot, and oversight does not work inside an office", async () => {
+    const { app, store } = setup("s-weiss");
+    const cmp = (await app.inject({ method: "GET", url: "/oversight/compare?category=bafoeg.abroad" })).json();
+    expect(cmp.offices.map((o: { id: string }) => o.id)).toEqual(["musterstadt", "nordhafen", "bergland", "rheinau"]);
+    expect(cmp.reference.def.nodes.length).toBeGreaterThan(10);
+    const score = Object.fromEntries(cmp.offices.map((o: { id: string; harmony: { total: number } }) => [o.id, o.harmony.total]));
+    expect(score.rheinau).toBeGreaterThan(score.musterstadt);
+    expect(score.musterstadt).toBeGreaterThan(score.nordhafen);
+    expect(cmp.offices[0].live).toBe(true);
+    const cat = (await app.inject({ method: "GET", url: "/oversight/catalogue" })).json();
+    expect(cat.coverage.find((c: { id: string }) => c.id === "bafoeg.abroad").offices).toHaveLength(4);
+    expect((await app.inject({ method: "GET", url: "/office/cases" })).statusCode).toBe(403);
+    store.login("s-beispiel", "cw");
+    expect((await app.inject({ method: "GET", url: "/oversight/compare", headers: { "x-staff-token": "cw" } })).statusCode).toBe(403);
+  });
+});

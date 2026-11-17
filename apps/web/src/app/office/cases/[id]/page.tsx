@@ -3,7 +3,7 @@
 import type { CaseView } from "@digieurope/shared";
 import Link from "next/link";
 import { use, useCallback, useEffect, useState } from "react";
-import { DocumentChecklist, EstimateCard, FindingList, FlowPanel, Timeline } from "@/components/CaseParts";
+import { DocumentChecklist, EstimateCard, FindingList, FlowPanel, ReviewPanel, Timeline } from "@/components/CaseParts";
 import { Spinner, StatusPill, useAsyncError } from "@/components/ui";
 import { api } from "@/lib/api";
 import { useI18n } from "@/lib/i18n";
@@ -27,6 +27,7 @@ export default function OfficeCase({ params }: { params: Promise<{ id: string }>
   if (!c) return <Spinner label={t("common.loading")} />;
   const decided = c.status === "approved" || c.status === "rejected";
   const blockers = c.report.findings.filter((f) => f.severity === "blocker");
+  const awaitingReview = c.documents.some((d) => d.extraction.needsReview);
   const act = async (action: "request_info" | "approve" | "reject") => {
     const res = await run(() => api.act(id, action, { message, amount: typeof amount === "number" ? amount : undefined }));
     if (res) setC(res);
@@ -61,6 +62,7 @@ export default function OfficeCase({ params }: { params: Promise<{ id: string }>
               </div>
             </div>
           </section>
+          <ReviewPanel c={c} onConfirm={async (docId, fields) => { const r = await run(() => api.reviewFields(id, docId, fields)); if (r) { setC(r); setAmount(r.estimate.monthly); } }} />
           <section className="card">
             <h2>{t("office.case.checks")}</h2>
             {c.report.findings.length === 0 ? <p className="banner banner-ok" style={{ marginBottom: 0 }}>✓ {t("office.case.noItems")}</p> : <FindingList findings={c.report.findings} showRule />}
@@ -103,7 +105,8 @@ export default function OfficeCase({ params }: { params: Promise<{ id: string }>
                   <>
                     <label className="field">{t("office.case.amount")}<input type="number" min={0} max={5000} value={amount} onChange={(e) => setAmount(e.target.value === "" ? "" : Number(e.target.value))} /></label>
                     {blockers.length > 0 && <p className="small banner banner-warn">{t("office.case.blocked")}</p>}
-                    <button className="button" type="button" disabled={blockers.length > 0 || amount === ""} onClick={() => act("approve")}>{t("office.case.approve")}</button>
+                    {awaitingReview && <p className="small banner banner-warn">{t("read.review.blocked")}</p>}
+                    <button className="button" type="button" disabled={blockers.length > 0 || awaitingReview || amount === ""} onClick={() => act("approve")}>{t("office.case.approve")}</button>
                   </>
                 )}
                 {mode === "request" && (

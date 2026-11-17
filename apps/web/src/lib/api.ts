@@ -1,4 +1,4 @@
-import type { Application, CaseView, ProcessDef, StaffMember, RunLogEntry, Mail, IntegrationEntry, ProcessIssue, DocumentKind, Extraction, LetterFields, Lang, Rule, RuleState, StayInfo, StudentInfo } from "@digieurope/shared";
+import type { Application, CaseView, CatalogNode, CatalogVariant, Harmony, OfficeSettings, ProcessDef, StaffMember, RunLogEntry, Mail, IntegrationEntry, ProcessIssue, DocumentKind, Extraction, LetterFields, Lang, Rule, RuleState, StayInfo, StudentInfo } from "@digieurope/shared";
 
 export class ApiError extends Error {
   issues?: ProcessIssue[];
@@ -98,6 +98,20 @@ export interface OfficeConfigResponse {
   documentTypes: { kind: DocumentKind; title: string; fields: { key: string; label: string }[]; signatures: { key: string; label: string }[] }[];
 }
 
+export interface MethodInfo {
+  id: "builtin" | "ai" | "ocr_rules" | "external";
+  name: { de: string; en: string };
+  description: { de: string; en: string };
+  status: "connected" | "simulated" | "placeholder";
+}
+
+export interface ExtractionSettings {
+  methods: MethodInfo[];
+  config: { defaultMethod: MethodInfo["id"]; byType: Partial<Record<DocumentKind, { method: MethodInfo["id"]; minConfidence: number }>> };
+  defaultMinConfidence: number;
+  aiKey: boolean;
+}
+
 export interface SampleFile {
   name: string;
   audience: "student" | "parents";
@@ -106,6 +120,32 @@ export interface SampleFile {
 export interface SampleList {
   sets: { id: string; title: { de: string; en: string }; note: { de: string; en: string }; docs: SampleFile[]; fixes: SampleFile[] }[];
   letter: string;
+}
+
+export interface OfficeMetrics {
+  medianDaysToDecision: number | null;
+  firstTimeComplete: number | null;
+  reviewShare: number | null;
+  documentRounds: number | null;
+  casesPerMonth: number | null;
+}
+
+export interface CompareOffice {
+  id: string;
+  name: string;
+  city: string;
+  live: boolean;
+  def: ProcessDef;
+  settings: OfficeSettings;
+  metrics: OfficeMetrics;
+  harmony: Harmony | null;
+}
+
+export interface CompareResult {
+  category: string;
+  variant?: CatalogVariant;
+  reference: { def: ProcessDef; settings: OfficeSettings } | null;
+  offices: CompareOffice[];
 }
 
 export interface TestRunResult {
@@ -157,13 +197,23 @@ export const api = {
   staffList: () => call<StaffMember[]>("/office/staff"),
   setBuildAccess: (id: string, canBuild: boolean) => call<StaffMember[]>(`/office/staff/${id}`, { method: "PUT", json: { canBuild } }),
 
-  processes: () => call<{ live: ProcessDef; draft: ProcessDef | null; history: { version: number; updatedAt: string; updatedBy: string; name: string }[] }>("/office/processes"),
+  processes: (category = "bafoeg.abroad") =>
+    call<{ catalogId: string; live: ProcessDef | null; draft: ProcessDef | null; history: { version: number; updatedAt: string; updatedBy: string; name: string }[] }>(`/office/processes?category=${encodeURIComponent(category)}`),
+  processList: () => call<{ catalogId: string; name: string; liveVersion: number | null; hasDraft: boolean }[]>("/office/processes/list"),
+  createProcess: (catalogId: string, name?: string) => call<ProcessDef>("/office/processes/create", { method: "POST", json: { catalogId, name } }),
+  catalogue: () => call<{ catalogue: CatalogNode[]; coverage: { id: string; offices: { id: string; name: string }[] }[] }>("/oversight/catalogue"),
+  compare: (category: string) => call<CompareResult>(`/oversight/compare?category=${encodeURIComponent(category)}`),
   saveDraft: (def: ProcessDef) => call<ProcessDef>("/office/processes/draft", { method: "PUT", json: { def } }),
   validateProcess: (def: ProcessDef) => call<{ issues: ProcessIssue[] }>("/office/processes/validate", { method: "POST", json: { def } }),
   publish: (def: ProcessDef) => call<ProcessDef>("/office/processes/publish", { method: "POST", json: { def } }),
-  restore: (version: number) => call<ProcessDef>("/office/processes/restore", { method: "POST", json: { version } }),
+  restore: (category: string, version: number) => call<ProcessDef>("/office/processes/restore", { method: "POST", json: { category, version } }),
   testRun: (def: ProcessDef, sample: string, decision?: string) =>
     call<TestRunResult>("/office/processes/test", { method: "POST", json: { def, sample, decision } }),
+
+  extraction: () => call<ExtractionSettings>("/office/extraction"),
+  setExtraction: (kind: DocumentKind | "default", method: MethodInfo["id"], minConfidence?: number) =>
+    call<{ config: ExtractionSettings["config"] }>("/office/extraction", { method: "PUT", json: { kind, method, minConfidence } }),
+  reviewFields: (id: string, docId: string, fields: Record<string, string>) => call<CaseView>(`/office/cases/${id}/review`, { method: "POST", json: { docId, fields } }),
 
   samples: () => call<SampleList>("/samples"),
   reset: () => call<{ ok: true }>("/admin/reset", { method: "POST" }),

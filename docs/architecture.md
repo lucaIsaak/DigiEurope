@@ -29,9 +29,25 @@ Offices draw their own process in the builder. A process (`packages/shared/src/p
 
 Connectors: `CONNECTORS` in the shared package lists systems and actions. The engine's `connectorResponse` is the single place that would call a real system. A real connector implements the same actions with real credentials and error handling.
 
+## Process catalogue and comparison across offices
+
+`packages/shared/src/catalog.ts` holds the central catalogue (three levels). Every `ProcessDef` carries a `catalogId` of a variant, and an office has one process per category (`Store.processes` is keyed by category; only `bafoeg.abroad` is run by the engine, other categories can be drawn and compared).
+
+`compare.ts` makes processes comparable without caring about local wording: `stepSignature` reduces a step to its kind plus the settings that change its meaning (connector system and action, condition field, reading method, notification recipient). Team names, texts and subjects are ignored. `diffProcesses` compares the multisets of step signatures and of connections (step, output, next step) with a Jaccard measure and reports what exists only on one side; `compareSettings` compares approved rules, the reading method per document type, connected systems, reply target and languages; `harmony` combines them (60 % process, 40 % settings and systems) against a reference model (`referenceProcess`, `REFERENCE_SETTINGS`).
+
+The oversight area (`/oversight*`) is limited to accounts flagged `isOversight`, which in turn cannot open any office area. Own-office data is computed live; the other offices are seeded in `apps/api/src/offices.ts` with their own processes, settings and metrics, labelled demo data. Harmonisation is comparison only: there is no "adopt" action yet. The reference model is fixed in code and cannot be edited in the UI.
+
 ## Staff access
 
 Staff sessions are kept in the store. Every `/office/*` route needs a session, the process builder and the mutating rule and setup routes need builder access, and `/office/staff*` needs an administrator (`onRequest` hook in `app.ts`). The menu hides what a user cannot use, but the API is what enforces it.
+
+## Reading documents
+
+`apps/api/src/extraction.ts` has one entry point, `readConfigured`: the office chooses a method per document type (`OfficeConfig.extraction`, with a default for unrecognised files) and a confidence threshold. Methods: `builtin` (template reader), `ai` (a model reads the PDF or image and returns JSON for the confirmed fields: value, confidence and page per field; unknown fields are dropped and an empty value never counts as confident), and the placeholders `ocr_rules` and `external`, which fall back to the built-in reader and record a note. `ai` without a key is simulated with the built-in reader, and an AI error falls back the same way. Each result carries `engine`, per-field `confidence` and `pages`, and `needsReview` when a field is below the threshold.
+
+The builder's "Read documents" step re-reads documents with the chosen method (or the per-type setting) and branches to `clear` or `review`. `review` leads to the "Review fields" step, where the process waits until a caseworker has corrected the doubtful fields on the case screen (`POST /office/cases/:id/review`). Approving or rejecting is blocked while fields await review. The estimate treats an unreadable amount as unknown until it is corrected.
+
+To add a real OCR or external extractor, implement it next to `aiExtract` and return the same `{ kind, extraction }` shape; nothing else changes.
 
 ## Documents and the "reader"
 
@@ -52,6 +68,7 @@ Statuses: `draft → submitted → in_review → (info_requested ↔ submitted) 
 | Step | AI? |
 |---|---|
 | Reading documents into fields | Simulated (parses the known sample documents). A real model or OCR service would sit here. |
+| Reading documents into fields | Method chosen per document type. Built-in template reader by default; AI reading calls a real model when a key is set, otherwise it is simulated. Doubtful fields are always checked by a person. |
 | Rule checks, estimate, letter analysis | No. Deterministic code. |
 | Question assistant | Default: keyword retrieval over a curated list of entries, each with its source. Optional live model call that may only use those entries and must name the ones it used. Sources come from the entries, never from the model's text. Falls back to retrieval on any error. |
 | Drafting a mail to the student (builder step "AI drafts e-mail") | Simulated: a template built from the open items, in the student's language. A real model call would replace `draftMail`. Marked "AI draft" wherever it is shown. |

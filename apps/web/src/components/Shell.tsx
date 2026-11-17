@@ -31,19 +31,25 @@ export function Shell({ children }: { children: ReactNode }) {
   const { t, lang, setLang } = useI18n();
   const path = usePathname();
   const router = useRouter();
-  const office = path.startsWith("/office");
+  const oversightArea = path.startsWith("/oversight");
+  const office = path.startsWith("/office") || oversightArea;
   const { staff, loading, logout, canBuild } = useStaff();
   const { theme, toggle } = useTheme();
   const onLogin = path === "/office/login";
   const bleed = path === "/office/builder";
   const nav: [string, MessageKey][] = office
-    ? staff
+    ? staff?.isOversight
+      ? [["/oversight", "oversight.nav.catalogue"]]
+      : staff
       ? [...OFFICE_NAV, ...(canBuild ? ([["/office/builder", "office.nav.builder"]] as [string, MessageKey][]) : []), ...(staff.isAdmin ? ([["/office/staff", "office.nav.staff"]] as [string, MessageKey][]) : [])]
       : []
     : STUDENT_NAV;
   useEffect(() => {
-    if (office && !onLogin && !loading && !staff) router.replace("/office/login");
-  }, [office, onLogin, loading, staff, router]);
+    if (!office || onLogin || loading) return;
+    if (!staff) router.replace("/office/login");
+    else if (staff.isOversight && !oversightArea) router.replace("/oversight");
+    else if (!staff.isOversight && oversightArea) router.replace("/office");
+  }, [office, onLogin, loading, staff, router, oversightArea]);
   const clicks = useRef<number[]>([]);
 
   /** Hidden demo reset: press the copyright mark five times quickly, or Shift+Alt+R. */
@@ -71,11 +77,11 @@ export function Shell({ children }: { children: ReactNode }) {
     <>
       <header className={`site-header${office ? " office-bar" : ""}`}>
         <div className={`container header-inner${office ? " wide" : ""}`}>
-          <Link href={office ? "/office" : "/"} className="brand">
+          <Link href={oversightArea ? "/oversight" : office ? "/office" : "/"} className="brand">
             <span className="brand-mark" aria-hidden>SM</span>
             <span>
-              <strong>{t("brand.name")}</strong>
-              <small>{office ? t("office.label") : t("brand.sub")}</small>
+              <strong>{oversightArea ? t("oversight.brand") : t("brand.name")}</strong>
+              <small>{oversightArea ? t("oversight.label") : office ? t("office.label") : t("brand.sub")}</small>
             </span>
           </Link>
           <Nav items={nav} current={current} />

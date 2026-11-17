@@ -1,6 +1,9 @@
 "use client";
 
 import {
+  DEFAULT_CATEGORY,
+  catalogVariant,
+  catalogVariants,
   CONNECTORS,
   NODE_CATALOG,
   defaultConfig,
@@ -38,6 +41,8 @@ import {
 import "@xyflow/react/dist/style.css";
 import {
   AlertTriangle,
+  ChevronDown,
+  FolderTree,
   Check,
   CheckCircle2,
   Clock,
@@ -52,6 +57,7 @@ import {
   Play,
   Plug,
   Redo2,
+  ListChecks,
   ScanText,
   Search,
   Send,
@@ -65,125 +71,13 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { CATEGORIES, ICONS, NODE_W, edgeBase, layout, ARROW, nodeTypes, toRfNode, type StepNode } from "@/components/FlowKit";
 import { Spinner } from "@/components/ui";
 import { ApiError, api, type TestRunResult } from "@/lib/api";
 import { useI18n } from "@/lib/i18n";
 import type { MessageKey } from "@/lib/messages";
 import { useStaff } from "@/lib/staff";
 import { useTheme } from "@/lib/theme";
-
-type StepData = { kind: NodeKind; config: Record<string, ConfigValue>; state?: "visited" | "issue"; issue?: string };
-type StepNode = Node<StepData, "step">;
-
-const ICONS: Record<NodeKind, LucideIcon> = {
-  trigger: Zap,
-  run_rules: ShieldCheck,
-  read_documents: ScanText,
-  condition: GitBranch,
-  human_task: UserCheck,
-  assign_team: Users,
-  wait: Clock,
-  ai_draft_mail: Sparkles,
-  request_documents: FilePlus2,
-  send_notification: Send,
-  connector: Plug,
-  end: Flag,
-};
-const CATEGORIES: Category[] = ["start", "check", "decide", "message", "route", "connector", "finish"];
-const NODE_W = 264;
-const NODE_H = 96;
-
-type Bi = { de: string; en: string };
-
-function summary(d: StepData, bi: (b: Bi) => string): string {
-  const c = d.config;
-  switch (d.kind) {
-    case "condition": return `${c.field} ${c.op === "gte" ? "≥" : c.op === "lte" ? "≤" : c.op === "eq" ? "=" : "≠"} ${c.value}`;
-    case "assign_team": return String(c.team);
-    case "wait": return `${c.days} d`;
-    case "ai_draft_mail": return c.tone === "formal" ? "Formal tone" : "Friendly tone";
-    case "send_notification": return `${c.to}: ${c.subject}`;
-    case "human_task": return String(c.instruction || "");
-    case "trigger": return c.source === "any" ? "Portal + direct" : String(c.source);
-    case "connector": {
-      const sys = CONNECTORS.find((x) => x.id === c.system);
-      const act = sys?.actions.find((a) => a.id === c.action);
-      return `${sys ? bi(sys.name) : c.system} · ${act ? bi(act.label) : c.action}`;
-    }
-    default: return bi(NODE_CATALOG[d.kind].description);
-  }
-}
-
-function StepView({ id, data, selected }: NodeProps<StepNode>) {
-  const { bi, t } = useI18n();
-  const spec = NODE_CATALOG[data.kind];
-  const Icon = ICONS[data.kind];
-  const multi = spec.outputs.length > 1;
-  // Ports are shown left to right in the order of the steps they lead to, so connections never cross at the source.
-  const portOrder = useStore((s) => {
-    if (spec.outputs.length < 2) return "";
-    return spec.outputs
-      .map((o, i) => {
-        const e = s.edges.find((x) => x.source === id && x.sourceHandle === o.id);
-        const x = e ? s.nodeLookup.get(e.target)?.internals.positionAbsolute.x : undefined;
-        return { id: o.id, x: x ?? 1e6 + i };
-      })
-      .sort((a, b) => a.x - b.x)
-      .map((p) => p.id)
-      .join(",");
-  });
-  const ports = portOrder ? portOrder.split(",").map((pid) => spec.outputs.find((o) => o.id === pid)!) : spec.outputs;
-  return (
-    <div className={`nd cat-${spec.category}${multi ? " multi" : ""}${selected ? " sel" : ""}${data.state ? ` ${data.state}` : ""}`} title={data.issue}>
-      {data.kind !== "trigger" && <Handle type="target" position={Position.Top} />}
-      <div className="nd-head">
-        <span className="ico"><Icon size={16} strokeWidth={2.2} /></span>
-        <span>
-          <div className="nd-title">{bi(spec.title)}</div>
-          <div className="nd-cat">{t(`builder.cat.${spec.category}` as MessageKey)}</div>
-        </span>
-        {spec.ai && <span className="nd-ai"><Sparkles size={11} />{t("builder.ai")}</span>}
-      </div>
-      <div className="nd-sum">{summary(data, bi)}</div>
-      {data.state === "visited" && <span className="nd-flag ok"><Check size={13} strokeWidth={3} /></span>}
-      {data.state === "issue" && <span className="nd-flag bad"><AlertTriangle size={12} /></span>}
-      {spec.outputs.length > 0 && !multi && <Handle type="source" position={Position.Bottom} id={spec.outputs[0]!.id} />}
-      {multi && (
-        <div className="nd-ports">
-          {ports.map((o) => (
-            <span className="nd-port" key={o.id}>
-              {bi(o.label)}
-              <Handle type="source" position={Position.Bottom} id={o.id} />
-            </span>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
-const nodeTypes = { step: StepView };
-
-const toRfNode = (n: FlowNode): StepNode => ({ id: n.id, type: "step", position: n.position, data: { kind: n.kind, config: n.config } });
-const ARROW = { type: MarkerType.ArrowClosed, width: 16, height: 16, color: "#8892a6" } as const;
-const edgeBase = { type: "smoothstep" as const, pathOptions: { borderRadius: 14 }, markerEnd: ARROW, labelBgPadding: [8, 4] as [number, number], labelBgBorderRadius: 10 };
-
-/** Top-to-bottom layout. Branches keep the order of their output ports (left to right). */
-function layout(nodes: StepNode[], edges: Edge[]): StepNode[] {
-  const g = new dagre.graphlib.Graph();
-  g.setGraph({ rankdir: "TB", nodesep: 56, ranksep: 96, marginx: 20, marginy: 20 });
-  g.setDefaultEdgeLabel(() => ({}));
-  nodes.forEach((n) => g.setNode(n.id, { width: NODE_W, height: NODE_H }));
-  const order = (e: Edge) => {
-    const src = nodes.find((n) => n.id === e.source);
-    return src ? outputsOf(src.data.kind).findIndex((o) => o.id === e.sourceHandle) : 0;
-  };
-  [...edges].sort((a, b) => order(a) - order(b)).forEach((e) => g.setEdge(e.source, e.target));
-  dagre.layout(g);
-  return nodes.map((n) => {
-    const p = g.node(n.id);
-    return p ? { ...n, position: { x: Math.round(p.x - NODE_W / 2), y: Math.round(p.y - NODE_H / 2) } } : n;
-  });
-}
 
 interface Snapshot { nodes: FlowNode[]; edges: FlowEdge[] }
 
@@ -195,6 +89,11 @@ function Builder() {
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
   const [name, setName] = useState("");
   const [live, setLive] = useState<ProcessDef | null>(null);
+  const [ready, setReady] = useState(false);
+  const [category, setCategory] = useState<string>(DEFAULT_CATEGORY);
+  const [processList, setProcessList] = useState<{ catalogId: string; name: string; liveVersion: number | null; hasDraft: boolean }[]>([]);
+  const [showNew, setShowNew] = useState(false);
+  const [newCat, setNewCat] = useState("");
   const [history, setHistory] = useState<{ version: number; updatedAt: string; updatedBy: string; name: string }[]>([]);
   const [dirty, setDirty] = useState(false);
   const [toast, setToast] = useState<{ text: string; tone: "ok" | "warn" } | null>(null);
@@ -272,14 +171,19 @@ function Builder() {
     setTimeout(() => rf.fitView({ padding: 0.12, duration: 250 }), 450);
   }, [setNodes, setEdges, rfEdge, rf]);
 
-  const refresh = useCallback(async () => {
-    const p = await api.processes();
+  const refresh = useCallback(async (cat?: string) => {
+    const target = cat ?? category;
+    const [p, list] = await Promise.all([api.processes(target), api.processList()]);
+    setCategory(target);
+    setProcessList(list);
     setLive(p.live);
     setHistory(p.history);
-    load(p.draft ?? p.live, Boolean(p.draft));
+    const def = p.draft ?? p.live;
+    if (def) load(def, Boolean(p.draft));
     loaded.current = true;
-  }, [load]);
-  useEffect(() => void refresh(), [refresh]);
+    setReady(true);
+  }, [load, category]);
+  useEffect(() => void refresh(), []); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     setEdges((es) => es.map((e) => ({ ...e, label: edgeLabel(e.source, e.sourceHandle ?? "out", nodesRef.current) })));
@@ -290,7 +194,7 @@ function Builder() {
 
   const toDef = useCallback((): ProcessDef => {
     const s = snapshot();
-    return { id: live?.id ?? "process", name, version: (live?.version ?? 0) + 1, updatedAt: new Date().toISOString(), updatedBy: "", nodes: s.nodes, edges: s.edges };
+    return { id: live?.id ?? category, catalogId: category, name, version: (live?.version ?? 0) + 1, updatedAt: new Date().toISOString(), updatedBy: "", nodes: s.nodes, edges: s.edges };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [live, name]);
 
@@ -398,7 +302,7 @@ function Builder() {
     [edges, result, visitedHandles],
   );
 
-  if (!live) return <div className="container page"><Spinner label={t("common.loading")} /></div>;
+  if (!ready) return <div className="container page"><Spinner label={t("common.loading")} /></div>;
 
   const q = query.trim().toLowerCase();
   const items = (cat: Category) =>
@@ -410,8 +314,42 @@ function Builder() {
   return (
     <div className="ws">
       <div className="ws-toolbar">
+        <span style={{ position: "relative" }}>
+          <button className="button button-ghost button-small" type="button" onClick={() => setShowNew((v) => !v)} title={t("builder.category")}>
+            <FolderTree size={15} />
+            {(() => { const v = catalogVariant(category); return v ? bi(v.path.at(-1)!) : category; })()}
+            <ChevronDown size={14} />
+          </button>
+          {showNew && (
+            <div className="card" style={{ position: "absolute", top: "110%", left: 0, zIndex: 30, width: 360, padding: "0.8rem" }}>
+              <div className="small muted" style={{ marginBottom: "0.4rem" }}>{t("builder.processes")}</div>
+              {processList.map((p) => {
+                const v = catalogVariant(p.catalogId);
+                return (
+                  <button key={p.catalogId} type="button" className="pal-item" onClick={async () => { setShowNew(false); if (p.catalogId !== category) { if (dirty && !window.confirm(t("builder.switchConfirm"))) return; setReady(false); await refresh(p.catalogId); } }}>
+                    <span className="ico"><FolderTree size={14} /></span>
+                    <span style={{ flex: 1 }}>
+                      <div>{v ? bi(v.path.at(-1)!) : p.catalogId}</div>
+                      <div className="small muted">{v ? v.path.slice(0, -1).map((x) => bi(x)).join(" › ") : ""} · {p.liveVersion ? `v${p.liveVersion}` : t("builder.notLive")}</div>
+                    </span>
+                    {p.catalogId === category && <Check size={14} />}
+                  </button>
+                );
+              })}
+              <div className="small muted" style={{ margin: "0.7rem 0 0.3rem" }}>{t("builder.newProcess")}</div>
+              <div className="row" style={{ flexWrap: "nowrap" }}>
+                <select value={newCat} onChange={(e) => setNewCat(e.target.value)} aria-label={t("builder.category")} style={{ fontSize: "0.85rem", padding: "0.4rem" }}>
+                  <option value="">{t("builder.chooseCategory")}</option>
+                  {catalogVariants().filter((v) => !processList.some((p) => p.catalogId === v.id)).map((v) => <option key={v.id} value={v.id}>{v.path.map((x) => bi(x)).join(" › ")}</option>)}
+                </select>
+                <button className="button button-small" type="button" disabled={!newCat} onClick={async () => { const r = await run(() => api.createProcess(newCat)); if (r) { setShowNew(false); setNewCat(""); setReady(false); await refresh(newCat); } }}>{t("builder.create")}</button>
+              </div>
+            </div>
+          )}
+        </span>
         <input className="ws-name" value={name} onChange={(e) => { setName(e.target.value); touch(); }} aria-label={t("builder.name")} />
-        <span className="pill pill-ok">{t("builder.live", { v: live.version })}</span>
+        {live ? <span className="pill pill-ok">{t("builder.live", { v: live.version })}</span> : <span className="pill pill-muted">{t("builder.notLive")}</span>}
+        {category !== DEFAULT_CATEGORY && <span className="pill pill-muted" title={t("builder.notRunning")}>{t("builder.notRunning")}</span>}
         {dirty && <span className="pill pill-warn">{t("builder.draft")} · {t("builder.unsaved")}</span>}
         <span className="ws-sep" />
         <button className="icon-button" type="button" title={`${t("builder.undo")} (⌘Z)`} aria-label={t("builder.undo")} disabled={past.current.length === 0} onClick={undo}><Undo2 size={16} /></button>
@@ -426,7 +364,7 @@ function Builder() {
                 {[...history].reverse().map((h) => (
                   <div key={h.version} className="row small" style={{ justifyContent: "space-between", padding: "0.3rem 0" }}>
                     <span>v{h.version} · {h.updatedBy} · {dateTime(h.updatedAt)}</span>
-                    <button className="link-button" type="button" onClick={async () => { setShowVersions(false); const r = await run(() => api.restore(h.version)); if (r) await refresh(); }}>{t("builder.restore")}</button>
+                    <button className="link-button" type="button" onClick={async () => { setShowVersions(false); const r = await run(() => api.restore(category, h.version)); if (r) await refresh(); }}>{t("builder.restore")}</button>
                   </div>
                 ))}
               </div>
@@ -606,11 +544,11 @@ function Builder() {
           <div className="drawer-bar">
             <strong>{t("builder.testRun")}</strong>
             <select value={sample} onChange={(e) => setSample(e.target.value)} aria-label={t("builder.test.sample")}>
-              {(["incomplete", "complete", "internship"] as const).map((s) => <option key={s} value={s}>{t(`builder.test.sample.${s}` as MessageKey)}</option>)}
+              {(["incomplete", "complete", "internship", "unclear"] as const).map((s) => <option key={s} value={s}>{t(`builder.test.sample.${s}` as MessageKey)}</option>)}
             </select>
             <select value={decision} onChange={(e) => setDecision(e.target.value)} aria-label={t("builder.test.decision")}>
               <option value="">{t("builder.test.decision.none")}</option>
-              {(["approved", "rejected", "info"] as const).map((d) => <option key={d} value={d}>{t(`builder.test.decision.${d}` as MessageKey)}</option>)}
+              {(["approved", "rejected", "info", "confirmed"] as const).map((d) => <option key={d} value={d}>{t(`builder.test.decision.${d}` as MessageKey)}</option>)}
             </select>
             <button
               className="button button-small"

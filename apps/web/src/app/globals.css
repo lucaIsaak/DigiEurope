@@ -294,3 +294,19 @@ pre.code { background: var(--bg); border: 1px solid var(--line); border-radius: 
 .log-line:first-child { border-top: 0; }
 .mail { border: 1px solid var(--line); border-radius: 10px; padding: 0.7rem 0.85rem; background: var(--bg); }
 .mail pre { margin: 0.4rem 0 0; white-space: pre-wrap; font: inherit; font-size: 0.88rem; }
+
+.nd-flag.diff { background: var(--warn); }
+.nd.only { border-color: var(--warn); border-style: dashed; box-shadow: 0 0 0 3px var(--warn-soft); }
+.viewer { border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; background: var(--canvas); }
+.viewer .react-flow { background: var(--canvas); }
+.matrix { border-collapse: separate; border-spacing: 0; width: 100%; font-size: 0.88rem; }
+.matrix th, .matrix td { padding: 0.45rem 0.7rem; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; }
+.matrix thead th { position: sticky; top: 0; background: var(--surface); z-index: 1; font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); }
+.matrix td.cell-diff { background: var(--warn-soft); }
+.matrix td.cell-ref { background: var(--bg); font-weight: 600; }
+.matrix tr.group td { background: var(--bg); font-weight: 700; font-size: 0.78rem; letter-spacing: 0.05em; text-transform: uppercase; color: var(--muted); }
+.score-ring { width: 56px; height: 56px; border-radius: 50%; display: grid; place-items: center; font-weight: 700; background: conic-gradient(var(--c) calc(var(--p) * 1%), var(--primary-soft) 0); position: relative; }
+.score-ring::after { content: attr(data-v); position: absolute; inset: 6px; border-radius: 50%; background: var(--surface); display: grid; place-items: center; font-size: 0.85rem; }
+.tabs { display: flex; gap: 0.25rem; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+.tabs button { border: 0; background: transparent; padding: 0.6rem 0.9rem; font: inherit; color: var(--muted); cursor: pointer; border-bottom: 2px solid transparent; margin-bottom: -1px; font-weight: 500; }
+.tabs button[aria-selected="true"] { color: var(--primary); border-bottom-color: var(--primary); font-weight: 600; }

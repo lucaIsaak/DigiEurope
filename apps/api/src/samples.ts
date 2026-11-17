@@ -11,7 +11,8 @@ export type Defect =
   | "tax_missing"
   | "insurance_missing"
   | "enroll_missing"
-  | "no_abroad_cover";
+  | "no_abroad_cover"
+  | "unclear_income";
 
 export interface SamplePerson {
   key: string;
@@ -50,6 +51,14 @@ const BASE_PEOPLE: Record<string, SamplePerson> = {
     hostInstitution: "Universidad Ficticia de Madrid",
     insurer: "Musterkasse Gesundheit",
   },
+  paul: {
+    key: "paul",
+    student: { firstName: "Paul", lastName: "Neumann", birthDate: "2002-04-12", email: "paul.neumann@example.org", university: "Technische Hochschule Musterstadt", course: "Wirtschaftsingenieurwesen (B.Sc.)" },
+    stay: { type: "internship", country: "NL", city: "Rotterdam", institution: "Delta Logistics BV", startDate: "2027-03-01", endDate: "2027-06-27", tuitionFees: 0 },
+    parents: { name: "Ines Neumann", married: true, siblings: 0, sumOfIncome: 54000, incomeTax: 8200 },
+    company: "Delta Logistics BV",
+    insurer: "Musterkasse Gesundheit",
+  },
   noah: {
     key: "noah",
     student: { firstName: "Noah", lastName: "Keller", birthDate: "2002-08-21", email: "noah.keller@example.org", university: "Universität Musterstadt", course: "Informatik (B.Sc.)" },
@@ -64,7 +73,7 @@ const BASE_PEOPLE: Record<string, SamplePerson> = {
 export function getPerson(key: string, now: Date = new Date()): SamplePerson {
   const base = BASE_PEOPLE[key]!;
   if (key === "noah") return base;
-  const offsets: Record<string, [number, number]> = { mira: [140, 28], jonas: [170, 17], lea: [155, 21] };
+  const offsets: Record<string, [number, number]> = { mira: [140, 28], jonas: [170, 17], lea: [155, 21], paul: [165, 17] };
   const [days, weeks] = offsets[key]!;
   const later = new Date(now.getTime() + days * 86_400_000);
   const start = isoDate(new Date(Date.UTC(later.getUTCFullYear(), later.getUTCMonth() + 1, 1)));
@@ -115,7 +124,7 @@ export function sampleDocuments(p: SamplePerson, defects: Defect[] = []): Genera
   }, { parent: !d("parent_unsigned") });
   if (!d("tax_missing")) {
     add("parent_tax", "Einkommensteuerbescheid.pdf", {
-      parent_name: p.parents.name, tax_year: d("wrong_income_year") ? incomeYear - 2 : incomeYear, sum_of_income: p.parents.sumOfIncome, income_tax: p.parents.incomeTax,
+      parent_name: p.parents.name, tax_year: d("wrong_income_year") ? incomeYear - 2 : incomeYear, sum_of_income: d("unclear_income") ? `${String(p.parents.sumOfIncome).slice(0, 2)}?${String(p.parents.sumOfIncome).slice(3)} (unleserlich)` : p.parents.sumOfIncome, income_tax: p.parents.incomeTax,
     });
   }
   return out;
@@ -152,5 +161,6 @@ export function sampleLetter(p: SamplePerson): GeneratedDoc {
 export const SAMPLE_SETS = [
   { id: "mira", person: "mira", defects: ["parent_unsigned", "host_missing"] as Defect[], title: { de: "Mira Sommer: Semester in Toronto", en: "Mira Sommer: semester in Toronto" }, note: { de: "Typische Fehler: Unterschrift der Eltern fehlt, Bestätigung der Gasthochschule fehlt.", en: "Typical mistakes: parent signature missing, host university confirmation missing." } },
   { id: "jonas", person: "jonas", defects: ["contract_unsigned"] as Defect[], title: { de: "Jonas Weber: Praktikum in Lissabon", en: "Jonas Weber: internship in Lisbon" }, note: { de: "Typischer Fehler: Praktikumsvertrag nicht unterschrieben.", en: "Typical mistake: internship contract not signed." } },
+  { id: "paul", person: "paul", defects: ["unclear_income"] as Defect[], title: { de: "Paul Neumann: Praktikum in Rotterdam", en: "Paul Neumann: internship in Rotterdam" }, note: { de: "Typischer Fehler: Einkommensbetrag im Steuerbescheid unleserlich (Scan). Das Lesen ist unsicher und geht zur Prüfung durch eine Person.", en: "Typical mistake: the income amount on the tax notice is smudged (scan). Reading is doubtful and goes to a person for review." } },
   { id: "lea", person: "lea", defects: [] as Defect[], title: { de: "Lea Martin: Semester in Madrid", en: "Lea Martin: semester in Madrid" }, note: { de: "Vollständig und korrekt.", en: "Complete and correct." } },
 ];

@@ -48,6 +48,9 @@ Optional live AI for the question assistant: copy `.env.example` to `.env` and s
 | Insights | Most frequent first-check issues and recommended changes to the application form |
 | **Processes** (process builder) | A drag-and-drop canvas (React Flow) where the office draws its own process: trigger, rule check, AI steps (read documents, draft a mail), branches, routing to a team, "caseworker decides", messages and placeholder connectors to office systems (case software, e-file, payment, portal). Validate, **test-run on a sample case**, publish. The published process then really drives new applications |
 | Access | Only administrators grant access to the builder |
+| Inputs & setup, "How documents are read" | Choose per document type how it is read (built-in template reader, AI document reading, or placeholders for OCR and an external service) and the confidence below which a person must check the fields |
+
+**Process catalogue and comparison across offices.** Every process belongs to exactly one entry of a central catalogue (domain > service > variant, for example Student funding > BAföG > BAföG abroad: application). An office has one process per category and picks the category in the builder. The oversight account (Frau Weiß, "Aufsicht Bundesebene") sees all offices under `/oversight` and compares the same process across them: a structure diff with side-by-side pictures, a matrix of settings and connected systems, performance metrics, and a **harmony score** against a reference model (60 % process, 40 % settings and systems). The comparison is read-only. Three other Studierendenwerke (Nordhafen, Bergland, Rheinau) are fictional and seeded with different processes; Musterstadt is compared live.
 
 **Staff access.** The office area needs a staff sign-in (footer link "Staff login"). Demo accounts: Frau Beispiel and Herr Kaya (caseworkers, no builder), Frau Lindner (process designer), Herr Obermeier (administrator, also grants builder access). The API enforces this, not just the menu. Demo sign-in has no password; a real system would use the administration's single sign-on.
 
@@ -70,7 +73,7 @@ Hidden demo helpers: press © in the footer five times (or Shift+Alt+R) to reset
 
 ## What is simulated
 
-- **Document reading**: parses only the prototype's own sample PDFs. Other files are reported as unreadable.
+- **Document reading**: the built-in reader parses only the prototype's own sample PDFs, and other files are reported as unreadable. "AI document reading" calls a real model when `ANTHROPIC_API_KEY` is set and is simulated with the built-in reader otherwise. OCR with rules and the external service are placeholders that fall back to the built-in reader and say so.
 - **Official portal**: a button creates a delivery.
 - **E-mail to parents**: the link is shown on screen.
 - **Live AI**: optional and off unless a key is set.

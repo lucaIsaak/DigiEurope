@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import { NODE_CATALOG, REQUIRED_DOCS, type CaseView, type DocumentKind, type DocumentRef, type Finding, type NodeKind } from "@digieurope/shared";
 import { documentUrl } from "@/lib/api";
 import { useI18n } from "@/lib/i18n";
@@ -14,8 +15,8 @@ export function requiredKinds(c: Pick<CaseView, "stay">): DocumentKind[] {
   return kinds;
 }
 
-export function ExtractedFacts({ doc }: { doc: DocumentRef }) {
-  const { tk } = useI18n();
+export function ExtractedFacts({ doc, office }: { doc: DocumentRef; office?: boolean }) {
+  const { tk, t } = useI18n();
   const fields = Object.entries(doc.extraction.fields);
   const sigs = Object.entries(doc.extraction.signatures);
   return (
@@ -23,7 +24,14 @@ export function ExtractedFacts({ doc }: { doc: DocumentRef }) {
       {fields.map(([k, v]) => (
         <div key={k} style={{ display: "contents" }}>
           <dt>{tk(`field.${k}`)}</dt>
-          <dd>{v}</dd>
+          <dd>
+            {v}
+            {office && doc.extraction.confidence?.[k] !== undefined && (
+              <span className={`pill ${(doc.extraction.confidence[k] ?? 1) < 0.8 ? "pill-warn" : "pill-muted"}`} style={{ marginLeft: "0.4rem" }} title={`${t("read.confidence")}: ${Math.round((doc.extraction.confidence[k] ?? 0) * 100)} %`}>
+                {Math.round((doc.extraction.confidence[k] ?? 0) * 100)} %{doc.extraction.pages?.[k] ? ` · ${t("read.page", { p: doc.extraction.pages[k]! })}` : ""}
+              </span>
+            )}
+          </dd>
         </div>
       ))}
       {sigs.map(([k, ok]) => (
@@ -37,8 +45,44 @@ export function ExtractedFacts({ doc }: { doc: DocumentRef }) {
 }
 
 /** One row per required document: read, needs a fix, or missing. */
+/** Lets a caseworker compare and correct the fields that were read with low confidence. */
+export function ReviewPanel({ c, onConfirm }: { c: CaseView; onConfirm: (docId: string, fields: Record<string, string>) => Promise<void> }) {
+  const { t, tk } = useI18n();
+  const [edits, setEdits] = useState<Record<string, Record<string, string>>>({});
+  const docs = c.documents.filter((d) => d.extraction.needsReview);
+  if (docs.length === 0) return null;
+  return (
+    <section className="card" aria-labelledby="review-h" style={{ borderColor: "var(--warn)" }}>
+      <h2 id="review-h">{t("read.review.title")}</h2>
+      <p className="muted small">{t("read.review.lead")}</p>
+      <div className="stack">
+        {docs.map((d) => {
+          const low = Object.entries(d.extraction.confidence ?? {}).filter(([, v]) => v < 0.8).map(([k]) => k);
+          return (
+            <div key={d.id}>
+              <div className="row" style={{ justifyContent: "space-between" }}>
+                <strong>{docLabel(t, d.kind)}</strong>
+                <a className="small" href={documentUrl(d.id)} target="_blank" rel="noreferrer">{t("case.docs.view")}</a>
+              </div>
+              <div className="form-grid" style={{ marginTop: "0.5rem" }}>
+                {low.map((k) => (
+                  <label className="field" key={k}>
+                    {tk(`field.${k}`)} <span className="small muted" style={{ fontWeight: 400 }}>{Math.round((d.extraction.confidence?.[k] ?? 0) * 100)} %{d.extraction.pages?.[k] ? ` · ${t("read.page", { p: d.extraction.pages[k]! })}` : ""}</span>
+                    <input value={edits[d.id]?.[k] ?? d.extraction.fields[k] ?? ""} onChange={(e) => setEdits({ ...edits, [d.id]: { ...edits[d.id], [k]: e.target.value } })} />
+                  </label>
+                ))}
+              </div>
+              <button className="button button-small" style={{ marginTop: "0.6rem" }} type="button" onClick={() => onConfirm(d.id, Object.fromEntries(low.map((k) => [k, edits[d.id]?.[k] ?? d.extraction.fields[k] ?? ""])))}>{t("read.review.confirm")}</button>
+            </div>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
+
 export function DocumentChecklist({ c, onRemove, showRemove, office }: { c: CaseView; onRemove?: (id: string) => void; showRemove?: boolean; office?: boolean }) {
-  const { t, bi } = useI18n();
+  const { t, bi, tk } = useI18n();
   const checked = c.history.some((h) => h.kind === "checked") || office;
   const kinds = requiredKinds(c);
   const extra = c.documents.filter((d) => !kinds.includes(d.kind) && d.extraction.readable);
@@ -64,8 +108,9 @@ export function DocumentChecklist({ c, onRemove, showRemove, office }: { c: Case
           ))}
           {doc && (
             <details>
-              <summary>{t("case.docs.details")}</summary>
-              <ExtractedFacts doc={doc} />
+              <summary>{t("case.docs.details")}{office && doc.extraction.engine ? ` · ${tk(`read.engine.${doc.extraction.engine}`)}` : ""}{office && doc.extraction.needsReview ? ` · ${t("read.review.needs")}` : ""}</summary>
+              <ExtractedFacts doc={doc} office={office} />
+              {office && doc.extraction.note && <p className="small muted" style={{ margin: "0.3rem 0 0" }}>{doc.extraction.note}</p>}
             </details>
           )}
         </div>

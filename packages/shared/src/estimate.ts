@@ -62,10 +62,13 @@ export function estimate(app: Pick<Application, "stay" | "documents" | "parents"
   const need = monthlyNeed(app.stay.country, facts.docs.health_insurance.fields.insurance_type === "freiwillig" ? "voluntary" : "statutory");
   const tax = facts.docs.parent_tax;
   const form = facts.docs.parent_form;
-  const known = tax.present && form.present;
+  const sum = Number(tax.fields.sum_of_income);
+  const incomeTax = Number(tax.fields.income_tax);
+  // A value that could not be read (for example "5?000") counts as unknown until a person has corrected it.
+  const known = tax.present && form.present && Number.isFinite(sum) && Number.isFinite(incomeTax);
   const contribution = known
     ? parentContribution({
-        netMonthly: netMonthlyFromTax(Number(tax.fields.sum_of_income ?? 0), Number(tax.fields.income_tax ?? 0)),
+        netMonthly: netMonthlyFromTax(sum, incomeTax),
         married: form.fields.parents_married !== "Nein",
         siblings: Number(form.fields.siblings_in_education ?? 0) || 0,
       })

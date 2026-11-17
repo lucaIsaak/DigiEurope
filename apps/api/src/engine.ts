@@ -8,6 +8,10 @@ import {
   type Application,
   type Check,
   type CheckReport,
+  type DocumentKind,
+  type DocumentRef,
+  type Extraction,
+  type ExtractionMethod,
   type FlowNode,
   type Mail,
   type ProcessDef,
@@ -18,9 +22,11 @@ import {
 export interface EngineCtx {
   rules: Record<string, RuleState>;
   now: Date;
+  /** Reads a stored document again with the configured (or overridden) method. */
+  reread?: (doc: DocumentRef, override?: ExtractionMethod) => Promise<{ kind: DocumentKind; extraction: Extraction } | null>;
 }
 
-type Outcome = "approved" | "rejected" | "info";
+export type Outcome = "approved" | "rejected" | "info" | "confirmed";
 const MAX_STEPS = 60;
 
 const fill = (text: string, app: Application) =>
@@ -67,7 +73,7 @@ function conditionHolds(node: FlowNode, app: Application, report: CheckReport, n
   return evaluate(check, { v: values[field] });
 }
 
-function execute(def: ProcessDef, start: string, input: Application, ctx: EngineCtx, begin: RunLogEntry[]): Application {
+async function execute(def: ProcessDef, start: string, input: Application, ctx: EngineCtx, begin: RunLogEntry[]): Promise<Application> {
   let app = input;
   const byId = new Map(def.nodes.map((n) => [n.id, n]));
   const log: RunLogEntry[] = [...begin];
@@ -103,9 +109,34 @@ function execute(def: ProcessDef, start: string, input: Application, ctx: Engine
         entry(report.ready ? "All approved rules pass" : `${report.blockers} blocking item(s): ${report.findings.filter((f) => f.severity === "blocker").map((f) => f.ruleId).join(", ")}`, handle);
         break;
       }
-      case "read_documents":
-        entry(`${app.documents.filter((d) => d.extraction.readable).length} document(s) read into fields (simulated AI)`);
+      case "read_documents": {
+        const scope = String(node.config.scope);
+        const override = node.config.method && node.config.method !== "default" ? (node.config.method as ExtractionMethod) : undefined;
+        const inScope = (d: DocumentRef) => scope === "all" || (scope === "parents" ? d.kind.startsWith("parent") : !d.kind.startsWith("parent"));
+        const docs = [...app.documents];
+        const engines = new Set<string>();
+        const doubtful: string[] = [];
+        let unreadable = 0;
+        for (let i = 0; i < docs.length; i++) {
+          const d = docs[i]!;
+          if (!inScope(d)) continue;
+          const again = ctx.reread ? await ctx.reread(d, override) : null;
+          const extraction = again?.extraction ?? d.extraction;
+          docs[i] = { ...d, kind: again && again.kind !== "unknown" ? again.kind : d.kind, extraction };
+          engines.add(extraction.engine ?? "builtin");
+          if (!extraction.readable) unreadable += 1;
+          else if (extraction.needsReview) doubtful.push(docs[i]!.kind);
+        }
+        app = { ...app, documents: docs };
+        handle = doubtful.length || unreadable ? "review" : "clear";
+        entry(`${docs.filter(inScope).length} document(s) read with ${[...engines].join(", ") || "no reader"}${doubtful.length ? `; low confidence: ${doubtful.join(", ")}` : ""}${unreadable ? `; ${unreadable} unreadable` : ""}`, handle);
         break;
+      }
+      case "review_fields":
+        waiting = node.id;
+        entry(`Waiting for a person to check the fields${node.config.instruction ? `: ${node.config.instruction}` : ""}`);
+        current = undefined;
+        continue;
       case "condition": {
         report ??= runChecks(app, ctx.rules, ctx.now);
         const yes = conditionHolds(node, app, report, ctx.now);
@@ -165,7 +196,7 @@ function execute(def: ProcessDef, start: string, input: Application, ctx: Engine
 }
 
 /** Starts the live process for a submitted application. */
-export function startRun(def: ProcessDef, app: Application, ctx: EngineCtx): Application {
+export async function startRun(def: ProcessDef, app: Application, ctx: EngineCtx): Promise<Application> {
   const trigger = def.nodes.find((n) => n.kind === "trigger");
   if (!trigger) return app;
   const previous = app.flow?.log ?? [];
@@ -174,9 +205,12 @@ export function startRun(def: ProcessDef, app: Application, ctx: EngineCtx): App
 }
 
 /** Continues after a caseworker acted on a waiting step. */
-export function resumeRun(def: ProcessDef, app: Application, outcome: Outcome, ctx: EngineCtx): Application {
+export async function resumeRun(def: ProcessDef, app: Application, outcome: Outcome, ctx: EngineCtx): Promise<Application> {
   const waiting = app.flow?.waiting;
   if (!waiting) return app;
+  const waitingNode = def.nodes.find((n) => n.id === waiting);
+  // Only outcomes the waiting step offers can continue it (a caseworker deciding while fields still need review does not).
+  if (waitingNode && !NODE_CATALOG[waitingNode.kind].outputs.some((o) => o.id === outcome)) return app;
   const edge = def.edges.find((e) => e.source === waiting && e.sourceHandle === outcome);
   const log: RunLogEntry[] = [...(app.flow?.log ?? []), { at: ctx.now.toISOString(), nodeId: waiting, kind: "human_task", handle: outcome, note: `Caseworker: ${outcome}` }];
   if (!edge) return { ...app, flow: { ...app.flow!, log, waiting: undefined, finished: true } };

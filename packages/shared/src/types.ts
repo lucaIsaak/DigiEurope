@@ -33,10 +33,22 @@ export const DOCUMENT_KINDS: DocumentKind[] = [
 ];
 
 /** Fields the "reader" found in a document. Signatures are kept apart as booleans. */
+export type ExtractionMethod = "builtin" | "ai" | "ocr_rules" | "external";
+
 export interface Extraction {
   readable: boolean;
   fields: Record<string, string>;
   signatures: Record<string, boolean>;
+  /** Confidence per field, 0 to 1. Missing means "not reported". */
+  confidence?: Record<string, number>;
+  /** Page each field was read from (1-based). */
+  pages?: Record<string, number>;
+  /** Which reader produced this, for example "builtin" or "ai". */
+  engine?: string;
+  /** True when at least one field is below the office's confidence threshold and a person should check it. */
+  needsReview?: boolean;
+  /** Plain note, for example that a connector was not connected and the built-in reader was used. */
+  note?: string;
 }
 
 export interface DocumentRef {
@@ -256,4 +268,6 @@ export interface StaffMember {
   title: string;
   isAdmin: boolean;
   canBuild: boolean;
+  /** Oversight (for example a federal body) sees and compares all offices, but works in no office. */
+  isOversight?: boolean;
 }

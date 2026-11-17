@@ -1,9 +1,11 @@
+import { isCatalogVariant } from "./catalog.js";
 import type { Bilingual } from "./types.js";
 
 export type NodeKind =
   | "trigger"
   | "run_rules"
   | "read_documents"
+  | "review_fields"
   | "condition"
   | "human_task"
   | "assign_team"
@@ -33,6 +35,8 @@ export interface FlowEdge {
 /** A process as an office draws it: steps and the connections between them. */
 export interface ProcessDef {
   id: string;
+  /** Entry of the central process catalogue this process belongs to, for example "bafoeg.abroad". */
+  catalogId: string;
   name: string;
   version: number;
   updatedAt: string;
@@ -132,8 +136,28 @@ export const NODE_CATALOG: Record<NodeKind, NodeSpec> = {
   read_documents: {
     kind: "read_documents", category: "check", ai: true,
     title: { de: "Dokumente lesen", en: "Read documents" },
-    description: { de: "KI liest Dokumente in Felder. Im Prototyp simuliert.", en: "AI reads documents into fields. Simulated in the prototype." },
-    outputs: OUT, fields: [],
+    description: { de: "Liest Dokumente in Felder, mit der gewählten Methode. Bei unsicheren Feldern geht es zur Prüfung durch eine Person.", en: "Reads documents into fields with the chosen method. Doubtful fields go to a person for review." },
+    outputs: [{ id: "clear", label: { de: "klar", en: "clear" } }, { id: "review", label: { de: "prüfen", en: "review" } }],
+    fields: [
+      { key: "scope", label: { de: "Welche Dokumente", en: "Which documents" }, type: "select", default: "all", options: [opt("all", "Alle", "All"), opt("student", "Nur der Studierenden", "Student's only"), opt("parents", "Nur der Eltern", "Parents' only")] },
+      {
+        key: "method", label: { de: "Methode", en: "Method" }, type: "select", default: "default",
+        options: [
+          opt("default", "Einstellung je Dokumenttyp", "Setting per document type"),
+          opt("builtin", "Eingebauter Vorlagenleser", "Built-in template reader"),
+          opt("ai", "KI-Dokumentenlesen", "AI document reading"),
+          opt("ocr_rules", "OCR mit Regeln (Platzhalter)", "OCR with rules (placeholder)"),
+          opt("external", "Externer Dienst (Platzhalter)", "External service (placeholder)"),
+        ],
+      },
+    ],
+  },
+  review_fields: {
+    kind: "review_fields", category: "decide",
+    title: { de: "Felder prüfen lassen", en: "Review fields" },
+    description: { de: "Eine Person prüft und korrigiert die unsicher gelesenen Felder. Der Ablauf wartet.", en: "A person checks and corrects the fields that were read with low confidence. The process waits." },
+    outputs: [{ id: "confirmed", label: { de: "bestätigt", en: "confirmed" } }, { id: "info", label: { de: "Rückfrage", en: "question" } }],
+    fields: [{ key: "instruction", label: { de: "Hinweis für die Sachbearbeitung", en: "Note for the caseworker" }, type: "textarea", default: "Unsicher gelesene Felder mit dem Dokument vergleichen." }],
   },
   condition: {
     kind: "condition", category: "decide",
@@ -222,8 +246,9 @@ export interface ProcessIssue {
 }
 
 /** Checks that a drawn process can run: one start, no loose ends, no loops, valid settings. */
-export function validateProcess(def: Pick<ProcessDef, "nodes" | "edges">): ProcessIssue[] {
+export function validateProcess(def: Pick<ProcessDef, "nodes" | "edges"> & { catalogId?: string }): ProcessIssue[] {
   const issues: ProcessIssue[] = [];
+  if (def.catalogId !== undefined && !isCatalogVariant(def.catalogId)) issues.push({ message: { de: "Dem Ablauf ist keine Kategorie aus dem Prozesskatalog zugeordnet.", en: "The process is not assigned to a category from the process catalogue." } });
   const byId = new Map(def.nodes.map((n) => [n.id, n]));
   const triggers = def.nodes.filter((n) => n.kind === "trigger");
   if (triggers.length !== 1) issues.push({ message: { de: "Es braucht genau einen Startpunkt „Antrag geht ein“.", en: "There must be exactly one “Application arrives” start." } });
@@ -267,7 +292,10 @@ export function defaultProcess(now = "2026-09-01T09:00:00.000Z"): ProcessDef {
   void nid;
   const nodes: FlowNode[] = [
     n("start", "trigger", 330, 0),
-    n("rules", "run_rules", 330, 120),
+    n("read", "read_documents", 330, 110),
+    n("review", "review_fields", 20, 230),
+    n("end-review", "end", 20, 380),
+    n("rules", "run_rules", 330, 260),
     // incomplete branch
     n("draft", "ai_draft_mail", 20, 270),
     n("ask", "request_documents", 20, 400),
@@ -283,12 +311,30 @@ export function defaultProcess(now = "2026-09-01T09:00:00.000Z"): ProcessDef {
     n("end-ok", "end", 820, 750),
   ];
   const edges: FlowEdge[] = [
-    e("start", "out", "rules"),
+    e("start", "out", "read"), e("read", "clear", "rules"), e("read", "review", "review"), e("review", "confirmed", "rules"), e("review", "info", "end-review"),
     e("rules", "incomplete", "draft"), e("draft", "out", "ask"), e("ask", "out", "end-incomplete"),
     e("rules", "complete", "team"), e("team", "out", "human"),
     e("human", "approved", "case"), e("case", "out", "notify-ok"), e("notify-ok", "out", "end-ok"),
     e("human", "rejected", "notify-no"), e("notify-no", "out", "end-no"),
     e("human", "info", "end-info"),
   ];
-  return { id: "bafoeg-ausland", name: "Auslands-BAföG: Standardablauf", version: 1, updatedAt: now, updatedBy: "Fachbereich Ausland (Muster)", nodes, edges };
+  return { id: "bafoeg-ausland", catalogId: "bafoeg.abroad", name: "Auslands-BAföG: Standardablauf", version: 1, updatedAt: now, updatedBy: "Fachbereich Ausland (Muster)", nodes, edges };
+}
+
+/**
+ * The reference model of the catalogue entry "BAföG, abroad application": what the oversight body considers the shared target.
+ * Offices are compared against it. It is read-only in the prototype.
+ */
+export function referenceProcess(): ProcessDef {
+  const base = defaultProcess("2026-06-01T09:00:00.000Z");
+  const nodes: FlowNode[] = base.nodes.map((x) => ({ ...x, config: { ...x.config } }));
+  const edges: FlowEdge[] = base.edges.map((x) => ({ ...x }));
+  const n = (id: string, kind: NodeKind, x: number, y: number, config: Record<string, ConfigValue> = {}): FlowNode => ({ id, kind, position: { x, y }, config: defaultConfig(kind, config) });
+  // After the payment, the case is archived and the status is reported to the portal.
+  const notifyOk = edges.find((e) => e.source === "notify-ok")!;
+  nodes.push(n("portal", "connector", 820, 690, { system: "portal", action: "send_status" }), n("archive", "connector", 820, 800, { system: "efile", action: "archive_case" }));
+  notifyOk.target = "portal";
+  edges.push({ id: "portal:out", source: "portal", sourceHandle: "out", target: "archive" }, { id: "archive:out", source: "archive", sourceHandle: "out", target: "end-ok" });
+  nodes.find((x) => x.id === "end-ok")!.position = { x: 820, y: 920 };
+  return { ...base, id: "bafoeg-abroad-reference", name: "Referenzmodell: Auslands-BAföG (Antrag)", version: 1, nodes, edges, updatedBy: "Aufsicht Bundesebene (Muster)" };
 }

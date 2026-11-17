@@ -118,5 +118,8 @@ export function extractDocument(content: Buffer, mimeType: string): { kind: Docu
     if (s) signatures[s[0]] = value !== "" && !/fehlt|_{3,}/.test(value);
   }
   const found = Object.keys(fields).length > 0;
-  return { kind: spec.kind, extraction: found ? { readable: true, fields, signatures } : unreadable };
+  // The template reader knows when a value is smudged or cut off: it marks those with a "?" or "unleserlich". Everything else is sure.
+  const confidence = Object.fromEntries(Object.entries(fields).map(([k, v]) => [k, /\?|unleserlich/i.test(v) ? 0.55 : 0.98]));
+  const pages = Object.fromEntries(Object.keys(fields).map((k) => [k, 1]));
+  return { kind: spec.kind, extraction: found ? { readable: true, fields, signatures, confidence, pages, engine: "builtin" } : unreadable };
 }
