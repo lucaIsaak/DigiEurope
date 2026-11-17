@@ -108,7 +108,7 @@ export function buildCase(
   }
   const decidedAt = new Date(openedAt.getTime() + (1 + Math.floor(opts.rand() * 8)) * 86_400_000);
   const amount = estimate(app, decidedAt).monthly;
-  return officeAct(store, app, opts.status === "approved" ? "approve" : "reject", { message: opts.status === "approved" ? "" : "Einkommen der Eltern übersteigt den Bedarf.", amount, by: "Frau Beispiel" }, decidedAt);
+  return officeAct(store, app, opts.status === "approved" ? "approve" : "reject", { message: opts.status === "approved" ? "" : "Das anzurechnende Einkommen Ihrer Eltern übersteigt Ihren monatlichen Bedarf im Ausland. Deshalb kann für diesen Zeitraum keine Förderung gezahlt werden. Wenn sich das Einkommen Ihrer Eltern deutlich verringert hat, können Sie einen Aktualisierungsantrag stellen.", amount, by: "Frau Beispiel" }, decidedAt);
 }
 
 export function seedDemoData(store: Store, now: Date = new Date()) {

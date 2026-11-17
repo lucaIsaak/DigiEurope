@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useState } from "react";
 import { Spinner } from "@/components/ui";
 import { api, type Insights } from "@/lib/api";
@@ -65,7 +66,12 @@ export default function InsightsPage() {
             {reco.map((m) => (
               <div key={m.ruleId} className="banner banner-info">
                 <h3>{bi(m.title)} <span className="small muted">({m.share} %)</span></h3>
-                <p style={{ marginBottom: 0 }}>→ {bi(m.recommendation!)}</p>
+                <p style={{ marginBottom: "0.6rem" }}>→ {bi(m.recommendation!)}</p>
+                <div className="row">
+                  {m.documentKind && <Link className="button button-small" href={`/office/templates?open=${m.documentKind}`}>{t("ins.openTemplate")}</Link>}
+                  <Link className="button button-ghost button-small" href="/office/rules">{t("ins.openRule")}</Link>
+                  <Link className="button button-ghost button-small" href="/office/builder">{t("ins.editProcess")}</Link>
+                </div>
               </div>
             ))}
           </div>

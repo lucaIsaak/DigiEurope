@@ -17,8 +17,8 @@ Before you start: open http://localhost:3000/samples in a second tab and downloa
 | 3:00 | **Questions** | Click "Are tuition fees covered?". The answer names its source. Ask something off-topic: it says it does not know. |
 | 3:25 | **Check my letter** | "Use sample letter". Explain how the amount came about. Set parents' income to 25 % higher: "Likely to be rejected". Show what would change it. |
 | 3:55 | **Office → Inbox** | Footer link "Staff login", sign in as **Frau Beispiel** (caseworker; note there is no "Processes" in the menu). Click "Simulate a new portal delivery": the case arrives and the process has already asked for the missing documents with an AI-drafted mail. Open it and show "Process of this case". Open Mira's case. |
-| 4:15 | **Caseworker** | Rule results, fields read from documents, estimate. "The software reads and applies fixed rules. You decide." Approve with the amount. |
-| 4:35 | **Rules** | The AI-drafted rule "Insurance covers the destination country" waits for approval. Show plain text, the fixed check and the passing sample cases. Approve it. |
+| 4:15 | **Caseworker** | Rule results, fields read from documents, estimate. "The software reads and applies fixed rules. You decide." Click "Approve", then "Draft from the calculation": the explanation for the student appears and can be changed. Approve. The case now shows **Decision and explanation**: "For the student" is the text Mira receives, "Technical record" lists the calculation step by step, every rule with its version and who approved it, the inputs, how each document was read, the process steps and the legal basis. "Download record (JSON)" for an audit. |
+| 4:35 | **Rules** | The top bar shows a badge: one rule waits. "Needs attention" lists the AI-drafted rule "Insurance covers the destination country": plain text, what is checked as sentences, sample cases, who wrote it. Approve it. Optional: "Change rule" on another rule shows the no-code editor; the author cannot approve their own change. |
 | 4:45 | **Processes** | Sign out, sign in as **Frau Lindner** (process designer). The canvas shows the office's own process: rule check, AI drafts mail, caseworker decides, payment connector. Drag a "Condition" onto the canvas, connect it, "Validate", then "Run test" on a sample case. Say: the office draws this itself, and connectors to its own systems plug in later. Herr Obermeier (administrator) decides who gets this access. |
 | 4:50 | **Insights** | Parent signature is missing in about a third of cases, with a recommended form change. Close with: rules are federal and shared, each office configures only the local parts. |
 
@@ -28,7 +28,7 @@ Optional extra (about 45 seconds): sign in as **Frau Weiß** (oversight). The ca
 
 Optional extra (about 30 seconds): download the **Paul Neumann** sample set. One income amount on the tax notice is smudged, so after submitting, the process stops at "Review fields". In the office, open the case, correct the amount and confirm. The process continues.
 
-Not shown but available: **Access** (administrator), **Inputs & setup** (define expected inputs from a sample document, local settings).
+Not shown but available: any decided case in the Inbox ("Decided" tab) has the same explanation and technical record; the student sees the explanation on "My application". The account icon (top right) holds light/dark mode, demo tools and sign-out; the globe switches the language. **Access** and **Settings** (administrator), **Templates** › a template › Test & confirm (define expected inputs from a sample document, local settings).
 
 ## If something goes wrong
 

@@ -31,7 +31,7 @@ Optional live AI for the question assistant: copy `.env.example` to `.env` and s
 | Screen | What it does |
 |---|---|
 | Apply (`/apply`) | Describe the stay (study or internship, country, dates, tuition fees) |
-| My application (`/case/…`) | Upload documents (recognised and read automatically), invite parents, **Ready / Fix these items**, non-binding estimate, submit, status and history |
+| My application (`/case/…`) | Upload documents (recognised and read automatically), invite parents, **Ready / Fix these items**, non-binding estimate, submit, status and history, and after the decision **why it was decided** |
 | Parent link (`/parent/…`) | Parents upload their income documents with no account; they see nothing else |
 | Track (`/status`) | Look up a case by reference and birth date |
 | Questions (`/ask`) | General rule questions; every answer cites its official source and says when it does not know |
@@ -42,15 +42,15 @@ Optional live AI for the question assistant: copy `.env.example` to `.env` and s
 | Screen | What it does |
 |---|---|
 | Inbox | Applications arrive through the simulated official portal, each already checked |
-| Case | Rule results, fields read from documents, estimate, and the **caseworker's decision** (request documents, approve, reject) |
-| Rules | Plain-language rules, the fixed check that runs, sample cases, approval. Federal rules are shared; offices only set local things |
-| Inputs & setup | Define expected inputs by uploading a sample document and confirming the fields read; local settings |
+| Case | Rule results, fields read from documents, estimate, and the **caseworker's decision** (request documents, approve, reject). Every decision has an **explanation for the student** (written by the caseworker or drafted from the calculation and confirmed) and a frozen **technical record** for audits: calculation step by step, every rule with version, result and approver, required inputs, how each document was read, process version and steps, legal basis; downloadable as JSON |
+| Rules | A filterable list ("Needs attention" first). Each rule shows its plain-language text, readable sentences for what is checked (code in a "technical view"), sample cases, who wrote and approved it, and its version history. Process designers change a rule with a no-code editor ("[document field] [is] [value]"); the change is saved as a new version, the live version keeps running, and **a second person must approve it** |
+| Settings | Local office settings: reply target, reading method for unrecognised documents |
 | Insights | Most frequent first-check issues and recommended changes to the application form |
 | **Processes** (process builder) | A drag-and-drop canvas (React Flow) where the office draws its own process: trigger, rule check, AI steps (read documents, draft a mail), branches, routing to a team, "caseworker decides", messages and placeholder connectors to office systems (case software, e-file, payment, portal). Validate, **test-run on a sample case**, publish. The published process then really drives new applications |
-| Templates | The library of forms the office can read (Formblatt 1, 3, **6**, **8**, enrolment certificate, and so on). A process designer can **add a template proposal** (name, title as printed, fields, signatures, optional sample PDF that suggests the fields). The **extractor owner** accepts it and decides how it is extracted, or rejects it with a comment. Nobody has to build the template from scratch |
+| Templates | Grouped by category (official forms, study, work, money and family, insurance, office documents) with icons and colours. Click a template for its fields, how it is read (method and review threshold, set by the extractor owner), **Test & confirm** with a sample (a template must be confirmed before a process can require it) and its history. The library of forms the office can read (Formblatt 1, 3, **6**, **8**, enrolment certificate, and so on). A process designer can **add a template proposal** (name, title as printed, fields, signatures, optional sample PDF that suggests the fields). The **extractor owner** accepts it and decides how it is extracted, or rejects it with a comment. Nobody has to build the template from scratch |
 | Required inputs (in the builder) | Per process: which forms and information the applicant must provide, each required or optional, with a condition (study only, internship only, only with tuition fees, or if an answer is "yes"). Custom questions are answered by the student on the case page. This drives the student's checklist and whether the application is ready, and is compared across offices |
 | Access | Administrators grant access to the builder and to the extractor-owner permission |
-| Inputs & setup, "How documents are read" | Choose per document type how it is read (built-in template reader, AI document reading, or placeholders for OCR and an external service) and the confidence below which a person must check the fields |
+
 
 **Process catalogue and comparison across offices.** Every process belongs to exactly one entry of a central catalogue (domain > service > variant, for example Student funding > BAföG > BAföG abroad: application). An office has one process per category and picks the category in the builder. The oversight account (Frau Weiß, "Aufsicht Bundesebene") sees all offices under `/oversight` and compares the same process across them: a structure diff with side-by-side pictures, a matrix of settings and connected systems, performance metrics, and a **harmony score** against a reference model (60 % process, 40 % settings and systems). The comparison is read-only. Three other Studierendenwerke (Nordhafen, Bergland, Rheinau) are fictional and seeded with different processes; Musterstadt is compared live.
 

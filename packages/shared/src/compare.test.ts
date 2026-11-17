@@ -107,3 +107,27 @@ describe("templates", () => {
     expect(s.signatures).toHaveLength(1);
   });
 });
+
+
+import { factCatalog, fromCheck, toCheck } from "./conditions.js";
+import { RULES as ALL_RULES } from "./rules.js";
+import { runRuleTests } from "./engine.js";
+import { baselineFacts } from "./facts.js";
+
+describe("no-code conditions", () => {
+  it("every built-in rule can be shown in the editor and turned back into the same check", () => {
+    for (const r of ALL_RULES) {
+      const pass = fromCheck(r.pass);
+      const when = fromCheck(r.when);
+      expect(pass, r.id).not.toBeNull();
+      expect(when, r.id).not.toBeNull();
+      const rebuilt = { ...r, pass: toCheck(pass!)!, when: toCheck(when!) };
+      expect(runRuleTests(rebuilt, baselineFacts() as unknown as Record<string, unknown>).every((t) => t.ok), r.id).toBe(true);
+    }
+  });
+  it("lists document fields and signatures from the templates", () => {
+    const f = factCatalog(BUILTIN_TEMPLATES);
+    expect(f.some((x) => x.path === "docs.parent_form.sig.parent")).toBe(true);
+    expect(f.some((x) => x.path === "docs.fb06.fields.credit_recognition" && x.type === "yesno")).toBe(true);
+  });
+});

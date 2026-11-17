@@ -7,6 +7,7 @@ import {
   Building2,
   Check,
   CheckCircle2,
+  XCircle,
   Circle,
   Copy,
   ExternalLink,
@@ -227,7 +228,7 @@ export default function MyApplication({ params }: { params: Promise<{ id: string
     : t("my.state.left", { n: Math.max(remaining, blockers) });
   const sub =
     c.status === "info_requested" ? c.officeMessage ?? ""
-    : c.decision?.note ? c.decision.note
+    : c.decision ? t("my.decided.sub", { date: date(c.decision.decidedAt) })
     : !editable ? t("my.state.office.sub")
     : !anyDocs ? t("my.state.start.sub")
     : c.report.ready ? t("my.state.ready.sub")
@@ -299,6 +300,22 @@ export default function MyApplication({ params }: { params: Promise<{ id: string
       </ol>
 
       {error && <p className="banner banner-bad" role="alert" style={{ margin: 0 }}>{error}</p>}
+
+      {c.decision && (
+        <section className="panel explain" id="why">
+          <div className={`explain-head ${c.decision.outcome === "approved" ? "ok" : "bad"}`}>
+            <span className="explain-icon">{c.decision.outcome === "approved" ? <CheckCircle2 size={20} /> : <XCircle size={20} />}</span>
+            <div className="grow">
+              <h2>{t("xp.why")}</h2>
+              <p className="small muted" style={{ margin: 0 }}>{t("my.decided.by", { by: c.decision.decidedBy, date: date(c.decision.decidedAt) })}</p>
+            </div>
+          </div>
+          <div className="explain-body">
+            <blockquote className="xp-letter">{c.decision.note}</blockquote>
+            <p className="small muted" style={{ margin: "0.75rem 0 0" }}>{t("my.decided.binding")}</p>
+          </div>
+        </section>
+      )}
 
       <div className="my-grid">
         <section className="panel" aria-labelledby="cl-h">

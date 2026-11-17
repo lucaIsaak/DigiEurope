@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import {
+  BUILTIN_TEMPLATES,
   DEFAULT_CATEGORY,
   defaultInputs,
   defaultProcess,
@@ -13,7 +14,9 @@ import {
   type DocumentTemplate,
   type ProcessDef,
   type TemplateProposal,
+  type Rule,
   type RuleState,
+  RULES,
   type StaffMember,
 } from "@digieurope/shared";
 
@@ -25,6 +28,46 @@ export const DEFAULT_STAFF: StaffMember[] = [
   { id: "s-richter", name: "Frau Richter", title: "Verantwortliche für Extraktoren und Vorlagen", isAdmin: false, canBuild: false, canApproveTemplates: true },
   { id: "s-weiss", name: "Frau Weiß", title: "Aufsicht Bundesebene (alle Ämter)", isAdmin: false, canBuild: false, isOversight: true },
 ];
+
+/** One version of a rule: who wrote it, who approved it. */
+export interface RuleVersion {
+  rule: Rule;
+  author: string;
+  createdAt: string;
+  approvedBy?: string;
+  approvedAt?: string;
+}
+
+/** A rule's lifecycle: the version that runs, a change waiting for approval, and the earlier versions. */
+export interface RuleStore {
+  live: RuleVersion | null;
+  paused: boolean;
+  draft?: RuleVersion;
+  history: RuleVersion[];
+}
+
+export function initialRules(states: Record<string, RuleState> = defaultRuleStates()): Record<string, RuleStore> {
+  const out: Record<string, RuleStore> = {};
+  for (const r of RULES) {
+    const approved = states[r.id]?.status === "approved";
+    out[r.id] = r.draftedByAi && !approved
+      ? { live: null, paused: false, draft: { rule: r, author: "KI-Assistent (angefragt von Frau Lindner)", createdAt: "2026-11-10T09:12:00.000Z" }, history: [] }
+      : { live: { rule: r, author: "Fachbereich Ausland (Muster)", createdAt: "2026-08-20T10:00:00.000Z", approvedBy: states[r.id]?.approvedBy ?? "Herr Obermeier", approvedAt: states[r.id]?.approvedAt ?? "2026-09-01T09:00:00.000Z" }, paused: !approved && !r.draftedByAi, history: [] };
+  }
+  return out;
+}
+
+export interface TemplateCheck {
+  confirmedAt: string;
+  confirmedBy: string;
+}
+
+export interface TemplateLogEntry {
+  templateId: string;
+  at: string;
+  by: string;
+  text: string;
+}
 
 export interface ProcessStore {
   /** Null until the first version has been published. */
@@ -42,6 +85,9 @@ export interface OfficeConfig {
   workflow: string[];
   /** Fields the office confirmed as expected input per document type. */
   expectedInputs: Partial<Record<DocumentKind, { fields: string[]; confirmedAt?: string }>>;
+  /** Templates that were tested with a sample and confirmed. Only these can be required by a process. */
+  templateChecks: Record<string, TemplateCheck>;
+  templateLog: TemplateLogEntry[];
   /** How each document type is read. Types without an entry use `defaultMethod`. */
   extraction: Partial<Record<DocumentKind, { method: ExtractionMethod; minConfidence: number }>>;
   defaultMethod: ExtractionMethod;
@@ -54,6 +100,10 @@ export const defaultConfig = (): OfficeConfig => ({
   slaDays: 5,
   workflow: ["received", "checked", "in_review", "decided"],
   expectedInputs: {},
+  templateChecks: Object.fromEntries(
+    BUILTIN_TEMPLATES.filter((t) => t.id !== "decision_letter").map((t) => [t.id, { confirmedAt: "2026-09-01T09:00:00.000Z", confirmedBy: "Frau Richter" }]),
+  ),
+  templateLog: [],
   extraction: {},
   defaultMethod: "builtin",
 });
@@ -67,7 +117,9 @@ interface Data {
   applications: Application[];
   documents: StoredDocument[];
   parentTokens: Record<string, string>;
-  ruleStates: Record<string, RuleState>;
+  /** Kept only to migrate older demo stores. */
+  ruleStates?: Record<string, RuleState>;
+  rules: Record<string, RuleStore>;
   config: OfficeConfig;
   staff: StaffMember[];
   sessions: Record<string, string>;
@@ -79,7 +131,7 @@ interface Data {
 }
 
 const fresh = (): Data => ({
-  seq: 0, applications: [], documents: [], parentTokens: {}, ruleStates: defaultRuleStates(), config: defaultConfig(),
+  seq: 0, applications: [], documents: [], parentTokens: {}, rules: initialRules(), config: defaultConfig(),
   staff: DEFAULT_STAFF.map((x) => ({ ...x })), sessions: {}, processes: { [DEFAULT_CATEGORY]: { live: defaultProcess(), history: [] } },
   templates: [], proposals: [],
 });
@@ -104,7 +156,8 @@ export class Store {
       const processes = old && "live" in old ? { [DEFAULT_CATEGORY]: old as unknown as ProcessStore } : saved.processes;
       for (const p of Object.values(processes)) for (const d of [p.live, p.draft, ...p.history]) if (d) { if (!d.catalogId) d.catalogId = DEFAULT_CATEGORY; if (!d.inputs) d.inputs = defaultInputs(); }
       const staff = [...saved.staff, ...DEFAULT_STAFF.filter((d) => !saved.staff.some((m) => m.id === d.id))];
-      this.data = { ...fresh(), ...saved, staff, processes, config: { ...defaultConfig(), ...saved.config } };
+      const rules = saved.rules ?? initialRules(saved.ruleStates);
+      this.data = { ...fresh(), ...saved, staff, processes, rules, config: { ...defaultConfig(), ...saved.config } };
     }
   }
 
@@ -159,9 +212,13 @@ export class Store {
     return id ? this.get(id) : undefined;
   }
 
-  ruleStates = (): Record<string, RuleState> => this.data.ruleStates;
-  setRuleState(id: string, state: RuleState) {
-    this.data.ruleStates[id] = state;
+  /** Which rules run: approved and not switched off. */
+  ruleStates = (): Record<string, RuleState> =>
+    Object.fromEntries(Object.entries(this.data.rules).map(([id, r]) => [id, r.live && !r.paused ? { status: "approved", approvedBy: r.live.approvedBy, approvedAt: r.live.approvedAt } : { status: "draft" }]));
+  liveRules = (): Rule[] => Object.values(this.data.rules).filter((r) => r.live && !r.paused).map((r) => r.live!.rule);
+  rules = (): Record<string, RuleStore> => this.data.rules;
+  setRule(id: string, r: RuleStore) {
+    this.data.rules[id] = r;
     this.save();
   }
 

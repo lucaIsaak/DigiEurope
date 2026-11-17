@@ -112,7 +112,7 @@ function Builder() {
   const [showVersions, setShowVersions] = useState(false);
   const [inputs, setInputs] = useState<ProcessInput[]>([]);
   const [showInputs, setShowInputs] = useState(false);
-  const [templates, setTemplates] = useState<DocumentTemplate[]>([]);
+  const [templates, setTemplates] = useState<(DocumentTemplate & { check?: unknown })[]>([]);
   const loaded = useRef(false);
   const past = useRef<Snapshot[]>([]);
   const future = useRef<Snapshot[]>([]);

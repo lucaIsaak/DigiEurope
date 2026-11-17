@@ -14,7 +14,7 @@ const fromKey = (k: CondKey): InputCondition | undefined =>
   k === "always" ? undefined : k === "study" || k === "internship" ? { kind: "stay_type", value: k } : k === "tuition" ? { kind: "tuition" } : { kind: "info", key: k.slice(5), equals: "yes" };
 
 /** Edits what the applicant has to provide for a process: forms (templates) and information, each required or optional, with a condition. */
-export function InputsEditor({ inputs, templates, onChange }: { inputs: ProcessInput[]; templates: DocumentTemplate[]; onChange: (next: ProcessInput[]) => void }) {
+export function InputsEditor({ inputs, templates, onChange }: { inputs: ProcessInput[]; templates: (DocumentTemplate & { check?: unknown })[]; onChange: (next: ProcessInput[]) => void }) {
   const { t, bi } = useI18n();
   const [addForm, setAddForm] = useState("");
   const [addInfo, setAddInfo] = useState("");
@@ -63,7 +63,7 @@ export function InputsEditor({ inputs, templates, onChange }: { inputs: ProcessI
         <div className="row" style={{ flexWrap: "nowrap" }}>
           <select value={addForm} onChange={(e) => setAddForm(e.target.value)} aria-label={t("inputs.addForm")} style={{ fontSize: "0.85rem", padding: "0.4rem" }}>
             <option value="">{t("inputs.chooseForm")}</option>
-            {templates.filter((x) => !usedDocs.has(x.id)).map((x) => <option key={x.id} value={x.id}>{bi(x.name)}</option>)}
+            {templates.filter((x) => !usedDocs.has(x.id)).map((x) => <option key={x.id} value={x.id} disabled={x.check === null}>{bi(x.name)}{x.check === null ? ` (${t("t2.notConfirmedInput")})` : ""}</option>)}
           </select>
           <button className="button button-small" type="button" disabled={!addForm} onClick={() => { onChange([...inputs, { id: `doc:${addForm}`, type: "document", ref: addForm, required: true }]); setAddForm(""); }}>{t("inputs.add")}</button>
         </div>

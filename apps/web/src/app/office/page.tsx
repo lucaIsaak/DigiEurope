@@ -250,6 +250,14 @@ export default function Inbox() {
                 )}
               </div>
 
+              {p.decision && (
+                <div className="preview-sec">
+                  <h3>{t("xp.title")}</h3>
+                  <p className="small" style={{ margin: "0 0 0.5rem", display: "-webkit-box", WebkitLineClamp: 3, WebkitBoxOrient: "vertical", overflow: "hidden" }}>{p.decision.note}</p>
+                  <Link className="small" href={`/office/cases/${p.id}#explain`}>{t("xp.open")} →</Link>
+                </div>
+              )}
+
               <div className="preview-sec">
                 <h3>{t("wl.documents")} · {p.documents.length}</h3>
                 <div className="doc-dots">

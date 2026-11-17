@@ -10,7 +10,7 @@ const b = (de: string, en: string): Bilingual => ({ de, en });
  */
 export const BUILTIN_TEMPLATES: DocumentTemplate[] = [
   {
-    id: "application_form", formblatt: "Formblatt 1", source: "builtin", providedBy: "student",
+    id: "application_form", category: "official_form", formblatt: "Formblatt 1", source: "builtin", providedBy: "student",
     name: b("Antrag (Formblatt 1)", "Application (Formblatt 1)"),
     title: "Antrag auf Ausbildungsförderung im Ausland (Formblatt 1)",
     purpose: b("Der eigentliche Antrag auf Förderung.", "The application for funding itself."),
@@ -18,7 +18,7 @@ export const BUILTIN_TEMPLATES: DocumentTemplate[] = [
     signatures: [sig("student", "Unterschrift Antragsteller:in")],
   },
   {
-    id: "fb06", formblatt: "Formblatt 6", source: "builtin", providedBy: "student",
+    id: "fb06", category: "official_form", formblatt: "Formblatt 6", source: "builtin", providedBy: "student",
     name: b("Ergänzungsblatt Ausland (Formblatt 6)", "Supplement for training abroad (Formblatt 6)"),
     title: "Formblatt 6: Ergänzungsblatt zum Antrag bei Ausbildung im Ausland",
     purpose: b("Ergänzt Formblatt 1, wenn die Ausbildung ganz oder teilweise im Ausland stattfindet.", "Supplements Formblatt 1 when the training takes place wholly or partly abroad."),
@@ -26,7 +26,7 @@ export const BUILTIN_TEMPLATES: DocumentTemplate[] = [
     signatures: [sig("student", "Unterschrift Antragsteller:in")],
   },
   {
-    id: "fb08", formblatt: "Formblatt 8", source: "builtin", providedBy: "student",
+    id: "fb08", category: "official_form", formblatt: "Formblatt 8", source: "builtin", providedBy: "student",
     name: b("Antrag auf Vorausleistung (Formblatt 8)", "Request for advance payment (Formblatt 8)"),
     title: "Formblatt 8: Antrag auf Vorausleistung von Ausbildungsförderung",
     purpose: b("Wenn Eltern den angerechneten Unterhalt nicht zahlen: Förderung wird vorab geleistet.", "When parents do not pay the maintenance that is counted: funding is paid in advance."),
@@ -34,7 +34,7 @@ export const BUILTIN_TEMPLATES: DocumentTemplate[] = [
     signatures: [sig("student", "Unterschrift Antragsteller:in")],
   },
   {
-    id: "enrollment_cert", source: "builtin", providedBy: "student",
+    id: "enrollment_cert", category: "study", source: "builtin", providedBy: "student",
     name: b("Immatrikulationsbescheinigung", "Enrolment certificate"),
     title: "Immatrikulationsbescheinigung (§ 9 BAföG)",
     purpose: b("Bestätigt die Einschreibung an der deutschen Hochschule.", "Confirms enrolment at the German university."),
@@ -42,7 +42,7 @@ export const BUILTIN_TEMPLATES: DocumentTemplate[] = [
     signatures: [],
   },
   {
-    id: "host_confirmation", source: "builtin", providedBy: "third_party",
+    id: "host_confirmation", category: "study", source: "builtin", providedBy: "third_party",
     name: b("Bestätigung der Gasthochschule", "Host university confirmation"),
     title: "Bestätigung der Gasthochschule",
     purpose: b("Die Gasthochschule bestätigt den Studienplatz und den Zeitraum.", "The host university confirms the place and the period."),
@@ -50,7 +50,7 @@ export const BUILTIN_TEMPLATES: DocumentTemplate[] = [
     signatures: [sig("host", "Unterschrift und Stempel Gasthochschule")],
   },
   {
-    id: "internship_contract", source: "builtin", providedBy: "student",
+    id: "internship_contract", category: "work", source: "builtin", providedBy: "student",
     name: b("Praktikumsvertrag", "Internship contract"),
     title: "Praktikumsvertrag",
     purpose: b("Vertrag zwischen Praktikant:in und Praktikumsstelle.", "Contract between the intern and the host organisation."),
@@ -58,7 +58,7 @@ export const BUILTIN_TEMPLATES: DocumentTemplate[] = [
     signatures: [sig("intern", "Unterschrift Praktikant:in"), sig("employer", "Unterschrift Praktikumsstelle")],
   },
   {
-    id: "internship_uni_confirmation", source: "builtin", providedBy: "third_party",
+    id: "internship_uni_confirmation", category: "study", source: "builtin", providedBy: "third_party",
     name: b("Hochschulbestätigung Pflichtpraktikum", "University confirmation (mandatory internship)"),
     title: "Bestätigung der Hochschule zum Pflichtpraktikum",
     purpose: b("Die Hochschule bestätigt, dass das Praktikum vorgeschrieben ist.", "The university confirms that the internship is required."),
@@ -66,7 +66,7 @@ export const BUILTIN_TEMPLATES: DocumentTemplate[] = [
     signatures: [sig("university", "Unterschrift Hochschule")],
   },
   {
-    id: "health_insurance", source: "builtin", providedBy: "student",
+    id: "health_insurance", category: "insurance", source: "builtin", providedBy: "student",
     name: b("Versicherungsnachweis", "Insurance certificate"),
     title: "Versicherungsnachweis Kranken- und Pflegeversicherung",
     purpose: b("Nachweis der Kranken- und Pflegeversicherung.", "Proof of health and care insurance."),
@@ -74,7 +74,7 @@ export const BUILTIN_TEMPLATES: DocumentTemplate[] = [
     signatures: [],
   },
   {
-    id: "tuition_waiver_proof", source: "builtin", providedBy: "student",
+    id: "tuition_waiver_proof", category: "money", source: "builtin", providedBy: "student",
     name: b("Nachweis zu Studiengebühren", "Proof about tuition fees"),
     title: "Nachweis zum Erlass oder zur Ermäßigung der Studiengebühren",
     purpose: b("Zeigt, dass ein Erlass oder eine Ermäßigung versucht wurde.", "Shows that a waiver or reduction was tried."),
@@ -82,7 +82,7 @@ export const BUILTIN_TEMPLATES: DocumentTemplate[] = [
     signatures: [],
   },
   {
-    id: "parent_form", formblatt: "Formblatt 3", source: "builtin", providedBy: "parents",
+    id: "parent_form", category: "official_form", formblatt: "Formblatt 3", source: "builtin", providedBy: "parents",
     name: b("Einkommen der Eltern (Formblatt 3)", "Parents' income (Formblatt 3)"),
     title: "Formblatt 3: Angaben zum Einkommen der Eltern",
     purpose: b("Angaben der Eltern zu Einkommen und Familie.", "Parents' details on income and family."),
@@ -90,7 +90,7 @@ export const BUILTIN_TEMPLATES: DocumentTemplate[] = [
     signatures: [sig("parent", "Unterschrift Elternteil")],
   },
   {
-    id: "parent_tax", source: "builtin", providedBy: "parents",
+    id: "parent_tax", category: "money", source: "builtin", providedBy: "parents",
     name: b("Einkommensnachweis der Eltern", "Parents' income proof"),
     title: "Einkommensteuerbescheid (Auszug)",
     purpose: b("Nachweis des Einkommens der Eltern.", "Proof of the parents' income."),
@@ -98,7 +98,7 @@ export const BUILTIN_TEMPLATES: DocumentTemplate[] = [
     signatures: [],
   },
   {
-    id: "decision_letter", source: "builtin", providedBy: "office",
+    id: "decision_letter", category: "office", source: "builtin", providedBy: "office",
     name: b("Bescheid", "Decision letter"),
     title: "Bescheid über Ausbildungsförderung im Ausland",
     purpose: b("Der Bescheid des Amtes. Wird für die Folgeprüfung gelesen.", "The office's decision letter. Read for the follow-up check."),

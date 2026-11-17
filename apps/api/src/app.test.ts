@@ -112,6 +112,27 @@ describe("office", () => {
     expect((await act("reject", { message: "x" })).statusCode).toBe(409);
   });
 
+  it("every decision carries a human explanation and a frozen technical record", async () => {
+    const { app } = setup();
+    const { id, person } = await create(app, "lea");
+    for (const d of sampleDocuments(person)) await upload(app, `/applications/${id}/documents`, d.filename, d.content);
+    await app.inject({ method: "POST", url: `/applications/${id}/submit` });
+    const draft = (await app.inject({ method: "GET", url: `/office/cases/${id}/explanation?outcome=approved&amount=900&lang=en` })).json();
+    expect(draft.text).toMatch(/monthly need/);
+    expect((await app.inject({ method: "GET", url: `/office/cases/${id}/audit` })).statusCode).toBe(404);
+    const decided = (await app.inject({ method: "POST", url: `/office/cases/${id}/actions`, payload: { action: "approve", amount: 900 } })).json();
+    expect(decided.decision.note.length).toBeGreaterThan(40); // drafted from the calculation when left empty
+    const audit = decided.decision.audit;
+    expect(audit.decidedBy).toBeTruthy();
+    expect(audit.rules.length).toBeGreaterThan(3);
+    expect(audit.rules.every((r: { version: number; result: string }) => r.version >= 1 && ["pass", "fail", "n/a"].includes(r.result))).toBe(true);
+    expect(audit.documents.length).toBe(decided.documents.length);
+    expect(audit.calculation.need).toBeGreaterThan(0);
+    const file = await app.inject({ method: "GET", url: `/office/cases/${id}/audit` });
+    expect(file.headers["content-disposition"]).toContain("attachment");
+    expect(file.json().audit.outcome).toBe("approved");
+  });
+
   it("refuses to approve a portal case that still has blocking items", async () => {
     const { app } = setup();
     const delivered = (await app.inject({ method: "POST", url: "/office/portal/deliver" })).json();
@@ -459,9 +480,15 @@ describe("template proposals", () => {
     expect(read.kind).toBe(tplId);
     expect(read.extraction.fields.name_der_antragstellenden_person).toBe("Mira Sommer");
 
-    // A process can require it, and then the student's checklist asks for it.
+    // A process can only require it after it was tested with a sample and confirmed.
     const { live } = (await app.inject({ method: "GET", url: "/office/processes" })).json();
     const withIt = { ...live, inputs: [...live.inputs, { id: `doc:${tplId}`, type: "document", ref: tplId, required: true }] };
+    const early = await app.inject({ method: "POST", url: "/office/processes/publish", payload: { def: withIt } });
+    expect(early.statusCode).toBe(422);
+    expect(early.json().issues.some((i: { message: { en: string } }) => i.message.en.includes("not been tested"))).toBe(true);
+    const tested = (await app.inject({ method: "POST", url: `/office/templates/${tplId}/test`, payload: { filename: sample.filename, mimeType: "application/pdf", dataBase64: sample.content.toString("base64") }, headers: h })).json();
+    expect(tested.matches).toBe(true);
+    expect((await app.inject({ method: "POST", url: `/office/templates/${tplId}/confirm`, headers: h })).statusCode).toBe(200);
     expect((await app.inject({ method: "POST", url: "/office/processes/publish", payload: { def: withIt } })).statusCode).toBe(200);
     const { id: cid, person } = await create(app, "lea");
     for (const d of sampleDocuments(person)) await upload(app, `/applications/${cid}/documents`, d.filename, d.content);
@@ -493,5 +520,50 @@ describe("template proposals", () => {
     as(store, "s-obermeier", "admin");
     expect((await app.inject({ method: "PUT", url: "/office/staff/s-kaya", payload: { canApproveTemplates: true }, headers: { "x-staff-token": "admin" } })).statusCode).toBe(200);
     expect((await app.inject({ method: "GET", url: "/office/templates" })).statusCode).toBe(200);
+  });
+});
+
+describe("rule changes", () => {
+  const conds = { when: [], pass: [{ path: "docs.health_insurance.present", op: "present" }, { path: "docs.health_insurance.fields.covers_abroad", op: "eq", value: "Ja" }] };
+
+  it("an edit becomes a draft version; the live version keeps running until another person approves", async () => {
+    const { app, store } = setup("s-lindner");
+    const draft = (await app.inject({ method: "PUT", url: "/office/rules/R-HEALTH/draft", payload: { ...conds, severity: "warning", plain: { de: "Neu", en: "New" } } })).json();
+    expect(draft.status).toBe("changed");
+    expect(draft.draft.author).toBe("Frau Lindner");
+    expect(draft.draft.rule.version).toBe(2);
+    expect(draft.live.rule.version).toBe(1);
+    // The live version still runs.
+    expect(store.liveRules().find((r) => r.id === "R-HEALTH")!.severity).toBe("blocker");
+    // The author cannot approve their own change.
+    const own = await app.inject({ method: "POST", url: "/office/rules/R-HEALTH/approve" });
+    expect(own.statusCode).toBe(409);
+    store.login("s-obermeier", "admin");
+    const ok = (await app.inject({ method: "POST", url: "/office/rules/R-HEALTH/approve", headers: { "x-staff-token": "admin" } })).json();
+    expect(ok.status).toBe("live");
+    expect(ok.live.approvedBy).toBe("Herr Obermeier");
+    expect(ok.history).toHaveLength(1);
+    expect(store.liveRules().find((r) => r.id === "R-HEALTH")!.severity).toBe("warning");
+  });
+
+  it("refuses unknown conditions and approval while sample cases fail", async () => {
+    const { app, store } = setup("s-lindner");
+    expect((await app.inject({ method: "PUT", url: "/office/rules/R-HEALTH/draft", payload: { pass: [{ path: "nope", op: "present" }] } })).statusCode).toBe(400);
+    expect((await app.inject({ method: "PUT", url: "/office/rules/R-HEALTH/draft", payload: { pass: [] } })).statusCode).toBe(400);
+    // A check that always passes breaks the sample case "proof missing".
+    await app.inject({ method: "PUT", url: "/office/rules/R-HEALTH/draft", payload: { pass: [{ path: "stay.weeks", op: "gte", value: "0" }] } });
+    store.login("s-obermeier", "admin");
+    expect((await app.inject({ method: "POST", url: "/office/rules/R-HEALTH/approve", headers: { "x-staff-token": "admin" } })).statusCode).toBe(409);
+    expect((await app.inject({ method: "POST", url: "/office/rules/R-HEALTH/discard", headers: { "x-staff-token": "admin" } })).json().status).toBe("live");
+  });
+
+  it("a switched-off rule stops running and caseworkers cannot change rules", async () => {
+    const { app, store } = setup();
+    await app.inject({ method: "POST", url: "/office/rules/R-HEALTH/revoke" });
+    expect(store.liveRules().some((r) => r.id === "R-HEALTH")).toBe(false);
+    store.login("s-kaya", "cw");
+    expect((await app.inject({ method: "PUT", url: "/office/rules/R-HEALTH/draft", payload: conds, headers: { "x-staff-token": "cw" } })).statusCode).toBe(403);
+    const todo = (await app.inject({ method: "GET", url: "/office/todo" })).json();
+    expect(todo.rulesToApprove).toBe(1); // the AI-drafted rule
   });
 });

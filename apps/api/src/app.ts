@@ -18,6 +18,10 @@ import {
   harmony,
   isCatalogVariant,
   referenceProcess,
+  type Bilingual,
+  type Condition,
+  factCatalog,
+  toCheck,
   type FieldType,
   type InputCondition,
   type ProcessDef,
@@ -35,7 +39,7 @@ import { PEER_OFFICES, REFERENCE_SETTINGS, type OfficeProcess } from "./offices.
 import { DEFAULT_MIN_CONFIDENCE, aiAvailable, methodsInfo } from "./extraction.js";
 import { Store as ScratchStore } from "./store.js";
 import { askLive, liveAvailable, retrieve } from "./assistant.js";
-import { PARENT_KINDS, addDocument, allSpecs, allTemplates, checksFor, readFor, checkNow, invite, newApplication, officeAct, open, removeDocument, submit, view, type OfficeAction } from "./cases.js";
+import { PARENT_KINDS, addDocument, allSpecs, allTemplates, checksFor, readFor, checkNow, invite, newApplication, officeAct, open, removeDocument, submit, view, withAudit, draftFor, type OfficeAction } from "./cases.js";
 import { extractDocument } from "./documents.js";
 import { readPdfLines } from "./pdf.js";
 import { computeInsights } from "./metrics.js";
@@ -66,9 +70,11 @@ export function buildApp(opts: AppOptions) {
   const app = Fastify({ logger: opts.logger ?? false, bodyLimit: 12 * 1024 * 1024 });
   app.decorateRequest("staff", null);
   const needsBuild = (method: string, url: string) =>
-    url.startsWith("/office/processes") || (method !== "GET" && /^\/office\/rules\/[^/]+\/(approve|revoke)/.test(url));
+    url.startsWith("/office/processes") || (method !== "GET" && /^\/office\/rules\/[^/]+\/(approve|revoke|draft|discard)/.test(url));
   /** Setting up how documents are read: process designers and the extractor owner. */
-  const needsExtractorAccess = (method: string, url: string) => method !== "GET" && (url.startsWith("/office/inputs") || url.startsWith("/office/config") || url === "/office/extraction");
+  const needsExtractorAccess = (method: string, url: string) => method !== "GET" && (url.startsWith("/office/inputs") || url.startsWith("/office/config"));
+  /** How a template is read is decided by the extractor owner (or an administrator). */
+  const needsOwner = (method: string, url: string) => method !== "GET" && (url === "/office/extraction" || /^\/office\/templates\/[^/]+\/confirm$/.test(url));
   app.addHook("onRequest", async (req, reply) => {
     const url = req.url.split("?")[0]!;
     const token = req.headers["x-staff-token"];
@@ -81,6 +87,7 @@ export function buildApp(opts: AppOptions) {
     if (req.staff.isOversight && url.startsWith("/office")) return reply.code(403).send({ error: "Oversight accounts do not work in an office." });
     if (url.startsWith("/office/staff") && !req.staff.isAdmin) return reply.code(403).send({ error: "Only administrators can do this." });
     if (needsBuild(req.method, url) && !req.staff.canBuild && !req.staff.isAdmin) return reply.code(403).send({ error: "You do not have access to the process builder." });
+    if (needsOwner(req.method, url) && !req.staff.canApproveTemplates && !req.staff.isAdmin) return reply.code(403).send({ error: "Only the extractor owner can change how documents are read." });
     if (needsExtractorAccess(req.method, url) && !req.staff.canBuild && !req.staff.canApproveTemplates && !req.staff.isAdmin) return reply.code(403).send({ error: "You do not have access to document reading settings." });
   });
   const notFound = (reply: FastifyReply) => reply.code(404).send({ error: "Not found" });
@@ -275,35 +282,131 @@ export function buildApp(opts: AppOptions) {
     const acted = officeAct(store, a, action, { message, amount, by: req.staff?.name ?? "Sachbearbeitung" }, now());
     const outcome = action === "approve" ? "approved" : action === "reject" ? "rejected" : "info";
     const def = liveDef();
-    return v(def ? store.put(await resumeRun(def, acted, outcome, engineCtx())) : acted);
+    return v(def ? withAudit(store, store.put(await resumeRun(def, acted, outcome, engineCtx())), now()) : acted);
+  });
+
+  // ---- Explainability: a draft explanation before deciding, the frozen technical record after ----
+  app.get<{ Params: { id: string }; Querystring: { outcome?: string; amount?: string; lang?: string } }>("/office/cases/:id/explanation", async (req, reply) => {
+    const a = store.get(req.params.id);
+    if (!a) return notFound(reply);
+    const outcome = req.query.outcome === "rejected" ? "rejected" : "approved";
+    const lang = req.query.lang === "en" ? "en" : req.query.lang === "de" ? "de" : a.language;
+    return { text: draftFor(a, outcome, Number(req.query.amount ?? 0) || 0, lang, now()) };
+  });
+
+  app.get<{ Params: { id: string } }>("/office/cases/:id/audit", async (req, reply) => {
+    const a = store.get(req.params.id);
+    if (!a) return notFound(reply);
+    if (!a.decision?.audit) return bad(reply, "This case has no decision yet.", 404);
+    const record = { reference: a.reference, application: a.id, decision: { ...a.decision, audit: undefined }, audit: a.decision.audit, history: a.history };
+    return reply
+      .header("content-disposition", `attachment; filename="audit-${a.reference}.json"`)
+      .type("application/json")
+      .send(JSON.stringify(record, null, 2));
   });
 
   app.post("/office/portal/deliver", async (_req, reply) => reply.code(201).send(summary(await runLive(deliverFromPortal(store, now())))));
 
   app.get("/office/insights", async () => computeInsights(store.list(), now()));
 
-  app.get("/office/rules", async () => {
-    const states = store.ruleStates();
-    return RULES.map((rule) => ({
-      rule,
-      state: states[rule.id] ?? { status: "draft" },
-      compiled: { when: rule.when ? describeCheck(rule.when) : null, pass: describeCheck(rule.pass) },
-      tests: runRuleTests(rule, baselineFacts() as unknown as Record<string, unknown>),
-    }));
+  // ---- Rules: versions, editing, two-person approval -----------------------------------
+  const BASE = () => baselineFacts() as unknown as Record<string, unknown>;
+  const ruleView = (id: string) => {
+    const r = store.rules()[id]!;
+    const base = r.draft?.rule ?? r.live?.rule ?? RULES.find((x) => x.id === id)!;
+    return {
+      id,
+      title: base.title,
+      scope: base.scope,
+      status: r.draft && r.live ? "changed" : r.draft ? "draft" : r.paused ? "paused" : "live",
+      paused: r.paused,
+      live: r.live ? { ...r.live, tests: runRuleTests(r.live.rule, BASE()) } : null,
+      draft: r.draft ? { ...r.draft, tests: runRuleTests(r.draft.rule, BASE()) } : null,
+      history: r.history,
+    };
+  };
+
+  app.get("/office/rules", async () => Object.keys(store.rules()).map(ruleView));
+
+  app.put<{ Params: { id: string }; Body: { title?: Bilingual; plain?: Bilingual; fix?: Bilingual; severity?: "blocker" | "warning"; when?: Condition[]; pass?: Condition[]; tests?: { name: string; expectPass: boolean }[] } }>(
+    "/office/rules/:id/draft",
+    async (req, reply) => {
+      const r = store.rules()[req.params.id];
+      if (!r) return notFound(reply);
+      const base = r.draft?.rule ?? r.live?.rule ?? RULES.find((x) => x.id === req.params.id)!;
+      const body = req.body ?? {};
+      const known = new Set(factCatalog(allTemplates(store)).map((f) => f.path));
+      const lines = [...(body.when ?? []), ...(body.pass ?? [])];
+      const OPS = ["present", "absent", "eq", "ne", "gte", "lte"];
+      if (!body.pass?.length) return bad(reply, "A rule needs at least one condition that must hold.");
+      for (const c of lines) {
+        if (!known.has(c.path) || !OPS.includes(c.op) || (c.valueRef && !known.has(c.valueRef))) return bad(reply, `Unknown condition: ${c.path}`);
+      }
+      const text = (x: Bilingual | undefined, fallback: Bilingual): Bilingual => ({ de: String(x?.de ?? fallback.de).slice(0, 600), en: String(x?.en ?? fallback.en).slice(0, 600) });
+      const tests = base.tests.map((tc) => ({ ...tc, expectPass: body.tests?.find((x) => x.name === tc.name)?.expectPass ?? tc.expectPass }));
+      const rule = {
+        ...base,
+        version: (r.live?.rule.version ?? base.version - 1) + 1,
+        title: text(body.title, base.title),
+        plain: text(body.plain, base.plain),
+        fix: text(body.fix, base.fix),
+        severity: body.severity === "warning" ? "warning" : body.severity === "blocker" ? "blocker" : base.severity,
+        when: toCheck(body.when ?? []),
+        pass: toCheck(body.pass)!,
+        tests,
+        draftedByAi: false,
+      } as typeof base;
+      store.setRule(req.params.id, { ...r, draft: { rule, author: req.staff!.name, createdAt: now().toISOString() } });
+      return ruleView(req.params.id);
+    },
+  );
+
+  app.post<{ Params: { id: string } }>("/office/rules/:id/approve", async (req, reply) => {
+    const r = store.rules()[req.params.id];
+    if (!r) return notFound(reply);
+    if (!r.draft) {
+      if (!r.paused) return bad(reply, "There is nothing to approve.", 409);
+      store.setRule(req.params.id, { ...r, paused: false });
+      return ruleView(req.params.id);
+    }
+    // Two-person rule: whoever wrote a change cannot approve it.
+    if (r.draft.author === req.staff!.name) return bad(reply, "You wrote this change. Another person has to approve it.", 409);
+    if (runRuleTests(r.draft.rule, BASE()).some((x) => !x.ok)) return bad(reply, "Not all sample cases pass. The rule cannot be approved.", 409);
+    const approved = { ...r.draft, approvedBy: req.staff!.name, approvedAt: now().toISOString() };
+    store.setRule(req.params.id, { live: approved, paused: false, draft: undefined, history: r.live ? [...r.history, r.live] : r.history });
+    return ruleView(req.params.id);
   });
 
-  app.post<{ Params: { id: string }; Body: { by?: string } }>("/office/rules/:id/approve", async (req, reply) => {
-    const rule = RULES.find((r) => r.id === req.params.id);
-    if (!rule) return notFound(reply);
-    if (runRuleTests(rule, baselineFacts() as unknown as Record<string, unknown>).some((t) => !t.ok)) return bad(reply, "Not all sample cases pass. The rule cannot be approved.", 409);
-    store.setRuleState(rule.id, { status: "approved", approvedBy: req.body?.by?.trim() || "Fachbereich Ausland (Demo)", approvedAt: now().toISOString() });
-    return { ok: true };
+  app.post<{ Params: { id: string } }>("/office/rules/:id/discard", async (req, reply) => {
+    const r = store.rules()[req.params.id];
+    if (!r?.draft) return notFound(reply);
+    if (!r.live) return bad(reply, "This rule has no approved version yet. Change it instead of discarding.", 409);
+    store.setRule(req.params.id, { ...r, draft: undefined });
+    return ruleView(req.params.id);
   });
 
   app.post<{ Params: { id: string } }>("/office/rules/:id/revoke", async (req, reply) => {
-    if (!RULES.some((r) => r.id === req.params.id)) return notFound(reply);
-    store.setRuleState(req.params.id, { status: "draft" });
-    return { ok: true };
+    const r = store.rules()[req.params.id];
+    if (!r) return notFound(reply);
+    store.setRule(req.params.id, { ...r, paused: true });
+    return ruleView(req.params.id);
+  });
+
+  // ---- What needs the signed-in person ---------------------------------------------
+  app.get("/office/todo", async (req) => {
+    const me = req.staff!;
+    const builder = me.canBuild || me.isAdmin;
+    const owner = me.canApproveTemplates || me.isAdmin;
+    const rules = Object.values(store.rules());
+    const used = new Set(Object.values(store.processes()).flatMap((p) => [...(p.live?.inputs ?? []), ...(p.draft?.inputs ?? [])]).filter((i) => i.type === "document").map((i) => i.ref));
+    return {
+      rulesToApprove: builder ? rules.filter((r) => r.draft && r.draft.author !== me.name).length : 0,
+      myRuleDrafts: rules.filter((r) => r.draft?.author === me.name).length,
+      proposalsToDecide: owner ? store.proposals().filter((p) => p.status === "submitted").length : 0,
+      myProposals: store.proposals().filter((p) => p.proposedBy === me.name && (p.status === "draft" || p.status === "rejected")).length,
+      templatesToCheck: owner ? allTemplates(store).filter((t) => !store.config().templateChecks[t.id] && (t.source === "accepted" || used.has(t.id))).length : 0,
+      processDrafts: builder ? Object.values(store.processes()).filter((p) => p.draft).length : 0,
+    };
   });
 
   app.get("/office/config", async () => ({ config: store.config(), documentTypes: allSpecs(store).map((s) => ({ kind: s.kind, title: s.title, fields: s.fields.map(([key, label]) => ({ key, label })), signatures: s.sigs.map(([key, label]) => ({ key, label })) })) }));
@@ -346,6 +449,7 @@ export function buildApp(opts: AppOptions) {
     else if (kind && allSpecs(store).some((x) => x.kind === kind)) {
       const min = Math.min(1, Math.max(0.3, Number(minConfidence) || DEFAULT_MIN_CONFIDENCE));
       store.setConfig({ ...c, extraction: { ...c.extraction, [kind]: { method, minConfidence: min } } });
+      logTemplate(kind, req.staff!.name, `Reading set to ${method}, review below ${Math.round(min * 100)} %`);
     } else return bad(reply, "Unknown document type.");
     return { config: { defaultMethod: store.config().defaultMethod, byType: store.config().extraction } };
   });
@@ -396,7 +500,13 @@ export function buildApp(opts: AppOptions) {
     if (!canApprove(req.staff) && !canPropose(req.staff)) return bad(reply, "You do not have access to templates.", 403);
     const cfg = store.config();
     return {
-      templates: allTemplates(store).map((t) => ({ ...t, extraction: cfg.extraction[t.id] ?? { method: cfg.defaultMethod, minConfidence: DEFAULT_MIN_CONFIDENCE } })),
+      templates: allTemplates(store).map((t) => ({
+        ...t,
+        extraction: cfg.extraction[t.id] ?? { method: cfg.defaultMethod, minConfidence: DEFAULT_MIN_CONFIDENCE },
+        check: cfg.templateChecks[t.id] ?? null,
+        usedIn: Object.entries(store.processes()).filter(([, p]) => [...(p.live?.inputs ?? []), ...(p.draft?.inputs ?? [])].some((i) => i.type === "document" && i.ref === t.id)).map(([catalogId, p]) => ({ catalogId, name: (p.live ?? p.draft)?.name ?? catalogId })),
+        log: cfg.templateLog.filter((l) => l.templateId === t.id).slice(-12).reverse(),
+      })),
       proposals: [...store.proposals()].sort((a, b) => b.proposedAt.localeCompare(a.proposedAt)),
       canApprove: canApprove(req.staff),
       canPropose: canPropose(req.staff),
@@ -427,6 +537,7 @@ export function buildApp(opts: AppOptions) {
     const clash = allTemplates(store).some((t) => t.title === title) || store.proposals().some((p) => p.id !== base.id && p.title === title && (p.status === "submitted" || p.status === "accepted"));
     if (clash) return "A template or a pending proposal with this title already exists.";
     const providedBy = ["student", "parents", "office", "third_party"].includes(String(body.providedBy)) ? (body.providedBy as TemplateProposal["providedBy"]) : "student";
+    const category = ["official_form", "study", "work", "money", "insurance", "office"].includes(String(body.category)) ? (body.category as TemplateProposal["category"]) : "official_form";
     const signatures = Array.isArray(body.signatures) ? (body.signatures as { key: string; label: string }[]).slice(0, 8).filter((x) => /^[a-z0-9_]{1,40}$/.test(String(x.key)) && String(x.label ?? "").trim()).map((x) => ({ key: String(x.key), label: String(x.label).trim().slice(0, 120) })) : [];
     return {
       id: base.id ?? randomBytes(8).toString("hex"),
@@ -434,7 +545,7 @@ export function buildApp(opts: AppOptions) {
       proposedBy: base.proposedBy ?? "",
       proposedAt: base.proposedAt ?? now().toISOString(),
       formblatt: body.formblatt ? String(body.formblatt).trim().slice(0, 40) : undefined,
-      name, title, purpose: String(body.purpose ?? "").trim().slice(0, 400), providedBy, fields, signatures,
+      name, title, purpose: String(body.purpose ?? "").trim().slice(0, 400), providedBy, category, fields, signatures,
       sampleFilename: body.sampleFilename ? String(body.sampleFilename).slice(0, 120) : undefined,
     };
   };
@@ -477,9 +588,10 @@ export function buildApp(opts: AppOptions) {
     if (!method || !methodsInfo().some((m) => m.id === method)) return bad(reply, "Please choose how this template is extracted.");
     let id = `tpl-${slug(p.name) || "form"}`;
     for (let n = 2; allTemplates(store).some((t) => t.id === id); n++) id = `tpl-${slug(p.name)}-${n}`;
-    store.addTemplate({ id, formblatt: p.formblatt, name: { de: p.name, en: p.name }, title: p.title, purpose: { de: p.purpose, en: p.purpose }, providedBy: p.providedBy, fields: p.fields, signatures: p.signatures, source: "accepted" });
+    store.addTemplate({ id, category: p.category ?? "official_form", formblatt: p.formblatt, name: { de: p.name, en: p.name }, title: p.title, purpose: { de: p.purpose, en: p.purpose }, providedBy: p.providedBy, fields: p.fields, signatures: p.signatures, source: "accepted" });
     const c = store.config();
     store.setConfig({ ...c, extraction: { ...c.extraction, [id]: { method, minConfidence: Math.min(1, Math.max(0.3, Number(req.body?.minConfidence) || DEFAULT_MIN_CONFIDENCE)) } } });
+    logTemplate(id, req.staff!.name, `Accepted from the proposal by ${p.proposedBy}; read with ${method}`);
     const done: TemplateProposal = { ...p, status: "accepted", decidedBy: req.staff!.name, decidedAt: now().toISOString(), templateId: id };
     store.putProposal(done);
     return done;
@@ -496,6 +608,31 @@ export function buildApp(opts: AppOptions) {
     return done;
   });
 
+
+  const logTemplate = (templateId: string, by: string, text: string) => {
+    const c = store.config();
+    store.setConfig({ ...c, templateLog: [...c.templateLog, { templateId, at: now().toISOString(), by, text }].slice(-300) });
+  };
+
+  /** Reads a sample with the template's own reading method and shows what came out. Nothing is stored. */
+  app.post<{ Params: { id: string }; Body: { filename?: string; mimeType?: string; dataBase64?: string } }>("/office/templates/:id/test", async (req, reply) => {
+    const t = allTemplates(store).find((x) => x.id === req.params.id);
+    if (!t) return notFound(reply);
+    const r = readFile(req.body);
+    if ("error" in r) return bad(reply, r.error!);
+    const read = await readFor(store, r.file!.content, r.file!.mimeType);
+    return { ...read, matches: read.kind === t.id, expected: t.fields.map((f) => f.key) };
+  });
+
+  app.post<{ Params: { id: string } }>("/office/templates/:id/confirm", async (req, reply) => {
+    const t = allTemplates(store).find((x) => x.id === req.params.id);
+    if (!t) return notFound(reply);
+    const c = store.config();
+    store.setConfig({ ...c, templateChecks: { ...c.templateChecks, [t.id]: { confirmedAt: now().toISOString(), confirmedBy: req.staff!.name } } });
+    logTemplate(t.id, req.staff!.name, "Tested with a sample and confirmed");
+    return { ok: true };
+  });
+
   // ---- Sample documents (for the demo) ------------------------------------
   const sampleFiles = (setId: string) => {
     const set = SAMPLE_SETS.find((s) => s.id === setId);
@@ -507,8 +644,8 @@ export function buildApp(opts: AppOptions) {
   app.get("/samples", async () => ({
     sets: SAMPLE_SETS.map((s) => {
       const f = sampleFiles(s.id)!;
-      const item = (d: { kind: string; filename: string }) => ({ name: d.filename, audience: PARENT_KINDS.includes(d.kind as DocumentKind) ? "parents" : "student" });
-      const extras = s.id === "mira" ? [{ name: formblatt8(getPerson("mira", now())).filename, audience: "student" }] : [];
+      const item = (d: { kind: string; filename: string }) => ({ name: d.filename, kind: d.kind, audience: PARENT_KINDS.includes(d.kind as DocumentKind) ? "parents" : "student" });
+      const extras = s.id === "mira" ? [{ name: formblatt8(getPerson("mira", now())).filename, kind: "fb08", audience: "student" }] : [];
       return { id: s.id, title: s.title, note: s.note, docs: f.docs.map(item), fixes: f.fixes.map(item), extras };
     }),
     letter: sampleLetter(getPerson("noah", now())).filename,
@@ -600,6 +737,9 @@ export function buildApp(opts: AppOptions) {
   const inputIssues = (def: ProcessDef) => {
     const known = new Set(allTemplates(store).map((t) => t.id));
     const extra = def.inputs.filter((i) => i.type === "document" && !known.has(i.ref)).map((i) => ({ message: { de: `Die Vorlage „${i.ref}“ ist unbekannt.`, en: `The template “${i.ref}” is unknown.` } }));
+    const checks = store.config().templateChecks;
+    const unchecked = def.inputs.filter((i) => i.type === "document" && known.has(i.ref) && !checks[i.ref]).map((i) => ({ message: { de: `Die Vorlage „${i.ref}“ wurde noch nicht mit einem Beispiel geprüft und bestätigt.`, en: `The template “${i.ref}” has not been tested with a sample and confirmed yet.` } }));
+    extra.push(...unchecked);
     return [...validateProcess(def), ...extra];
   };
   const nextVersion = (category: string) => (store.process(category)?.live?.version ?? 0) + 1;

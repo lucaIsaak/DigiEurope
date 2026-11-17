@@ -1,4 +1,4 @@
-import type { Application, CaseView, DocumentTemplate, FieldType, TemplateField, TemplateProposal, CatalogNode, CatalogVariant, Harmony, OfficeSettings, ProcessDef, StaffMember, RunLogEntry, Mail, IntegrationEntry, ProcessIssue, DocumentKind, Extraction, LetterFields, Lang, Rule, RuleState, StayInfo, StudentInfo } from "@digieurope/shared";
+import type { Condition, Application, CaseView, DocumentTemplate, FieldType, TemplateField, TemplateProposal, CatalogNode, CatalogVariant, Harmony, OfficeSettings, ProcessDef, StaffMember, RunLogEntry, Mail, IntegrationEntry, ProcessIssue, DocumentKind, Extraction, LetterFields, Lang, Rule, RuleState, StayInfo, StudentInfo } from "@digieurope/shared";
 
 export class ApiError extends Error {
   issues?: ProcessIssue[];
@@ -81,11 +81,50 @@ export interface Insights {
   missing: { ruleId: string; title: { de: string; en: string }; count: number; share: number; recommendation?: { de: string; en: string }; documentKind?: string }[];
 }
 
-export interface RuleEntry {
+export interface TestOutcomeView {
+  name: string;
+  expectPass: boolean;
+  actualPass: boolean;
+  ok: boolean;
+}
+
+export interface RuleVersionView {
   rule: Rule;
-  state: RuleState;
-  compiled: { when: string | null; pass: string };
-  tests: { name: string; expectPass: boolean; actualPass: boolean; ok: boolean }[];
+  author: string;
+  createdAt: string;
+  approvedBy?: string;
+  approvedAt?: string;
+  tests?: TestOutcomeView[];
+}
+
+export interface RuleEntry {
+  id: string;
+  title: { de: string; en: string };
+  scope: "federal" | "office";
+  status: "live" | "draft" | "changed" | "paused";
+  paused: boolean;
+  live: RuleVersionView | null;
+  draft: RuleVersionView | null;
+  history: RuleVersionView[];
+}
+
+export interface RuleDraftBody {
+  title: { de: string; en: string };
+  plain: { de: string; en: string };
+  fix: { de: string; en: string };
+  severity: "blocker" | "warning";
+  when: Condition[];
+  pass: Condition[];
+  tests: { name: string; expectPass: boolean }[];
+}
+
+export interface Todo {
+  rulesToApprove: number;
+  myRuleDrafts: number;
+  proposalsToDecide: number;
+  myProposals: number;
+  templatesToCheck: number;
+  processDrafts: number;
 }
 
 export interface OfficeConfigResponse {
@@ -100,8 +139,15 @@ export interface OfficeConfigResponse {
   documentTypes: { kind: DocumentKind; title: string; fields: { key: string; label: string }[]; signatures: { key: string; label: string }[] }[];
 }
 
+export interface LibraryTemplate extends DocumentTemplate {
+  extraction: { method: MethodInfo["id"]; minConfidence: number };
+  check: { confirmedAt: string; confirmedBy: string } | null;
+  usedIn: { catalogId: string; name: string }[];
+  log: { at: string; by: string; text: string }[];
+}
+
 export interface TemplateLibrary {
-  templates: (DocumentTemplate & { extraction: { method: MethodInfo["id"]; minConfidence: number } })[];
+  templates: LibraryTemplate[];
   proposals: TemplateProposal[];
   canApprove: boolean;
   canPropose: boolean;
@@ -120,6 +166,7 @@ export interface ProposalBody {
   title: string;
   purpose: string;
   providedBy: DocumentTemplate["providedBy"];
+  category: DocumentTemplate["category"];
   fields: TemplateField[];
   signatures: { key: string; label: string }[];
   sampleFilename?: string;
@@ -144,6 +191,7 @@ export interface ExtractionSettings {
 
 export interface SampleFile {
   name: string;
+  kind: string;
   audience: "student" | "parents";
 }
 
@@ -211,11 +259,24 @@ export const api = {
   openCase: (id: string) => call<CaseView>(`/office/cases/${id}/open`, { method: "POST" }),
   act: (id: string, action: "request_info" | "approve" | "reject", body: { message?: string; amount?: number }) =>
     call<CaseView>(`/office/cases/${id}/actions`, { method: "POST", json: { action, ...body } }),
+  explanation: (id: string, outcome: "approved" | "rejected", amount: number, lang?: Lang) =>
+    call<{ text: string }>(`/office/cases/${id}/explanation?outcome=${outcome}&amount=${amount}${lang ? `&lang=${lang}` : ""}`),
+  auditRecord: async (id: string) => {
+    const token = sessionStorage.getItem("ms.staffToken") ?? "";
+    const res = await fetch(`/api/office/cases/${id}/audit`, { headers: { "x-staff-token": token }, cache: "no-store" });
+    if (!res.ok) throw new ApiError(res.statusText, res.status);
+    return res.blob();
+  },
   deliver: () => call<CaseSummary>("/office/portal/deliver", { method: "POST" }),
   insights: () => call<Insights>("/office/insights"),
   rules: () => call<RuleEntry[]>("/office/rules"),
-  approveRule: (id: string) => call<{ ok: true }>(`/office/rules/${id}/approve`, { method: "POST", json: {} }),
-  revokeRule: (id: string) => call<{ ok: true }>(`/office/rules/${id}/revoke`, { method: "POST" }),
+  approveRule: (id: string) => call<RuleEntry>(`/office/rules/${id}/approve`, { method: "POST", json: {} }),
+  revokeRule: (id: string) => call<RuleEntry>(`/office/rules/${id}/revoke`, { method: "POST" }),
+  discardRule: (id: string) => call<RuleEntry>(`/office/rules/${id}/discard`, { method: "POST" }),
+  saveRuleDraft: (id: string, body: RuleDraftBody) => call<RuleEntry>(`/office/rules/${id}/draft`, { method: "PUT", json: body }),
+  todo: () => call<Todo>("/office/todo"),
+  testTemplate: async (id: string, file: File) => call<{ kind: string; extraction: Extraction; matches: boolean; expected: string[] }>(`/office/templates/${id}/test`, { method: "POST", json: await filePayload(file) }),
+  confirmTemplate: (id: string) => call<{ ok: true }>(`/office/templates/${id}/confirm`, { method: "POST" }),
   config: () => call<OfficeConfigResponse>("/office/config"),
   saveConfig: (body: { slaDays?: number; languages?: Lang[] }) => call<OfficeConfigResponse["config"]>("/office/config", { method: "PUT", json: body }),
   extractInput: async (file: File) => call<{ kind: DocumentKind; extraction: Extraction }>("/office/inputs/extract", { method: "POST", json: await filePayload(file) }),

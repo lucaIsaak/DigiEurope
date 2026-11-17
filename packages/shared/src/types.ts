@@ -106,9 +106,49 @@ export interface HistoryEntry {
 export interface Decision {
   outcome: "approved" | "rejected";
   monthlyAmount: number;
+  /** The human explanation for the student, written (or confirmed) by the caseworker. */
   note: string;
   decidedAt: string;
   decidedBy: string;
+  /** Frozen technical record of what the decision was based on, for audits. */
+  audit?: AuditRecord;
+}
+
+/** Everything a decision rested on, frozen at the moment of the decision. */
+export interface AuditRecord {
+  recordedAt: string;
+  decidedBy: string;
+  outcome: "approved" | "rejected";
+  monthlyAmount: number;
+  process: { id: string; name: string; version: number } | null;
+  processSteps: { at: string; step: string; handle?: string; note: string }[];
+  rules: { id: string; version: number; title: Bilingual; result: "pass" | "fail" | "n/a"; severity: Severity; approvedBy?: string; source: string }[];
+  inputs: { ref: string; label: Bilingual; required: boolean; applies: boolean; state: "ok" | "missing" }[];
+  documents: { kind: string; filename: string; uploadedAt: string; uploadedBy: string; engine: string; lowestConfidence: number | null; flaggedForReview: boolean; note?: string }[];
+  calculation: EstimateExplanation;
+  sources: { label: string; url: string }[];
+}
+
+export interface EstimateExplanation {
+  parts: { key: string; amount: number }[];
+  need: number;
+  parentsKnown: boolean;
+  sumOfIncome: number | null;
+  incomeTax: number | null;
+  deductionPercent: number;
+  netMonthly: number | null;
+  married: boolean | null;
+  siblings: number;
+  allowance: number;
+  excess: number;
+  countablePercent: number;
+  divisor: number;
+  contribution: number;
+  /** Need minus contribution, before rounding. */
+  grantExact: number;
+  /** Rounded to 10 €, as in the estimate. */
+  grant: number;
+  oneOff: { travel: number; tuition: number };
 }
 
 export interface Application {
@@ -315,7 +355,11 @@ export interface TemplateSignature {
 }
 
 /** A form or document the office knows how to read. */
+export type TemplateCategory = "official_form" | "study" | "work" | "money" | "insurance" | "office";
+
 export interface DocumentTemplate {
+  /** Groups templates for people: official forms, study, work, money, insurance, office documents. */
+  category: TemplateCategory;
   /** The document kind. Core templates keep their historic ids, accepted proposals get "tpl-…". */
   id: string;
   /** For example "Formblatt 6". */
@@ -343,6 +387,7 @@ export interface TemplateProposal {
   title: string;
   purpose: string;
   providedBy: DocumentTemplate["providedBy"];
+  category: TemplateCategory;
   fields: TemplateField[];
   signatures: TemplateSignature[];
   /** Name of the sample document the suggestion came from. */

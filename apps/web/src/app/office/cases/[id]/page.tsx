@@ -5,6 +5,7 @@ import { AlertCircle, ArrowLeft, ArrowRight, Building2, Calendar, CheckCircle2, 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { use, useCallback, useEffect, useMemo, useState } from "react";
+import { DecisionExplain } from "@/components/DecisionExplain";
 import { EstimateCard, FindingList, FlowPanel, ReviewPanel, Timeline, useDocName } from "@/components/CaseParts";
 import { Spinner, StatusPill, useAsyncError } from "@/components/ui";
 import { api, documentUrl, type CaseSummary } from "@/lib/api";
@@ -19,7 +20,7 @@ export default function OfficeCasePage({ params }: { params: Promise<{ id: strin
 }
 
 function OfficeCase({ id }: { id: string }) {
-  const { t, tk, eur, date, dateTime, country } = useI18n();
+  const { t, tk, eur, date, country } = useI18n();
   const router = useRouter();
   const [c, setC] = useState<CaseView | null>(null);
   const [queue, setQueue] = useState<CaseSummary[]>([]);
@@ -73,6 +74,10 @@ function OfficeCase({ id }: { id: string }) {
       setMessage("");
     }
   };
+  const draft = async (outcome: "approved" | "rejected") => {
+    const r = await run(() => api.explanation(id, outcome, outcome === "approved" && typeof amount === "number" ? amount : 0, c.language));
+    if (r) setMessage(r.text);
+  };
   const prefill = () => setMessage(blockers.map((f) => `• ${f.fix[c.language]}`).join("\n"));
   const fieldLabel = (k: string) => (tk(`field.${k}`).startsWith("field.") ? k.replace(/_/g, " ") : tk(`field.${k}`));
   const statusText = decided ? t("cd.decided") : c.status === "info_requested" ? t("cd.waiting") : blockers.length ? t("cd.blocked", { n: blockers.length }) : t("cd.ready");
@@ -101,6 +106,7 @@ function OfficeCase({ id }: { id: string }) {
 
       <div className="cd-grid">
         <div className="stack" style={{ gap: "1.25rem" }}>
+          {c.decision && <DecisionExplain c={c} />}
           <ReviewPanel c={c} onConfirm={async (docId, fields) => { const r = await run(() => api.reviewFields(id, docId, fields)); if (r) { setC(r); setAmount(r.estimate.monthly); } }} />
 
           <section className="panel">
@@ -164,14 +170,7 @@ function OfficeCase({ id }: { id: string }) {
         </div>
 
         <aside className="side-stack">
-          <EstimateCard c={c} compact />
-          {c.decision && (
-            <div className={`banner ${c.decision.outcome === "approved" ? "banner-ok" : "banner-bad"}`}>
-              <strong>{c.decision.outcome === "approved" ? `${t("status.approved")}: ${eur(c.decision.monthlyAmount)}` : t("status.rejected")}</strong>
-              {c.decision.note && <p style={{ margin: "0.3rem 0 0" }}>{c.decision.note}</p>}
-              <p className="small muted" style={{ margin: "0.3rem 0 0" }}>{t("office.case.decided", { by: c.decision.decidedBy, date: dateTime(c.decision.decidedAt) })}</p>
-            </div>
-          )}
+          {!decided && <EstimateCard c={c} compact />}
           {c.parentLink && <div className="card small"><strong>{t("office.case.parentLink")}</strong><div className="muted" style={{ overflowWrap: "anywhere", marginTop: 4 }}>{c.parentLink}</div></div>}
         </aside>
       </div>
@@ -185,6 +184,8 @@ function OfficeCase({ id }: { id: string }) {
           {mode === "approve" && (
             <div className="stack" style={{ gap: "0.7rem" }}>
               <label className="field">{t("office.case.amount")}<input type="number" min={0} max={5000} value={amount} onChange={(e) => setAmount(e.target.value === "" ? "" : Number(e.target.value))} /></label>
+              <label className="field">{t("xp.explain")}<textarea value={message} onChange={(e) => setMessage(e.target.value)} rows={6} placeholder={t("xp.explainHint")} /></label>
+              <button className="button button-ghost button-small" type="button" style={{ justifySelf: "start" }} onClick={() => void draft("approved")}>{t("xp.draft")}</button>
               <p className="small muted" style={{ margin: 0 }}>{t("office.case.principle")}</p>
               <button className="button" type="button" disabled={amount === ""} onClick={() => void act("approve")}><CheckCircle2 size={16} />{t("office.case.approve")}</button>
             </div>
@@ -200,7 +201,8 @@ function OfficeCase({ id }: { id: string }) {
           )}
           {mode === "reject" && (
             <div className="stack" style={{ gap: "0.7rem" }}>
-              <label className="field">{t("office.case.reason")}<textarea value={message} onChange={(e) => setMessage(e.target.value)} rows={4} /></label>
+              <label className="field">{t("office.case.reason")}<textarea value={message} onChange={(e) => setMessage(e.target.value)} rows={6} /></label>
+              <button className="button button-ghost button-small" type="button" style={{ justifySelf: "start" }} onClick={() => void draft("rejected")}>{t("xp.draft")}</button>
               <button className="button button-danger" type="button" disabled={!message.trim()} onClick={() => void act("reject")}><XCircle size={16} />{t("office.case.reject")}</button>
             </div>
           )}
@@ -214,9 +216,9 @@ function OfficeCase({ id }: { id: string }) {
         {!decided && c.status !== "draft" && (
           <>
             {c.status === "submitted" && <button className="button button-ghost button-small" type="button" onClick={async () => { const r = await run(() => api.openCase(id)); if (r) setC(r); }}>{t("office.case.open")}</button>}
-            <button className="button button-ghost button-small" type="button" onClick={() => { setMode(mode === "request" ? null : "request"); setError(null); if (!message && blockers.length) prefill(); }}><Send size={14} />{t("office.case.request")}</button>
-            <button className="button button-ghost button-small" type="button" disabled={awaitingReview} onClick={() => { setMode(mode === "reject" ? null : "reject"); setError(null); }}><XCircle size={14} />{t("office.case.reject")}</button>
-            <button className="button button-small" type="button" disabled={blockers.length > 0 || awaitingReview} onClick={() => { setMode(mode === "approve" ? null : "approve"); setError(null); }}><CheckCircle2 size={14} />{t("cd.approveAmount", { amount: eur(typeof amount === "number" ? amount : c.estimate.monthly) })}</button>
+            <button className="button button-ghost button-small" type="button" onClick={() => { setMode(mode === "request" ? null : "request"); setError(null); if (blockers.length) prefill(); else setMessage(""); }}><Send size={14} />{t("office.case.request")}</button>
+            <button className="button button-ghost button-small" type="button" disabled={awaitingReview} onClick={() => { setMode(mode === "reject" ? null : "reject"); setMessage(""); setError(null); }}><XCircle size={14} />{t("office.case.reject")}</button>
+            <button className="button button-small" type="button" disabled={blockers.length > 0 || awaitingReview} onClick={() => { setMode(mode === "approve" ? null : "approve"); setMessage(""); setError(null); }}><CheckCircle2 size={14} />{t("cd.approveAmount", { amount: eur(typeof amount === "number" ? amount : c.estimate.monthly) })}</button>
           </>
         )}
         {nextCase && <button className="button button-ghost button-small" type="button" onClick={() => router.push(`/office/cases/${nextCase.id}`)}>{t("cd.next")} <ArrowRight size={14} /></button>}

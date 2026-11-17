@@ -1,7 +1,10 @@
 import { randomBytes, randomUUID } from "node:crypto";
 import {
   estimate,
+  explainEstimate,
+  draftExplanation,
   runChecks,
+  type AuditRecord,
   BUILTIN_TEMPLATES,
   DEFAULT_CATEGORY,
   type DocumentTemplate,
@@ -29,7 +32,7 @@ export const allSpecs = (store: Store) => allTemplates(store).map(specOf);
 /** Runs the approved rules and the inputs the office's live process requires. */
 export function checksFor(store: Store, app: Application, now: Date = new Date()) {
   const inputs = store.process(DEFAULT_CATEGORY)?.live?.inputs;
-  return runChecks(app, store.ruleStates(), now, undefined, { inputs, templates: allTemplates(store) });
+  return runChecks(app, store.ruleStates(), now, store.liveRules(), { inputs, templates: allTemplates(store) });
 }
 
 /** Reads a file with the method configured for its document type, knowing all accepted templates. */
@@ -155,19 +158,76 @@ export function officeAct(
     return store.put(log({ ...app, status: "info_requested", officeMessage: body.message }, "info_requested", now, body.message));
   }
   const approved = action === "approve";
-  return store.put(
-    log(
-      {
-        ...app,
-        status: approved ? "approved" : "rejected",
-        decision: { outcome: approved ? "approved" : "rejected", monthlyAmount: approved ? body.amount ?? 0 : 0, note: body.message ?? "", decidedAt: now.toISOString(), decidedBy: body.by },
-      },
-      approved ? "approved" : "rejected",
-      now,
-      body.message,
-    ),
+  const outcome = approved ? "approved" : "rejected";
+  const amount = approved ? body.amount ?? 0 : 0;
+  // The student always gets a written explanation: the caseworker's own words, or a draft from the calculation.
+  const note = body.message?.trim() || draftFor(app, outcome, amount, app.language, now);
+  const decided = log(
+    { ...app, status: outcome, decision: { outcome, monthlyAmount: amount, note, decidedAt: now.toISOString(), decidedBy: body.by } },
+    outcome,
+    now,
+    body.message,
   );
+  return withAudit(store, decided, now);
 }
+
+const SOURCES = [
+  { label: "BAföG §§ 5, 11–13, 21–25 (gesetze-im-internet.de)", url: "https://www.gesetze-im-internet.de/baf_g/" },
+  { label: "BAföG-AuslandszuschlagsV", url: "https://www.gesetze-im-internet.de/bafg_auslzuschlv/" },
+];
+
+/** Freezes what a decision rested on: rule versions and results, inputs, documents, calculation, process steps. */
+export function buildAudit(store: Store, app: Application, now: Date = new Date()): AuditRecord | undefined {
+  const d = app.decision;
+  if (!d) return undefined;
+  const report = checksFor(store, app, now);
+  const failed = new Set(report.findings.map((f) => f.ruleId));
+  const passed = new Set(report.passed.map((p) => p.ruleId));
+  const rules = Object.values(store.rules())
+    .filter((r) => r.live && !r.paused)
+    .map((r) => ({
+      id: r.live!.rule.id,
+      version: r.live!.rule.version,
+      title: r.live!.rule.title,
+      result: failed.has(r.live!.rule.id) ? ("fail" as const) : passed.has(r.live!.rule.id) ? ("pass" as const) : ("n/a" as const),
+      severity: r.live!.rule.severity,
+      approvedBy: r.live!.approvedBy,
+      source: r.live!.rule.source.label,
+    }));
+  const def = store.process(DEFAULT_CATEGORY)?.live;
+  return {
+    recordedAt: now.toISOString(),
+    decidedBy: d.decidedBy,
+    outcome: d.outcome,
+    monthlyAmount: d.monthlyAmount,
+    process: app.flow ? { id: app.flow.processId, name: def?.id === app.flow.processId ? def.name : app.flow.processId, version: app.flow.version } : null,
+    processSteps: (app.flow?.log ?? []).map((l) => ({ at: l.at, step: l.kind, handle: l.handle, note: l.note })),
+    rules,
+    inputs: (report.requirements ?? []).map((r) => ({ ref: r.ref, label: r.label, required: r.required, applies: r.applies, state: r.state })),
+    documents: app.documents.map((doc) => {
+      const conf = Object.values(doc.extraction.confidence ?? {});
+      return {
+        kind: doc.kind,
+        filename: doc.filename,
+        uploadedAt: doc.uploadedAt,
+        uploadedBy: doc.uploadedBy,
+        engine: doc.extraction.engine ?? "builtin",
+        lowestConfidence: conf.length ? Math.min(...conf) : null,
+        flaggedForReview: !!doc.extraction.needsReview,
+        note: doc.extraction.note,
+      };
+    }),
+    calculation: explainEstimate(app, now),
+    sources: SOURCES,
+  };
+}
+
+/** Re-freezes the record after the process has moved on, so the steps after the decision are in it too. */
+export const withAudit = (store: Store, app: Application, now: Date = new Date()): Application =>
+  app.decision ? store.put({ ...app, decision: { ...app.decision, audit: buildAudit(store, app, now) } }) : app;
+
+export const draftFor = (app: Application, outcome: "approved" | "rejected", amount: number, lang: Lang = app.language, now: Date = new Date()) =>
+  draftExplanation(explainEstimate(app, now), outcome, amount, lang);
 
 export function open(store: Store, app: Application, now: Date = new Date()): Application {
   if (app.status !== "submitted") return app;

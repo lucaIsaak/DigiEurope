@@ -41,11 +41,24 @@ The oversight area (`/oversight*`) is limited to accounts flagged `isOversight`,
 
 Staff sessions are kept in the store. Every `/office/*` route needs a session, the process builder and the mutating rule and setup routes need builder access, and `/office/staff*` needs an administrator (`onRequest` hook in `app.ts`). The menu hides what a user cannot use, but the API is what enforces it.
 
+## Explainability of decisions
+
+Every approval or rejection stores two things on `Decision` (`packages/shared/src/types.ts`):
+
+- `note`: the human explanation the student receives. The caseworker writes it or drafts it from the calculation (`draftExplanation`, deterministic, no AI) and edits it. An approval with an empty text gets the drafted one, so no decision goes out without an explanation.
+- `audit` (`AuditRecord`): frozen at the moment of the decision by `buildAudit` in `apps/api/src/cases.ts`, and refreshed once more after the process has run its remaining steps. It holds the calculation step by step (`explainEstimate`), every live rule with its version, result (met, not met, not applicable) and approver, the required inputs and their state, each document with reader, lowest confidence and whether it was flagged for review, the process id, version and run log, the person who decided, and the legal sources. Later rule or process changes do not alter it.
+
+`GET /office/cases/:id/explanation?outcome=&amount=&lang=` returns a draft explanation; `GET /office/cases/:id/audit` returns the record as a JSON download. The office case page shows both under "Decision and explanation"; the student page shows the explanation.
+
+## Rule versions and the two-person rule
+
+Rules live in the store with a lifecycle (`RuleStore`): the live version that runs, an optional draft waiting for approval, a paused flag and the earlier versions, each with author, approver and dates. The web editor writes conditions as lines of "[fact] [operator] [value or other fact]" (`packages/shared/src/conditions.ts`: `toCheck`, `fromCheck`, `factCatalog` built from the templates, `describeRuleCondition` for readable sentences). Saving creates a new draft version; the live version keeps running. Approval needs a different person than the author and passing sample cases. Every built-in rule round-trips through the editor (tested).
+
 ## Templates, proposals and required inputs
 
 `packages/shared/src/templates.ts` lists the built-in `DocumentTemplate`s: title as printed (the reader recognises a form by it), fields with types, signatures, who provides it, and a purpose. The reader (`documents.ts`) is data-driven: it reads built-in templates plus the templates accepted from proposals, so a new form needs no code. How a template is read (method, confidence) is configured separately (`OfficeConfig.extraction`), by the extractor owner.
 
-A process designer files a `TemplateProposal` (draft, submitted). A sample PDF can be attached: `suggestTemplateFromLines` reads "label: value" lines and proposes the fields, types and signatures (a heuristic stand-in for an AI suggestion). A staff member with `canApproveTemplates` (granted by an administrator; administrators can always) accepts it, choosing the reading method and confidence, which creates the template and makes the reader recognise it, or rejects it with a comment. The author can then change and resubmit.
+Templates carry a category (official form, study, work, money and family, insurance, office document). A template must be tested with a sample and confirmed (`OfficeConfig.templateChecks`, by the extractor owner) before a process can require it; changes to how it is read and confirmations are logged per template. A process designer files a `TemplateProposal` (draft, submitted). A sample PDF can be attached: `suggestTemplateFromLines` reads "label: value" lines and proposes the fields, types and signatures (a heuristic stand-in for an AI suggestion). A staff member with `canApproveTemplates` (granted by an administrator; administrators can always) accepts it, choosing the reading method and confidence, which creates the template and makes the reader recognise it, or rejects it with a comment. The author can then change and resubmit.
 
 Every `ProcessDef` has `inputs`: documents (template ids) and information (known application fields or custom questions), each required or optional, with an optional condition (study, internship, tuition fees, or a yes answer to a custom question). `computeRequirements` evaluates them for an application, and `runChecks` reports a missing required input as a blocker (unless a rule already reports that document). Custom answers are stored on the application (`info`). The student's checklist, the readiness check and the oversight comparison all use the same inputs. Harmony is 50 % process, 25 % settings and systems, 25 % required inputs.
 
