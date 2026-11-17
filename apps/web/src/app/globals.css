@@ -19,13 +19,20 @@
   color-scheme: light;
 }
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not([data-theme="light"]) {
     --bg: #0f141c; --surface: #171e29; --ink: #e8ecf2; --muted: #9aa5b6; --line: #2b3545;
     --primary: #6aa4f0; --primary-ink: #0b1220; --primary-soft: #1b2a42;
     --ok: #4cc58b; --ok-soft: #13291f; --warn: #f0b24c; --warn-soft: #2d2412; --bad: #f08a83; --bad-soft: #321a19;
     --office: #0a0e14; --shadow: none; color-scheme: dark;
   }
 }
+:root[data-theme="dark"] {
+  --bg: #0f141c; --surface: #171e29; --ink: #e8ecf2; --muted: #9aa5b6; --line: #2b3545;
+    --primary: #6aa4f0; --primary-ink: #0b1220; --primary-soft: #1b2a42;
+    --ok: #4cc58b; --ok-soft: #13291f; --warn: #f0b24c; --warn-soft: #2d2412; --bad: #f08a83; --bad-soft: #321a19;
+    --office: #0a0e14; --shadow: none; color-scheme: dark;
+}
+:root[data-theme="light"] { color-scheme: light; }
 * { box-sizing: border-box; }
 html { -webkit-text-size-adjust: 100%; }
 body { margin: 0; background: var(--bg); color: var(--ink); font: 16px/1.55 ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", sans-serif; }
@@ -213,7 +220,8 @@ pre.code { background: var(--bg); border: 1px solid var(--line); border-radius: 
 
 /* Process builder workspace */
 :root { --canvas: #f1f3f7; --grid: #cfd5e0; --edge: #8892a6; --line-strong: #c3cad6; }
-@media (prefers-color-scheme: dark) { :root { --canvas: #0c1118; --grid: #232c3a; --edge: #7a8599; --line-strong: #3a4558; } }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --canvas: #0c1118; --grid: #232c3a; --edge: #7a8599; --line-strong: #3a4558; } }
+:root[data-theme="dark"] { --canvas: #0c1118; --grid: #232c3a; --edge: #7a8599; --line-strong: #3a4558; }
 .ws { display: flex; flex-direction: column; height: calc(100vh - 65px); min-height: 560px; background: var(--bg); }
 .ws-toolbar { display: flex; align-items: center; gap: 0.5rem; padding: 0.5rem 0.85rem; background: var(--surface); border-bottom: 1px solid var(--line); flex-wrap: nowrap; }
 .ws-name { font: 600 1rem/1.2 inherit; border: 1px solid transparent; background: transparent; padding: 0.35rem 0.5rem; border-radius: 8px; min-width: 120px; width: 30ch; max-width: 36vw; }

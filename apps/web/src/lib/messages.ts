@@ -17,6 +17,8 @@ const raw = {
   "office.label": ["Sachbearbeitung", "Caseworker area"],
   "footer.note": ["Fiktives Studierendenwerk für ein Studienprojekt. Keine echte Behörde, keine echten Daten.", "Fictional student services office for a class project. Not a real authority, no real data."],
   "footer.samples": ["Beispieldokumente", "Sample documents"],
+  "theme.light": ["Helles Design", "Light mode"],
+  "theme.dark": ["Dunkles Design", "Dark mode"],
   "lang.label": ["Sprache", "Language"],
 
   // Common

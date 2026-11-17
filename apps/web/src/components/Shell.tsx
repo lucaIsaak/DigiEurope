@@ -2,11 +2,12 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { LogOut } from "lucide-react";
+import { LogOut, Moon, Sun } from "lucide-react";
 import { useEffect, useRef, type ReactNode } from "react";
 import { api } from "@/lib/api";
 import { useI18n } from "@/lib/i18n";
 import { useStaff } from "@/lib/staff";
+import { useTheme } from "@/lib/theme";
 import { Spinner } from "./ui";
 import type { MessageKey } from "@/lib/messages";
 
@@ -32,6 +33,7 @@ export function Shell({ children }: { children: ReactNode }) {
   const router = useRouter();
   const office = path.startsWith("/office");
   const { staff, loading, logout, canBuild } = useStaff();
+  const { theme, toggle } = useTheme();
   const onLogin = path === "/office/login";
   const bleed = path === "/office/builder";
   const nav: [string, MessageKey][] = office
@@ -93,6 +95,9 @@ export function Shell({ children }: { children: ReactNode }) {
               )}
             </span>
           )}
+          <button type="button" className="icon-button theme-toggle" onClick={toggle} title={theme === "dark" ? t("theme.light") : t("theme.dark")} aria-label={theme === "dark" ? t("theme.light") : t("theme.dark")}>
+            {theme === "dark" ? <Sun size={17} /> : <Moon size={17} />}
+          </button>
           <div className="lang-switch" role="group" aria-label={t("lang.label")}>
             {(["de", "en"] as const).map((l) => (
               <button key={l} type="button" aria-pressed={lang === l} onClick={() => setLang(l)}>

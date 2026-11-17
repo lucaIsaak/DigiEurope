@@ -70,6 +70,7 @@ import { ApiError, api, type TestRunResult } from "@/lib/api";
 import { useI18n } from "@/lib/i18n";
 import type { MessageKey } from "@/lib/messages";
 import { useStaff } from "@/lib/staff";
+import { useTheme } from "@/lib/theme";
 
 type StepData = { kind: NodeKind; config: Record<string, ConfigValue>; state?: "visited" | "issue"; issue?: string };
 type StepNode = Node<StepData, "step">;
@@ -189,6 +190,7 @@ interface Snapshot { nodes: FlowNode[]; edges: FlowEdge[] }
 function Builder() {
   const { t, bi, lang, tk, dateTime } = useI18n();
   const rf = useReactFlow();
+  const { theme } = useTheme();
   const [nodes, setNodes, onNodesChange] = useNodesState<StepNode>([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
   const [name, setName] = useState("");
@@ -514,7 +516,7 @@ function Builder() {
             fitViewOptions={{ padding: 0.12 }}
             minZoom={0.3}
             maxZoom={1.6}
-            colorMode="system"
+            colorMode={theme}
             deleteKeyCode={["Backspace", "Delete"]}
             proOptions={{ hideAttribution: true }}
           >

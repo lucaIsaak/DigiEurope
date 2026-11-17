@@ -57,6 +57,8 @@ The caseworker always decides. Checks are deterministic code; AI only reads docu
 
 [docs/demo-script.md](docs/demo-script.md) is a 5-minute click-by-click script. Sample documents with typical mistakes (missing parent signature, missing host-university confirmation, unsigned internship contract) and the corrected versions are at `/samples`, linked in the page footer.
 
+Light and dark mode: the toggle (sun/moon) is in the header. It follows the system setting until you choose, then remembers the choice.
+
 Hidden demo helpers: press © in the footer five times (or Shift+Alt+R) to reset the demo; Shift+Alt+D on the apply page fills in the sample student.
 
 ## Structure
