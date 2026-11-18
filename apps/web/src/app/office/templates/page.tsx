@@ -46,19 +46,24 @@ const TYPES = ["text", "number", "date", "yesno"] as const;
 const EMPTY: ProposalBody = { name: "", formblatt: "", title: "", purpose: "", providedBy: "student", category: "official_form", fields: [], signatures: [] };
 
 /** What the template actually contains: its real field names and signatures (no made-up form picture). */
-function Contents({ tpl }: { tpl: LibraryTemplate }) {
+/** Labels in the language of the screen, when the template has an English version. */
+const fieldLabel = (tpl: { en?: { fields: Record<string, string> } }, key: string, label: string, lang: string) => (lang === "en" ? tpl.en?.fields[key] ?? label : label);
+const sigLabel = (tpl: { en?: { signatures: Record<string, string> } }, key: string, label: string, lang: string) => (lang === "en" ? tpl.en?.signatures[key] ?? label : label);
+const printedTitle = (tpl: { title: string; en?: { title: string } }, lang: string) => (lang === "en" ? tpl.en?.title ?? tpl.title : tpl.title);
+
+function Contents({ tpl, lang }: { tpl: LibraryTemplate; lang: string }) {
   const shown = tpl.fields.slice(0, 5);
   const more = tpl.fields.length - shown.length;
   return (
     <span className="contents">
       <span className="contents-n"><b>{tpl.fields.length}</b> fields{tpl.signatures.length > 0 ? ` · ${tpl.signatures.length} signature${tpl.signatures.length > 1 ? "s" : ""}` : ""}</span>
-      <span className="contents-l">{shown.map((f) => <span key={f.key}>{f.label}</span>)}{more > 0 && <span className="more">+{more} more</span>}</span>
+      <span className="contents-l">{shown.map((f) => <span key={f.key}>{fieldLabel(tpl, f.key, f.label, lang)}</span>)}{more > 0 && <span className="more">+{more} more</span>}</span>
     </span>
   );
 }
 
 export default function Templates() {
-  const { t, tk, bi, date, dateTime } = useI18n();
+  const { t, tk, bi, date, dateTime, lang } = useI18n();
   const { staff } = useStaff();
   const todo = useTodo();
   const [lib, setLib] = useState<TemplateLibrary | null>(null);
@@ -206,7 +211,7 @@ function TemplateDrawer(props: {
   dateTime: (iso?: string) => string;
   tk: (k: string, p?: Record<string, string | number>) => string;
 }) {
-  const { t, bi } = useI18n();
+  const { t, bi, lang } = useI18n();
   const { tpl, lib, run } = props;
   const [tab, setTab] = useState<"overview" | "reading" | "check" | "history">(tpl.check ? "overview" : "check");
   const [result, setResult] = useState<{ matches: boolean; kind: string; fields: Record<string, string>; confidence?: Record<string, number> } | null>(null);
@@ -222,11 +227,11 @@ function TemplateDrawer(props: {
     setBusy(false);
   }
   async function loadSample() {
-    const list = await api.samples();
+    const list = await api.samples(lang);
     const all = list.sets.flatMap((s) => [...s.docs.map((d) => ({ set: s.id, folder: "docs" as "docs" | "extras", ...d })), ...(s.extras ?? []).map((d) => ({ set: s.id, folder: "extras" as "docs" | "extras", ...d }))]);
     // A sample of exactly this template; the decision letter and accepted proposals have their own sample files.
     const hit = all.find((d) => d.kind === tpl.id);
-    const url = hit ? sampleUrl(hit.set, hit.folder as "docs", hit.name) : tpl.id === "decision_letter" ? sampleUrl("letter", "docs", list.letter) : sampleUrl("proposal", "docs", list.proposal);
+    const url = hit ? sampleUrl(hit.set, hit.folder as "docs", hit.name, lang) : tpl.id === "decision_letter" ? sampleUrl("letter", "docs", list.letter) : sampleUrl("proposal", "docs", list.proposal, lang);
     const blob = await (await fetch(url)).blob();
     await test(new File([blob], hit?.name ?? "sample.pdf", { type: "application/pdf" }));
   }
@@ -262,18 +267,18 @@ function TemplateDrawer(props: {
           {tab === "overview" && (
             <>
               <p style={{ margin: 0 }}>{bi(tpl.purpose)}</p>
-              <p className="small muted" style={{ margin: 0 }}>{t("tpl.printedTitle")}: <em>{tpl.title}</em> · {t("t2.from")}: {t(`tpl.by.${tpl.providedBy}` as MessageKey)}</p>
+              <p className="small muted" style={{ margin: 0 }}>{t("tpl.printedTitle")}: <em>{printedTitle(tpl, lang)}</em> · {t("t2.from")}: {t(`tpl.by.${tpl.providedBy}` as MessageKey)}</p>
               <div>
                 <h3>{t("t2.fields")} · {tpl.fields.length}</h3>
                 <div className="formview">
-                  <div className="formview-title">{tpl.title}</div>
+                  <div className="formview-title">{printedTitle(tpl, lang)}</div>
                   {tpl.fields.map((f) => (
                     <div className="fv-field" key={f.key}>
-                      <span className="fv-label">{f.label}{f.required && <b title={t("t2.required")}> *</b>}</span>
+                      <span className="fv-label">{fieldLabel(tpl, f.key, f.label, lang)}{f.required && <b title={t("t2.required")}> *</b>}</span>
                       <span className="fv-input">{t(`prop.type.${f.type}` as MessageKey)}</span>
                     </div>
                   ))}
-                  {tpl.signatures.map((sg) => <div className="fv-sig" key={sg.key}><span>{sg.label}</span></div>)}
+                  {tpl.signatures.map((sg) => <div className="fv-sig" key={sg.key}><span>{sigLabel(tpl, sg.key, sg.label, lang)}</span></div>)}
                 </div>
               </div>
             </>
@@ -316,7 +321,7 @@ function TemplateDrawer(props: {
                         <tbody>
                           {tpl.fields.map((f) => (
                             <tr key={f.key}>
-                              <td>{f.label}<br /><strong style={{ fontWeight: 600 }}>{result.fields[f.key] || "–"}</strong></td>
+                              <td>{fieldLabel(tpl, f.key, f.label, lang)}<br /><strong style={{ fontWeight: 600 }}>{result.fields[f.key] || "–"}</strong></td>
                               <td>{result.confidence?.[f.key] !== undefined ? <span className={`conf${(result.confidence[f.key] ?? 0) < tpl.extraction.minConfidence ? " low" : ""}`}>{Math.round((result.confidence[f.key] ?? 0) * 100)} %</span> : "–"}</td>
                             </tr>
                           ))}

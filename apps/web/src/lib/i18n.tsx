@@ -29,13 +29,12 @@ function interpolate(s: string, params?: Params) {
 }
 
 export function LanguageProvider({ children }: { children: ReactNode }) {
-  const [lang, setLangState] = useState<Lang>("de");
+  const [lang, setLangState] = useState<Lang>("en");
 
   useEffect(() => {
     try {
       const stored = localStorage.getItem(STORAGE_KEY);
       if (stored === "de" || stored === "en") setLangState(stored);
-      else if (!navigator.language.toLowerCase().startsWith("de")) setLangState("en");
     } catch {
       /* storage unavailable */
     }

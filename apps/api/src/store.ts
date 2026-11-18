@@ -6,6 +6,7 @@ import {
   defaultInputs,
   upgradeQuestionPath,
   upgradeAssignment,
+  upgradeEnglish,
   defaultAssignment,
   assignCaseworker,
   type OfficeAssignment,
@@ -26,14 +27,14 @@ import {
 } from "@digieurope/shared";
 
 export const DEFAULT_STAFF: StaffMember[] = [
-  { id: "s-beispiel", name: "Frau Beispiel", title: "Sachbearbeitung Ausland", isAdmin: false, canBuild: false, isCaseworker: true },
-  { id: "s-kaya", name: "Herr Kaya", title: "Sachbearbeitung Ausland", isAdmin: false, canBuild: false, isCaseworker: true },
-  { id: "s-demir", name: "Frau Demir", title: "Sachbearbeitung Ausland", isAdmin: false, canBuild: false, isCaseworker: true },
-  { id: "s-vogel", name: "Herr Vogel", title: "Sachbearbeitung Ausland", isAdmin: false, canBuild: false, isCaseworker: true },
-  { id: "s-lindner", name: "Frau Lindner", title: "Prozessverantwortliche", isAdmin: false, canBuild: true },
-  { id: "s-obermeier", name: "Herr Obermeier", title: "Amtsleitung (Administrator)", isAdmin: true, canBuild: true },
-  { id: "s-richter", name: "Frau Richter", title: "Verantwortliche für Extraktoren und Vorlagen", isAdmin: false, canBuild: false, canApproveTemplates: true },
-  { id: "s-weiss", name: "Frau Weiß", title: "Aufsicht Bundesebene (alle Ämter)", isAdmin: false, canBuild: false, isOversight: true },
+  { id: "s-beispiel", name: "Frau Beispiel", title: "Caseworker, abroad", isAdmin: false, canBuild: false, isCaseworker: true },
+  { id: "s-kaya", name: "Herr Kaya", title: "Caseworker, abroad", isAdmin: false, canBuild: false, isCaseworker: true },
+  { id: "s-demir", name: "Frau Demir", title: "Caseworker, abroad", isAdmin: false, canBuild: false, isCaseworker: true },
+  { id: "s-vogel", name: "Herr Vogel", title: "Caseworker, abroad", isAdmin: false, canBuild: false, isCaseworker: true },
+  { id: "s-lindner", name: "Frau Lindner", title: "Process owner", isAdmin: false, canBuild: true },
+  { id: "s-obermeier", name: "Herr Obermeier", title: "Head of office (administrator)", isAdmin: true, canBuild: true, isCaseworker: true },
+  { id: "s-richter", name: "Frau Richter", title: "Owner of extractors and templates", isAdmin: false, canBuild: false, canApproveTemplates: true },
+  { id: "s-weiss", name: "Frau Weiß", title: "Federal oversight (all offices)", isAdmin: false, canBuild: false, isOversight: true },
 ];
 
 /** One version of a rule: who wrote it, who approved it. */
@@ -59,7 +60,7 @@ export function initialRules(states: Record<string, RuleState> = defaultRuleStat
     const approved = states[r.id]?.status === "approved";
     out[r.id] = r.draftedByAi && !approved
       ? { live: null, paused: false, draft: { rule: r, author: "KI-Assistent (angefragt von Frau Lindner)", createdAt: "2026-11-10T09:12:00.000Z" }, history: [] }
-      : { live: { rule: r, author: "Fachbereich Ausland (Muster)", createdAt: "2026-08-20T10:00:00.000Z", approvedBy: states[r.id]?.approvedBy ?? "Herr Obermeier", approvedAt: states[r.id]?.approvedAt ?? "2026-09-01T09:00:00.000Z" }, paused: !approved && !r.draftedByAi, history: [] };
+      : { live: { rule: r, author: "Abroad unit (sample)", createdAt: "2026-08-20T10:00:00.000Z", approvedBy: states[r.id]?.approvedBy ?? "Herr Obermeier", approvedAt: states[r.id]?.approvedAt ?? "2026-09-01T09:00:00.000Z" }, paused: !approved && !r.draftedByAi, history: [] };
   }
   return out;
 }
@@ -164,7 +165,9 @@ export class Store {
       const old = saved.processes as unknown as { live?: ProcessDef };
       const processes = old && "live" in old ? { [DEFAULT_CATEGORY]: old as unknown as ProcessStore } : saved.processes;
       for (const p of Object.values(processes)) for (const d of [p.live, p.draft, ...p.history]) if (d) { if (!d.catalogId) d.catalogId = DEFAULT_CATEGORY; if (!d.inputs) d.inputs = defaultInputs(); }
-      for (const p of Object.values(processes)) { if (p.live) p.live = upgradeAssignment(upgradeQuestionPath(p.live)); if (p.draft) p.draft = upgradeAssignment(upgradeQuestionPath(p.draft)); }
+      for (const p of Object.values(processes)) { if (p.live) p.live = upgradeEnglish(upgradeAssignment(upgradeQuestionPath(p.live))); if (p.draft) p.draft = upgradeEnglish(upgradeAssignment(upgradeQuestionPath(p.draft))); }
+      const OLD_TITLES: Record<string, string> = { "Sachbearbeitung Ausland": "Caseworker, abroad", "Prozessverantwortliche": "Process owner", "Amtsleitung (Administrator)": "Head of office (administrator)", "Verantwortliche für Extraktoren und Vorlagen": "Owner of extractors and templates", "Aufsicht Bundesebene (alle Ämter)": "Federal oversight (all offices)", Sachbearbeitung: "Caseworker" };
+      saved.staff = saved.staff.map((m) => ({ ...m, title: OLD_TITLES[m.title] ?? m.title }));
       const staff = [...saved.staff.map((m) => (m.isCaseworker === undefined ? { ...m, isCaseworker: DEFAULT_STAFF.find((d) => d.id === m.id)?.isCaseworker } : m)), ...DEFAULT_STAFF.filter((d) => !saved.staff.some((m) => m.id === d.id))];
       const rules = saved.rules ?? initialRules(saved.ruleStates);
       this.data = { ...fresh(), ...saved, staff, processes, rules, config: { ...defaultConfig(), ...saved.config } };

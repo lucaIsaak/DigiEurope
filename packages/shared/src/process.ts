@@ -191,7 +191,9 @@ export const NODE_CATALOG: Record<NodeKind, NodeSpec> = {
     title: { de: "Felder prüfen lassen", en: "Review fields" },
     description: { de: "Eine Person prüft und korrigiert die unsicher gelesenen Felder. Der Ablauf wartet.", en: "A person checks and corrects the fields that were read with low confidence. The process waits." },
     outputs: [{ id: "confirmed", label: { de: "bestätigt", en: "confirmed" } }, { id: "info", label: { de: "Rückfrage", en: "question" } }],
-    fields: [{ key: "instruction", label: { de: "Hinweis für die Sachbearbeitung", en: "Note for the caseworker" }, type: "textarea", default: "Unsicher gelesene Felder mit dem Dokument vergleichen." }],
+    fields: [{ key: "instruction", label: { de: "Hinweis für die Sachbearbeitung", en: "Note for the caseworker" }, type: "textarea", default: "Unsicher gelesene Felder mit dem Dokument vergleichen." },
+      { key: "instruction_en", label: { de: "Hinweis (Englisch)", en: "Note (English)" }, type: "textarea", default: "Compare the fields read with low confidence against the document." },
+    ],
   },
   condition: {
     kind: "condition", category: "decide",
@@ -209,7 +211,10 @@ export const NODE_CATALOG: Record<NodeKind, NodeSpec> = {
     title: { de: "Sachbearbeitung entscheidet", en: "Caseworker decides" },
     description: { de: "Der Ablauf wartet auf die Entscheidung einer Person. Die Entscheidung trifft immer ein Mensch.", en: "The process waits for a person's decision. A human always decides." },
     outputs: [{ id: "approved", label: { de: "bewilligt", en: "approved" } }, { id: "rejected", label: { de: "abgelehnt", en: "rejected" } }, { id: "info", label: { de: "Rückfrage", en: "question" } }],
-    fields: [{ key: "instruction", label: { de: "Hinweis für die Sachbearbeitung", en: "Note for the caseworker" }, type: "textarea", default: "" }],
+    fields: [
+      { key: "instruction", label: { de: "Hinweis für die Sachbearbeitung", en: "Note for the caseworker" }, type: "textarea", default: "" },
+      { key: "instruction_en", label: { de: "Hinweis (Englisch)", en: "Note (English)" }, type: "textarea", default: "" },
+    ],
   },
   assign_team: {
     kind: "assign_team", category: "route",
@@ -247,6 +252,7 @@ export const NODE_CATALOG: Record<NodeKind, NodeSpec> = {
     fields: [
       { key: "sending", label: { de: "Wer schreibt die Nachricht", en: "Who writes the message" }, type: "select", default: "auto", options: [opt("auto", "Automatisch (KI-Entwurf)", "Automatically (AI draft)"), opt("caseworker", "Sachbearbeitung prüft und sendet", "Caseworker checks and sends")] },
       { key: "fallback", label: { de: "Text, falls kein KI-Entwurf", en: "Text if there is no AI draft" }, type: "textarea", default: "Bitte laden Sie die fehlenden Unterlagen hoch." },
+      { key: "fallback_en", label: { de: "Text, falls kein KI-Entwurf (Englisch)", en: "Text if there is no AI draft (English)" }, type: "textarea", default: "Please upload the missing documents." },
     ],
   },
   send_notification: {
@@ -258,6 +264,8 @@ export const NODE_CATALOG: Record<NodeKind, NodeSpec> = {
       { key: "to", label: { de: "An", en: "To" }, type: "select", default: "student", options: [opt("student", "Studierende", "Student"), opt("parents", "Eltern", "Parents"), opt("office", "Amt (intern)", "Office (internal)")] },
       { key: "subject", label: { de: "Betreff", en: "Subject" }, type: "text", default: "Neuigkeiten zu Ihrem Antrag {reference}" },
       { key: "body", label: { de: "Text", en: "Text" }, type: "textarea", default: "Guten Tag {name}, es gibt Neuigkeiten zu Ihrem Antrag." },
+      { key: "subject_en", label: { de: "Betreff (Englisch)", en: "Subject (English)" }, type: "text", default: "News about your application {reference}" },
+      { key: "body_en", label: { de: "Text (Englisch)", en: "Text (English)" }, type: "textarea", default: "Hello {name}, there is news about your application." },
     ],
   },
   connector: {
@@ -397,6 +405,38 @@ export function upgradeAssignment(def: ProcessDef): ProcessDef {
   return { ...def, nodes, edges };
 }
 
+const EN_OF: Record<string, string> = {
+  "Entscheidung zu Ihrem Antrag {reference}": "Decision on your application {reference}",
+  "Guten Tag {name}, Ihr Antrag wurde abgelehnt. Die Begründung steht im Bescheid.": "Hello {name}, your application was not approved. The reasons are in the decision notice.",
+  "Ihr Antrag {reference} wurde bewilligt": "Your application {reference} has been approved",
+  "Guten Tag {name}, Ihr Antrag wurde bewilligt: {amount} pro Monat. Der Bescheid folgt.": "Hello {name}, your application has been approved: {amount} per month. The decision notice follows.",
+  "Unsicher gelesene Felder mit dem Dokument vergleichen.": "Compare the fields read with low confidence against the document.",
+  "Inhaltlich prüfen und entscheiden.": "Review the content and decide.",
+  "Bitte laden Sie die fehlenden Unterlagen hoch.": "Please upload the missing documents.",
+  "Neuigkeiten zu Ihrem Antrag {reference}": "News about your application {reference}",
+  "Guten Tag {name}, es gibt Neuigkeiten zu Ihrem Antrag.": "Hello {name}, there is news about your application.",
+};
+
+/** Older processes only had German texts in their steps. Adds the English twin where the German text is one of the standard ones, and the English name of the standard process. */
+export function upgradeEnglish(def: ProcessDef): ProcessDef {
+  let changed = false;
+  const nodes = def.nodes.map((n) => {
+    const config = { ...n.config };
+    for (const key of ["subject", "body", "instruction", "fallback"]) {
+      const de = config[key];
+      if (typeof de === "string" && EN_OF[de] && (config[`${key}_en`] === undefined || config[`${key}_en`] === "")) {
+        config[`${key}_en`] = EN_OF[de]!;
+        changed = true;
+      }
+    }
+    return changed && n.config !== config ? { ...n, config } : n;
+  });
+  const renamed = def.name === "Auslands-BAföG: Standardablauf" ? "Abroad BAföG: standard process" : def.name;
+  const by = def.updatedBy === "Fachbereich Ausland (Muster)" ? "Abroad unit (sample)" : def.updatedBy;
+  if (!changed && renamed === def.name && by === def.updatedBy) return def;
+  return { ...def, nodes, name: renamed, updatedBy: by };
+}
+
 /** The standard process an office starts with. It reproduces the fixed workflow of the first version. */
 export function defaultProcess(now = "2026-09-01T09:00:00.000Z"): ProcessDef {
   const n = (id: string, kind: NodeKind, x: number, y: number, config: Record<string, ConfigValue> = {}): FlowNode => ({ id, kind, position: { x, y }, config: defaultConfig(kind, config) });
@@ -416,12 +456,12 @@ export function defaultProcess(now = "2026-09-01T09:00:00.000Z"): ProcessDef {
     n("ask", "request_documents", 20, 400),
     n("end-incomplete", "end", 20, 540),
     // complete branch
-    n("human", "human_task", 480, 390, { instruction: "Inhaltlich prüfen und entscheiden." }),
+    n("human", "human_task", 480, 390, { instruction: "Inhaltlich prüfen und entscheiden.", instruction_en: "Review the content and decide." }),
     n("end-info", "end", 300, 560),
-    n("notify-no", "send_notification", 560, 560, { to: "student", subject: "Entscheidung zu Ihrem Antrag {reference}", body: "Guten Tag {name}, Ihr Antrag wurde abgelehnt. Die Begründung steht im Bescheid." }),
+    n("notify-no", "send_notification", 560, 560, { to: "student", subject: "Entscheidung zu Ihrem Antrag {reference}", body: "Guten Tag {name}, Ihr Antrag wurde abgelehnt. Die Begründung steht im Bescheid.", subject_en: "Decision on your application {reference}", body_en: "Hello {name}, your application was not approved. The reasons are in the decision notice." }),
     n("end-no", "end", 560, 720),
     n("case", "connector", 820, 470, { system: "payment", action: "create_payment_order" }),
-    n("notify-ok", "send_notification", 820, 590, { to: "student", subject: "Ihr Antrag {reference} wurde bewilligt", body: "Guten Tag {name}, Ihr Antrag wurde bewilligt: {amount} pro Monat. Der Bescheid folgt." }),
+    n("notify-ok", "send_notification", 820, 590, { to: "student", subject: "Ihr Antrag {reference} wurde bewilligt", body: "Guten Tag {name}, Ihr Antrag wurde bewilligt: {amount} pro Monat. Der Bescheid folgt.", subject_en: "Your application {reference} has been approved", body_en: "Hello {name}, your application has been approved: {amount} per month. The decision notice follows." }),
     n("end-ok", "end", 820, 750),
   ];
   const edges: FlowEdge[] = [
@@ -432,7 +472,7 @@ export function defaultProcess(now = "2026-09-01T09:00:00.000Z"): ProcessDef {
     e("human", "rejected", "notify-no"), e("notify-no", "out", "end-no"),
     e("human", "info", "end-info"),
   ];
-  return { id: "bafoeg-ausland", catalogId: "bafoeg.abroad", name: "Auslands-BAföG: Standardablauf", version: 1, updatedAt: now, updatedBy: "Fachbereich Ausland (Muster)", inputs: defaultInputs(), nodes, edges };
+  return { id: "bafoeg-ausland", catalogId: "bafoeg.abroad", name: "Abroad BAföG: standard process", version: 1, updatedAt: now, updatedBy: "Abroad unit (sample)", inputs: defaultInputs(), nodes, edges };
 }
 
 /**
@@ -450,5 +490,5 @@ export function referenceProcess(): ProcessDef {
   notifyOk.target = "portal";
   edges.push({ id: "portal:out", source: "portal", sourceHandle: "out", target: "archive" }, { id: "archive:out", source: "archive", sourceHandle: "out", target: "end-ok" });
   nodes.find((x) => x.id === "end-ok")!.position = { x: 820, y: 920 };
-  return { ...base, id: "bafoeg-abroad-reference", name: "Referenzmodell: Auslands-BAföG (Antrag)", version: 1, nodes, edges, updatedBy: "Aufsicht Bundesebene (Muster)" };
+  return { ...base, id: "bafoeg-abroad-reference", name: "Reference model: BAföG abroad (application)", version: 1, nodes, edges, updatedBy: "Federal oversight (sample)" };
 }

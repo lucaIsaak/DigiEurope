@@ -233,7 +233,7 @@ describe("process builder and engine", () => {
     expect(submitted.flow.waiting).toBe("human");
     const done = (await app.inject({ method: "POST", url: `/office/cases/${id}/actions`, payload: { action: "approve", amount: 900 } })).json();
     expect(done.integrations[0].system).toBe("payment");
-    expect(done.outbox.some((m: { subject: string }) => m.subject.includes("bewilligt"))).toBe(true);
+    expect(done.outbox.some((m: { subject: string }) => m.subject.includes("approved"))).toBe(true);
     expect(done.flow.finished).toBe(true);
   });
 
@@ -703,5 +703,79 @@ describe("adding people", () => {
     expect((await app.inject({ method: "PUT", url: `/office/staff/${added.id}`, payload: { isCaseworker: false } })).statusCode).toBe(409);
     store.login("s-kaya", "cw");
     expect((await app.inject({ method: "POST", url: "/office/staff", payload: { name: "X" }, headers: { "x-staff-token": "cw" } })).statusCode).toBe(403);
+  });
+});
+
+describe("demo: the administrator takes the unclear case", () => {
+  it("after splitting N–R to the administrator, Paul Neumann's case is his and he can finish it", async () => {
+    const { app } = setup();
+    const table = (await app.inject({ method: "GET", url: "/office/assignment" })).json();
+    expect(table.caseworkers.some((m: { id: string }) => m.id === "s-obermeier")).toBe(true);
+    const ranges = [{ from: "A", to: "F", staffId: "s-beispiel" }, { from: "G", to: "L", staffId: "s-kaya" }, { from: "M", to: "M", staffId: "s-demir" }, { from: "N", to: "R", staffId: "s-obermeier" }, { from: "S", to: "Z", staffId: "s-vogel" }];
+    expect((await app.inject({ method: "PUT", url: "/office/assignment", payload: { assignment: { ...table.assignment, ranges } } })).statusCode).toBe(200);
+    const { id, person } = await create(app, "paul");
+    for (const d of sampleDocuments(person, ["unclear_income"])) await upload(app, `/applications/${id}/documents`, d.filename, d.content);
+    const submitted = (await app.inject({ method: "POST", url: `/applications/${id}/submit` })).json();
+    expect(submitted.assignedTo.id).toBe("s-obermeier");
+    expect(submitted.flow.waiting).toBe("review");
+    const doc = submitted.documents.find((d: { extraction: { needsReview?: boolean } }) => d.extraction.needsReview);
+    const done = (await app.inject({ method: "POST", url: `/office/cases/${id}/review`, payload: { docId: doc.id, fields: { sum_of_income: "54000" } } })).json();
+    expect(done.flow.waiting).toBe("human");
+    const approved = (await app.inject({ method: "POST", url: `/office/cases/${id}/actions`, payload: { action: "approve", amount: done.estimate.monthly } })).json();
+    expect(approved.status).toBe("approved");
+    expect(approved.outbox.some((m: { to: string; subject: string }) => m.to === "student" && /approved/.test(m.subject))).toBe(true);
+  });
+});
+
+describe("English documents", () => {
+  it("are read like the German ones, with the same fields and the same findings", async () => {
+    for (const key of ["mira", "jonas", "paul"]) {
+      const person = getPerson(key, NOW);
+      const set = SAMPLE_SETS.find((x) => x.person === key)!;
+      const de = sampleDocuments(person, set.defects, "de");
+      const en = sampleDocuments(person, set.defects, "en");
+      expect(en.map((d) => d.kind)).toEqual(de.map((d) => d.kind));
+      for (let i = 0; i < de.length; i++) {
+        const a = extractDocument(de[i]!.content, "application/pdf");
+        const b = extractDocument(en[i]!.content, "application/pdf");
+        expect(b.kind).toBe(a.kind);
+        // Free text such as "Praktikum" / "Internship" differs; everything the rules read is the same.
+        const same = (f: Record<string, string>) => Object.fromEntries(Object.entries(f).filter(([k]) => k !== "stay_type" && k !== "term" && !(k === "sum_of_income" && set.defects.includes("unclear_income"))));
+        expect(same(b.extraction.fields)).toEqual(same(a.extraction.fields));
+        expect(b.extraction.signatures).toEqual(a.extraction.signatures);
+        expect(Boolean(b.extraction.confidence && Object.values(b.extraction.confidence).some((c) => c < 0.8))).toBe(Boolean(a.extraction.confidence && Object.values(a.extraction.confidence).some((c) => c < 0.8)));
+      }
+    }
+    expect(sampleDocuments(getPerson("paul", NOW), [], "en").find((d) => d.kind === "internship_contract")!.filename).toBe("Internship_contract.pdf");
+  });
+
+  it("an English application with English documents goes through the process as before", async () => {
+    const { app } = setup();
+    const { id, person } = await create(app, "paul");
+    for (const d of sampleDocuments(person, ["unclear_income"], "en")) await upload(app, `/applications/${id}/documents`, d.filename, d.content);
+    const submitted = (await app.inject({ method: "POST", url: `/applications/${id}/submit` })).json();
+    expect(submitted.flow.waiting).toBe("review");
+    expect(submitted.report.blockers).toBe(0);
+    const samples = (await app.inject({ method: "GET", url: "/samples?lang=en" })).json();
+    expect(samples.sets.find((s: { id: string }) => s.id === "paul").docs.some((d: { name: string }) => d.name === "Income_tax_assessment.pdf")).toBe(true);
+    const file = await app.inject({ method: "GET", url: "/samples/files/paul/docs/Income_tax_assessment.pdf?lang=en" });
+    expect(file.statusCode).toBe(200);
+  });
+});
+
+describe("texts in the language of the applicant", () => {
+  it("an English applicant gets the English approval message, a German one the German message", async () => {
+    for (const [language, word] of [["en", "approved"], ["de", "bewilligt"]] as const) {
+      const { app } = setup();
+      const p = getPerson("mira", NOW);
+      const created = (await app.inject({ method: "POST", url: "/applications", payload: { student: p.student, stay: p.stay, language } })).json();
+      for (const d of sampleDocuments(p, [], language)) await upload(app, `/applications/${created.id}/documents`, d.filename, d.content);
+      await app.inject({ method: "POST", url: `/applications/${created.id}/submit` });
+      const c = (await app.inject({ method: "GET", url: `/office/cases/${created.id}` })).json();
+      const done = (await app.inject({ method: "POST", url: `/office/cases/${created.id}/actions`, payload: { action: "approve", amount: c.estimate.monthly } })).json();
+      const mail = done.outbox.find((m: { to: string }) => m.to === "student");
+      expect(mail.subject).toContain(word);
+      expect(mail.body).toContain(language === "en" ? "Hello" : "Guten Tag");
+    }
   });
 });

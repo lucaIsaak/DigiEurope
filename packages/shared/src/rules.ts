@@ -454,7 +454,7 @@ export function defaultRuleStates(): Record<string, RuleState> {
   for (const r of RULES) {
     out[r.id] = r.draftedByAi
       ? { status: "draft" }
-      : { status: "approved", approvedBy: "Fachbereich Ausland (Muster)", approvedAt: "2026-09-01T09:00:00.000Z" };
+      : { status: "approved", approvedBy: "Abroad unit (sample)", approvedAt: "2026-09-01T09:00:00.000Z" };
   }
   return out;
 }

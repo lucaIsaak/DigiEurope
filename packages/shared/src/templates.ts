@@ -8,7 +8,7 @@ const b = (de: string, en: string): Bilingual => ({ de, en });
  * The templates the prototype can read out of the box. Field lists of Formblatt 6 and 8 are simplified examples,
  * not the official layouts. How a template is read (method, confidence) is decided separately by the extractor owner.
  */
-export const BUILTIN_TEMPLATES: DocumentTemplate[] = [
+const GERMAN_TEMPLATES: DocumentTemplate[] = [
   {
     id: "application_form", category: "official_form", formblatt: "Formblatt 1", source: "builtin", providedBy: "student",
     name: b("Antrag (Formblatt 1)", "Application (Formblatt 1)"),
@@ -112,11 +112,32 @@ export const BUILTIN_TEMPLATES: DocumentTemplate[] = [
   },
 ];
 
+
+type En = NonNullable<DocumentTemplate["en"]>;
+const e = (title: string, fields: Record<string, string>, signatures: Record<string, string> = {}): En => ({ title, fields, signatures });
+const APPLICANT = "Applicant's signature";
+/** English versions of the forms, so the demo can be shown with English documents. */
+const ENGLISH: Record<string, En> = {
+  application_form: e("Application for Training Funding Abroad (Formblatt 1)", { name: "Name of applicant", birth_date: "Date of birth", university: "German university", destination: "Destination country", stay_type: "Type of stay", period_from: "Stay from", period_to: "Stay until" }, { student: APPLICANT }),
+  fb06: e("Formblatt 6: Supplement to the application for training abroad", { name: "Name of applicant", stay_type: "Type of stay", abroad_institution: "Institution abroad", country: "Country", period_from: "Start", period_to: "End", credit_recognition: "Credit recognition planned at home", tuition_fees: "Tuition fees (EUR)" }, { student: APPLICANT }),
+  fb08: e("Formblatt 8: Application for advance payment of training funding", { name: "Name of applicant", parent_name: "Name of parent", reason: "Reason for non-payment", refused_since: "Payment refused since", parents_asked: "Parents were asked to pay" }, { student: APPLICANT }),
+  enrollment_cert: e("Certificate of Enrolment (§ 9 BAföG)", { name: "Name", university: "University", term: "Semester", course: "Course of study" }),
+  host_confirmation: e("Confirmation from the Host University", { name: "Name of student", host_institution: "Host university", country: "Country", period_from: "Study period from", period_to: "Study period until" }, { host: "Signature and stamp of host university" }),
+  internship_contract: e("Internship Contract", { name: "Intern", company: "Host organisation", country: "Country", period_from: "Start", period_to: "End" }, { intern: "Intern's signature", employer: "Host organisation's signature" }),
+  internship_uni_confirmation: e("University Confirmation of Mandatory Internship", { name: "Name of student", mandatory: "Internship is mandatory", min_weeks: "Minimum length in weeks" }, { university: "University signature" }),
+  health_insurance: e("Proof of Health and Care Insurance", { name: "Insured person", insurer: "Insurer", insurance_type: "Type of insurance", covers_abroad: "Cover in destination country" }),
+  tuition_waiver_proof: e("Proof of Tuition Fee Waiver or Reduction", { name: "Name of student", requested: "Waiver or reduction requested", result: "Result", fees: "Fees after reduction (EUR)" }),
+  parent_form: e("Formblatt 3: Information on the Parents' Income", { student_name: "Name of daughter or son", parent_name: "Name of parent", parents_married: "Parents married", siblings_in_education: "Siblings in eligible education" }, { parent: "Parent's signature" }),
+  parent_tax: e("Income Tax Assessment (Extract)", { parent_name: "Taxpayer", tax_year: "Assessment year", sum_of_income: "Total income (EUR)", income_tax: "Income tax assessed (EUR)" }),
+};
+
+export const BUILTIN_TEMPLATES: DocumentTemplate[] = GERMAN_TEMPLATES.map((t) => (ENGLISH[t.id] ? { ...t, en: ENGLISH[t.id] } : t));
+
 /** Splits "Label: value" lines out of a sample document and proposes a template from them. Heuristic stand-in for an AI suggestion. */
 export function suggestTemplateFromLines(lines: string[]): { title: string; fields: TemplateField[]; signatures: { key: string; label: string }[] } {
   const slug = (s: string) => s.toLowerCase().replace(/ä/g, "ae").replace(/ö/g, "oe").replace(/ü/g, "ue").replace(/ß/g, "ss").replace(/[^a-z0-9]+/g, "_").replace(/^_|_$/g, "").slice(0, 40) || "field";
   // The title is the first line that is not the letterhead or the sample footer; fields come after it.
-  const titleIdx = lines.findIndex((l) => !/^Studierendenwerk/i.test(l) && !/^BEISPIEL/i.test(l) && l.trim().length > 3);
+  const titleIdx = lines.findIndex((l) => !/^Studierendenwerk/i.test(l) && !/^(BEISPIEL|SAMPLE)/i.test(l) && l.trim().length > 3);
   const title = titleIdx >= 0 ? lines[titleIdx]! : "";
   const fields: TemplateField[] = [];
   const signatures: { key: string; label: string }[] = [];
@@ -129,12 +150,12 @@ export function suggestTemplateFromLines(lines: string[]): { title: string; fiel
     let key = slug(label);
     for (let n = 2; used.has(key); n++) key = `${slug(label)}_${n}`;
     used.add(key);
-    if (/^BEISPIEL/i.test(label)) continue;
-    if (/unterschrift|stempel/i.test(label) || /\((gezeichnet|fehlt)\)/.test(value)) {
+    if (/^(BEISPIEL|SAMPLE)/i.test(label)) continue;
+    if (/unterschrift|stempel|signature|stamp/i.test(label) || /\((gezeichnet|fehlt|signed|missing)\)/.test(value)) {
       signatures.push({ key: key.replace(/^unterschrift_?/, "") || key, label });
       continue;
     }
-    const type: FieldType = /^\d{4}-\d{2}-\d{2}$/.test(value) ? "date" : /^(ja|nein)$/i.test(value) ? "yesno" : /^-?\d+([.,]\d+)?$/.test(value) ? "number" : "text";
+    const type: FieldType = /^\d{4}-\d{2}-\d{2}$/.test(value) ? "date" : /^(ja|nein|yes|no)$/i.test(value) ? "yesno" : /^-?\d+([.,]\d+)?$/.test(value) ? "number" : "text";
     fields.push({ key, label, type, required: true });
   }
   return { title, fields, signatures };

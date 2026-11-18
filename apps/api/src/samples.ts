@@ -29,7 +29,7 @@ export interface SamplePerson {
 const BASE_PEOPLE: Record<string, SamplePerson> = {
   mira: {
     key: "mira",
-    student: { firstName: "Mira", lastName: "Sommer", birthDate: "2003-05-17", email: "mira.sommer@example.org", university: "Universität Musterstadt", course: "Politikwissenschaft (B.A.)" },
+    student: { firstName: "Mira", lastName: "Sommer", birthDate: "2003-05-17", email: "mira.sommer@example.org", university: "University of Musterstadt", course: "Political Science (B.A.)" },
     stay: { type: "study", country: "CA", city: "Toronto", institution: "Lakeshore University", startDate: "2027-02-01", endDate: "2027-08-15", tuitionFees: 4200 },
     parents: { name: "Katrin Sommer", married: true, siblings: 0, sumOfIncome: 78000, incomeTax: 14000 },
     hostInstitution: "Lakeshore University",
@@ -38,7 +38,7 @@ const BASE_PEOPLE: Record<string, SamplePerson> = {
   },
   jonas: {
     key: "jonas",
-    student: { firstName: "Jonas", lastName: "Weber", birthDate: "2002-11-02", email: "jonas.weber@example.org", university: "Technische Hochschule Musterstadt", course: "Wirtschaftsinformatik (B.Sc.)" },
+    student: { firstName: "Jonas", lastName: "Weber", birthDate: "2002-11-02", email: "jonas.weber@example.org", university: "Musterstadt University of Technology", course: "Business Informatics (B.Sc.)" },
     stay: { type: "internship", country: "PT", city: "Lissabon", institution: "Atlântico Software Lda.", startDate: "2027-03-01", endDate: "2027-06-27", tuitionFees: 0 },
     parents: { name: "Peter Weber", married: true, siblings: 0, sumOfIncome: 52000, incomeTax: 7000 },
     company: "Atlântico Software Lda.",
@@ -46,7 +46,7 @@ const BASE_PEOPLE: Record<string, SamplePerson> = {
   },
   lea: {
     key: "lea",
-    student: { firstName: "Lea", lastName: "Martin", birthDate: "2003-02-09", email: "lea.martin@example.org", university: "Universität Musterstadt", course: "Romanistik (B.A.)" },
+    student: { firstName: "Lea", lastName: "Martin", birthDate: "2003-02-09", email: "lea.martin@example.org", university: "University of Musterstadt", course: "Romance Studies (B.A.)" },
     stay: { type: "study", country: "ES", city: "Madrid", institution: "Universidad Ficticia de Madrid", startDate: "2027-03-01", endDate: "2027-07-31", tuitionFees: 0 },
     parents: { name: "Sabine Martin", married: true, siblings: 0, sumOfIncome: 36000, incomeTax: 3500 },
     hostInstitution: "Universidad Ficticia de Madrid",
@@ -54,7 +54,7 @@ const BASE_PEOPLE: Record<string, SamplePerson> = {
   },
   paul: {
     key: "paul",
-    student: { firstName: "Paul", lastName: "Neumann", birthDate: "2002-04-12", email: "paul.neumann@example.org", university: "Technische Hochschule Musterstadt", course: "Wirtschaftsingenieurwesen (B.Sc.)" },
+    student: { firstName: "Paul", lastName: "Neumann", birthDate: "2002-04-12", email: "paul.neumann@example.org", university: "Musterstadt University of Technology", course: "Industrial Engineering (B.Sc.)" },
     stay: { type: "internship", country: "NL", city: "Rotterdam", institution: "Delta Logistics BV", startDate: "2027-03-01", endDate: "2027-06-27", tuitionFees: 0 },
     parents: { name: "Ines Neumann", married: true, siblings: 0, sumOfIncome: 54000, incomeTax: 8200 },
     company: "Delta Logistics BV",
@@ -62,7 +62,7 @@ const BASE_PEOPLE: Record<string, SamplePerson> = {
   },
   noah: {
     key: "noah",
-    student: { firstName: "Noah", lastName: "Keller", birthDate: "2002-08-21", email: "noah.keller@example.org", university: "Universität Musterstadt", course: "Informatik (B.Sc.)" },
+    student: { firstName: "Noah", lastName: "Keller", birthDate: "2002-08-21", email: "noah.keller@example.org", university: "University of Musterstadt", course: "Computer Science (B.Sc.)" },
     stay: { type: "study", country: "CA", city: "Toronto", institution: "Lakeshore University", startDate: "2025-09-01", endDate: "2026-08-31", tuitionFees: 5200 },
     parents: { name: "Andrea Keller", married: true, siblings: 0, sumOfIncome: 73000, incomeTax: 12500 },
     hostInstitution: "Lakeshore University",
@@ -90,24 +90,38 @@ export interface GeneratedDoc {
 const fullName = (p: SamplePerson) => `${p.student.firstName} ${p.student.lastName}`;
 
 /** Creates the set of documents a student and parents would upload, with the given typical mistakes built in. */
-export function sampleDocuments(p: SamplePerson, defects: Defect[] = []): GeneratedDoc[] {
+const ENGLISH_NAMES: Record<string, string> = {
+  "Formblatt6_Ausland.pdf": "Formblatt6_Abroad.pdf",
+  "Antrag_Formblatt1.pdf": "Application_Formblatt1.pdf",
+  "Immatrikulationsbescheinigung.pdf": "Enrolment_certificate.pdf",
+  "Bestaetigung_Gasthochschule.pdf": "Host_university_confirmation.pdf",
+  "Praktikumsvertrag.pdf": "Internship_contract.pdf",
+  "Bestaetigung_Pflichtpraktikum.pdf": "University_confirmation_internship.pdf",
+  "Versicherungsnachweis.pdf": "Insurance_certificate.pdf",
+  "Nachweis_Studiengebuehren.pdf": "Tuition_fee_proof.pdf",
+  "Formblatt3_Eltern.pdf": "Formblatt3_Parents.pdf",
+  "Einkommensteuerbescheid.pdf": "Income_tax_assessment.pdf",
+};
+
+export function sampleDocuments(p: SamplePerson, defects: Defect[] = [], lang: "de" | "en" = "de"): GeneratedDoc[] {
+  const L = <T,>(de: T, en: T): T => (lang === "en" ? en : de);
   const d = (x: Defect) => defects.includes(x);
   const name = fullName(p);
   const out: GeneratedDoc[] = [];
   const add = (kind: GeneratedDoc["kind"], filename: string, values: Record<string, string | number>, signed: Record<string, boolean> = {}) =>
-    out.push({ kind, filename, content: renderDocument(kind, values, signed) });
+    out.push({ kind, filename: L(filename, ENGLISH_NAMES[filename] ?? filename), content: renderDocument(kind, values, signed, undefined, lang) });
   const intern = p.stay.type === "internship";
   const incomeYear = Number(p.stay.startDate.slice(0, 4)) - 2;
   add("fb06", "Formblatt6_Ausland.pdf", {
-    name, stay_type: intern ? "Praktikum" : "Studium", abroad_institution: p.stay.institution, country: p.stay.country,
-    period_from: p.stay.startDate, period_to: p.stay.endDate, credit_recognition: "Ja", tuition_fees: p.stay.tuitionFees,
+    name, stay_type: intern ? L("Praktikum", "Internship") : L("Studium", "Study"), abroad_institution: p.stay.institution, country: p.stay.country,
+    period_from: p.stay.startDate, period_to: p.stay.endDate, credit_recognition: L("Ja", "Yes"), tuition_fees: p.stay.tuitionFees,
   }, { student: !d("form_unsigned") });
 
   add("application_form", "Antrag_Formblatt1.pdf", {
     name, birth_date: p.student.birthDate, university: p.student.university, destination: `${p.stay.city}, ${p.stay.country}`,
-    stay_type: intern ? "Praktikum" : "Studium", period_from: p.stay.startDate, period_to: p.stay.endDate,
+    stay_type: intern ? L("Praktikum", "Internship") : L("Studium", "Study"), period_from: p.stay.startDate, period_to: p.stay.endDate,
   }, { student: !d("form_unsigned") });
-  if (!d("enroll_missing")) add("enrollment_cert", "Immatrikulationsbescheinigung.pdf", { name, university: p.student.university, term: "Wintersemester 2026/27", course: p.student.course });
+  if (!d("enroll_missing")) add("enrollment_cert", "Immatrikulationsbescheinigung.pdf", { name, university: p.student.university, term: L("Wintersemester 2026/27", "Winter semester 2026/27"), course: p.student.course });
   if (!intern && !d("host_missing")) {
     add("host_confirmation", "Bestaetigung_Gasthochschule.pdf", {
       name, host_institution: p.hostInstitution ?? p.stay.institution, country: p.stay.country, period_from: p.stay.startDate,
@@ -116,34 +130,34 @@ export function sampleDocuments(p: SamplePerson, defects: Defect[] = []): Genera
   }
   if (intern) {
     add("internship_contract", "Praktikumsvertrag.pdf", { name, company: p.company ?? p.stay.institution, country: p.stay.country, period_from: p.stay.startDate, period_to: p.stay.endDate, signer_name: name }, { intern: !d("contract_unsigned"), employer: true });
-    add("internship_uni_confirmation", "Bestaetigung_Pflichtpraktikum.pdf", { name, mandatory: "Ja", min_weeks: 12, signer_name: "Prüfungsamt" }, { university: true });
+    add("internship_uni_confirmation", "Bestaetigung_Pflichtpraktikum.pdf", { name, mandatory: L("Ja", "Yes"), min_weeks: 12, signer_name: L("Prüfungsamt", "Examinations office") }, { university: true });
   }
   if (!d("insurance_missing")) {
-    add("health_insurance", "Versicherungsnachweis.pdf", { name, insurer: p.insurer, insurance_type: "gesetzlich", covers_abroad: d("no_abroad_cover") ? "Nein" : "Ja" });
+    add("health_insurance", "Versicherungsnachweis.pdf", { name, insurer: p.insurer, insurance_type: L("gesetzlich", "statutory"), covers_abroad: d("no_abroad_cover") ? L("Nein", "No") : L("Ja", "Yes") });
   }
   if (p.stay.tuitionFees > 0) {
-    add("tuition_waiver_proof", "Nachweis_Studiengebuehren.pdf", { name, requested: "Ja", result: p.waiverResult ?? "abgelehnt", fees: p.stay.tuitionFees });
+    add("tuition_waiver_proof", "Nachweis_Studiengebuehren.pdf", { name, requested: L("Ja", "Yes"), result: p.waiverResult ?? L("abgelehnt", "denied"), fees: p.stay.tuitionFees });
   }
   add("parent_form", "Formblatt3_Eltern.pdf", {
-    student_name: name, parent_name: p.parents.name, parents_married: p.parents.married ? "Ja" : "Nein", siblings_in_education: p.parents.siblings,
+    student_name: name, parent_name: p.parents.name, parents_married: p.parents.married ? L("Ja", "Yes") : L("Nein", "No"), siblings_in_education: p.parents.siblings,
   }, { parent: !d("parent_unsigned") });
   if (!d("tax_missing")) {
     add("parent_tax", "Einkommensteuerbescheid.pdf", {
-      parent_name: p.parents.name, tax_year: d("wrong_income_year") ? incomeYear - 2 : incomeYear, sum_of_income: d("unclear_income") ? `${String(p.parents.sumOfIncome).slice(0, 2)}?${String(p.parents.sumOfIncome).slice(3)} (unleserlich)` : p.parents.sumOfIncome, income_tax: p.parents.incomeTax,
+      parent_name: p.parents.name, tax_year: d("wrong_income_year") ? incomeYear - 2 : incomeYear, sum_of_income: d("unclear_income") ? `${String(p.parents.sumOfIncome).slice(0, 2)}?${String(p.parents.sumOfIncome).slice(3)} (${L("unleserlich", "illegible")})` : p.parents.sumOfIncome, income_tax: p.parents.incomeTax,
     });
   }
   return out;
 }
 
 /** Documents that fix the typical mistakes above. */
-export function fixDocuments(p: SamplePerson): Record<string, GeneratedDoc> {
-  const full = Object.fromEntries(sampleDocuments(p).map((x) => [x.kind, x]));
+export function fixDocuments(p: SamplePerson, lang: "de" | "en" = "de"): Record<string, GeneratedDoc> {
+  const full = Object.fromEntries(sampleDocuments(p, [], lang).map((x) => [x.kind, x]));
   const rename = (x: GeneratedDoc | undefined, filename: string): GeneratedDoc | undefined => (x ? { ...x, filename } : undefined);
   return Object.fromEntries(
     Object.entries({
-      parent_form: rename(full.parent_form, "Formblatt3_Eltern_unterschrieben.pdf"),
-      host_confirmation: rename(full.host_confirmation, "Bestaetigung_Gasthochschule.pdf"),
-      internship_contract: rename(full.internship_contract, "Praktikumsvertrag_unterschrieben.pdf"),
+      parent_form: rename(full.parent_form, lang === "en" ? "Formblatt3_Parents_signed.pdf" : "Formblatt3_Eltern_unterschrieben.pdf"),
+      host_confirmation: rename(full.host_confirmation, lang === "en" ? "Host_university_confirmation.pdf" : "Bestaetigung_Gasthochschule.pdf"),
+      internship_contract: rename(full.internship_contract, lang === "en" ? "Internship_contract_signed.pdf" : "Praktikumsvertrag_unterschrieben.pdf"),
     }).filter(([, v]) => v),
   ) as Record<string, GeneratedDoc>;
 }
@@ -171,18 +185,35 @@ export const SAMPLE_SETS = [
 ];
 
 /** Formblatt 8, only needed when the parents do not pay the maintenance that is counted. */
-export function formblatt8(p: SamplePerson): GeneratedDoc {
+export function formblatt8(p: SamplePerson, lang: "de" | "en" = "de"): GeneratedDoc {
   const name = `${p.student.firstName} ${p.student.lastName}`;
   return {
     kind: "fb08",
-    filename: "Formblatt8_Vorausleistung.pdf",
-    content: renderDocument("fb08", { name, parent_name: p.parents.name, reason: "Unterhalt wird nicht gezahlt", refused_since: "2026-09-01", parents_asked: "Ja" }, { student: true }),
+    filename: lang === "en" ? "Formblatt8_Advance_payment.pdf" : "Formblatt8_Vorausleistung.pdf",
+    content: renderDocument("fb08", { name, parent_name: p.parents.name, reason: lang === "en" ? "Maintenance is not being paid" : "Unterhalt wird nicht gezahlt", refused_since: "2026-09-01", parents_asked: lang === "en" ? "Yes" : "Ja" }, { student: true }, undefined, lang),
   };
 }
 
 /** A form the office does not know yet. Used to try the "propose a template" flow. */
+export const PROPOSAL_SAMPLE_TITLE_EN = "Formblatt 7: Application for an update (§ 24 para. 3 BAföG)";
 export const PROPOSAL_SAMPLE_TITLE = "Formblatt 7: Antrag auf Aktualisierung (§ 24 Abs. 3 BAföG)";
-export function proposalSample(): GeneratedDoc {
+export function proposalSample(lang: "de" | "en" = "de"): GeneratedDoc {
+  if (lang === "en") {
+    const lines: PdfLine[] = [
+      { text: "Studierendenwerk Musterstadt", size: 10 },
+      { text: PROPOSAL_SAMPLE_TITLE_EN, size: 16, bold: true, gap: 10 },
+      { text: "Name of applicant: Mira Sommer", gap: 4 },
+      { text: "Name of parent: Katrin Sommer", gap: 4 },
+      { text: "Income year according to the notice: 2025", gap: 4 },
+      { text: "Income according to the notice (EUR): 78000", gap: 4 },
+      { text: "Expected income in the funding period (EUR): 52000", gap: 4 },
+      { text: "Reason for the reduction: Parent works part-time", gap: 4 },
+      { text: "Evidence is attached: Yes", gap: 4 },
+      { text: "Applicant's signature: Mira Sommer (signed)", gap: 22, rule: true },
+      { text: "SAMPLE DOCUMENT: fictional authority and invented data. Not a real document.", size: 8, gap: 60 },
+    ];
+    return { kind: "unknown", filename: "Sample_Formblatt7_for_template_proposal.pdf", content: buildPdf(lines) };
+  }
   const lines: PdfLine[] = [
     { text: "Studierendenwerk Musterstadt", size: 10 },
     { text: PROPOSAL_SAMPLE_TITLE, size: 16, bold: true, gap: 10 },

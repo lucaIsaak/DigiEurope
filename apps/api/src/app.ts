@@ -293,7 +293,7 @@ export function buildApp(opts: AppOptions) {
     } else if (action === "reject") {
       if (!message?.trim()) return bad(reply, "Please give a reason.");
     } else return bad(reply, "Unknown action.");
-    const acted = officeAct(store, a, action, { message, amount, by: req.staff?.name ?? "Sachbearbeitung" }, now());
+    const acted = officeAct(store, a, action, { message, amount, by: req.staff?.name ?? "Caseworker" }, now());
     const outcome = action === "approve" ? "approved" : action === "reject" ? "rejected" : "info";
     const def = liveDef();
     return v(def ? withAudit(store, store.put(await resumeRun(def, acted, outcome, engineCtx())), now()) : acted);
@@ -712,31 +712,36 @@ export function buildApp(opts: AppOptions) {
   });
 
   // ---- Sample documents (for the demo) ------------------------------------
-  const sampleFiles = (setId: string) => {
+  const langOf = (q: { lang?: string } | undefined): "de" | "en" => (q?.lang === "de" ? "de" : "en");
+  const sampleFiles = (setId: string, lang: "de" | "en") => {
     const set = SAMPLE_SETS.find((s) => s.id === setId);
     if (!set) return null;
     const person = getPerson(set.person, now());
-    return { set, docs: sampleDocuments(person, set.defects), fixes: Object.values(fixDocuments(person)) };
+    return { set, docs: sampleDocuments(person, set.defects, lang), fixes: Object.values(fixDocuments(person, lang)) };
   };
 
-  app.get("/samples", async () => ({
+  app.get<{ Querystring: { lang?: string } }>("/samples", async (req) => {
+    const lang = langOf(req.query);
+    return {
     sets: SAMPLE_SETS.map((s) => {
-      const f = sampleFiles(s.id)!;
+      const f = sampleFiles(s.id, lang)!;
       const item = (d: { kind: string; filename: string }) => ({ name: d.filename, kind: d.kind, audience: PARENT_KINDS.includes(d.kind as DocumentKind) ? "parents" : "student" });
-      const extras = s.id === "mira" ? [{ name: formblatt8(getPerson("mira", now())).filename, kind: "fb08", audience: "student" }] : [];
+      const extras = s.id === "mira" ? [{ name: formblatt8(getPerson("mira", now()), lang).filename, kind: "fb08", audience: "student" }] : [];
       return { id: s.id, title: s.title, note: s.note, docs: f.docs.map(item), fixes: f.fixes.map(item), extras };
     }),
     letter: sampleLetter(getPerson("noah", now())).filename,
-    proposal: proposalSample().filename,
-  }));
+    proposal: proposalSample(lang).filename,
+    };
+  });
 
-  app.get<{ Params: { set: string; folder: string; name: string } }>("/samples/files/:set/:folder/:name", async (req, reply) => {
+  app.get<{ Params: { set: string; folder: string; name: string }; Querystring: { lang?: string } }>("/samples/files/:set/:folder/:name", async (req, reply) => {
+    const lang = langOf(req.query);
     let file: { filename: string; content: Buffer } | undefined;
     if (req.params.set === "letter") file = sampleLetter(getPerson("noah", now()));
-    else if (req.params.set === "proposal") file = proposalSample();
-    else if (req.params.folder === "extras") file = formblatt8(getPerson("mira", now()));
+    else if (req.params.set === "proposal") file = proposalSample(lang);
+    else if (req.params.folder === "extras") file = formblatt8(getPerson("mira", now()), lang);
     else {
-      const f = sampleFiles(req.params.set);
+      const f = sampleFiles(req.params.set, lang);
       file = (req.params.folder === "fixes" ? f?.fixes : f?.docs)?.find((d) => d.filename === req.params.name);
     }
     if (!file) return notFound(reply);
@@ -800,7 +805,7 @@ export function buildApp(opts: AppOptions) {
     const base = `s-${name.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "person"}`;
     let id = base;
     for (let i = 2; store.staff().some((m) => m.id === id); i++) id = `${base}-${i}`;
-    const member: StaffMember = { id, name, title: title || "Sachbearbeitung", isAdmin: false, canBuild: Boolean(req.body?.canBuild), isCaseworker: Boolean(req.body?.isCaseworker), ...(req.body?.canApproveTemplates ? { canApproveTemplates: true } : {}) };
+    const member: StaffMember = { id, name, title: title || "Caseworker", isAdmin: false, canBuild: Boolean(req.body?.canBuild), isCaseworker: Boolean(req.body?.isCaseworker), ...(req.body?.canApproveTemplates ? { canApproveTemplates: true } : {}) };
     store.addStaff(member);
     return reply.code(201).send(store.staff());
   });
@@ -942,7 +947,7 @@ export function buildApp(opts: AppOptions) {
     const scratch = new ScratchStore();
     const person = getPerson(sample.person, now());
     let a = newApplication(scratch, { student: person.student, stay: person.stay, language: "de", source: sample.source }, now());
-    for (const d of sampleDocuments(person, sample.defects)) a = addDocument(scratch, a, { filename: d.filename, mimeType: "application/pdf", content: d.content }, "student", now());
+    for (const d of sampleDocuments(person, sample.defects, "en")) a = addDocument(scratch, a, { filename: d.filename, mimeType: "application/pdf", content: d.content }, "student", now());
     a = { ...a, status: "submitted", submittedAt: now().toISOString() };
     const ctx = engineCtx(scratch);
     a = await startRun(def, a, ctx);

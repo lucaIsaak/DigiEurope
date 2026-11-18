@@ -32,7 +32,7 @@ const INTERN_DEST = [
   { country: "IE", city: "Dublin", inst: "Greenfield Labs Ltd" },
   { country: "SG", city: "Singapur", inst: "Merlion Analytics Pte" },
 ];
-const COURSES = ["Politikwissenschaft (B.A.)", "Informatik (B.Sc.)", "Wirtschaftswissenschaften (B.Sc.)", "Biologie (B.Sc.)", "Germanistik (B.A.)", "Maschinenbau (B.Sc.)", "Psychologie (B.Sc.)"];
+const COURSES = ["Political Science (B.A.)", "Computer Science (B.Sc.)", "Economics (B.Sc.)", "Biology (B.Sc.)", "German Studies (B.A.)", "Mechanical Engineering (B.Sc.)", "Psychology (B.Sc.)"];
 
 export function randomPerson(rand: () => number, now: Date): SamplePerson {
   const pick = <T,>(xs: T[]) => xs[Math.floor(rand() * xs.length)]!;
@@ -44,7 +44,7 @@ export function randomPerson(rand: () => number, now: Date): SamplePerson {
   const weeks = intern ? 12 + Math.floor(rand() * 14) : 27 + Math.floor(rand() * 24);
   const student: StudentInfo = {
     firstName: first, lastName: last, birthDate: `${2000 + Math.floor(rand() * 4)}-0${1 + Math.floor(rand() * 9)}-1${Math.floor(rand() * 9)}`,
-    email: `${first}.${last}@example.org`.toLowerCase(), university: "Universität Musterstadt", course: pick(COURSES),
+    email: `${first}.${last}@example.org`.toLowerCase(), university: "University of Musterstadt", course: pick(COURSES),
   };
   const stay: StayInfo = {
     type: intern ? "internship" : "study", country: dest.country, city: dest.city, institution: dest.inst, startDate: start, endDate: addDays(start, weeks * 7),
@@ -81,7 +81,7 @@ export function buildCase(
     for (const d of docs) app = addDocument(store, app, { filename: d.filename, mimeType: "application/pdf", content: d.content }, d.kind.startsWith("parent") ? "parent" : opts.source === "portal" ? "portal" : "student", at);
   };
   const minutes = (n: number) => new Date(t.getTime() + n * 60_000);
-  upload(sampleDocuments(p, opts.defects), minutes(20));
+  upload(sampleDocuments(p, opts.defects, "en"), minutes(20));
   const first = checksFor(store, app, minutes(25));
   app = {
     ...app,
@@ -94,7 +94,7 @@ export function buildCase(
   const stillBroken = opts.source === "portal" && ["submitted", "in_review", "info_requested"].includes(opts.status);
   if (!stillBroken && opts.defects.length) {
     // The student fixed everything before submitting.
-    upload(sampleDocuments(p, []), minutes(180));
+    upload(sampleDocuments(p, [], "en"), minutes(180));
   }
   if (opts.status === "draft") return store.put({ ...app, status: "draft" });
   const submittedAt = stillBroken ? minutes(30) : minutes(200);
@@ -108,7 +108,7 @@ export function buildCase(
   }
   const decidedAt = new Date(openedAt.getTime() + (1 + Math.floor(opts.rand() * 8)) * 86_400_000);
   const amount = estimate(app, decidedAt).monthly;
-  return officeAct(store, app, opts.status === "approved" ? "approve" : "reject", { message: opts.status === "approved" ? "" : "Das anzurechnende Einkommen Ihrer Eltern übersteigt Ihren monatlichen Bedarf im Ausland. Deshalb kann für diesen Zeitraum keine Förderung gezahlt werden. Wenn sich das Einkommen Ihrer Eltern deutlich verringert hat, können Sie einen Aktualisierungsantrag stellen.", amount, by: "Frau Beispiel" }, decidedAt);
+  return officeAct(store, app, opts.status === "approved" ? "approve" : "reject", { message: opts.status === "approved" ? "" : "The income counted from your parents exceeds your monthly need abroad, so no funding can be paid for this period. If your parents' income has dropped significantly, you can submit an update application.", amount, by: "Frau Beispiel" }, decidedAt);
 }
 
 export function seedDemoData(store: Store, now: Date = new Date()) {
@@ -133,7 +133,7 @@ export function seedDemoData(store: Store, now: Date = new Date()) {
       if (status === "rejected") p.parents = { ...p.parents, sumOfIncome: 135000, incomeTax: 34000 }; // rejected because parental income covers the need
       const source: "web" | "portal" = rand() < 0.55 ? "portal" : "web";
       buildCase(store, p, {
-        defects: randomDefects(rand, p), source, language: rand() < 0.7 ? "de" : "en",
+        defects: randomDefects(rand, p), source, language: (rand(), "en" as Lang),
         createdAt: new Date(now.getTime() - ageDays * 86_400_000 - i * 60_000), status, rand,
       });
     });
@@ -146,5 +146,5 @@ export function deliverFromPortal(store: Store, now: Date = new Date()): Applica
   const p = randomPerson(rand, now);
   const defects = randomDefects(rand, p);
   if (defects.length === 0) defects.push(p.stay.type === "internship" ? "contract_unsigned" : "parent_unsigned");
-  return buildCase(store, p, { defects, source: "portal", language: "de", createdAt: now, status: "submitted", rand });
+  return buildCase(store, p, { defects, source: "portal", language: "en", createdAt: now, status: "submitted", rand });
 }

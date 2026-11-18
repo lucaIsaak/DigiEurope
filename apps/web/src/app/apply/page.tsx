@@ -16,7 +16,7 @@ export default function Apply() {
   const { error, setError, run } = useAsyncError();
   const [busy, setBusy] = useState(false);
   const [step, setStep] = useState(0);
-  const [f, setF] = useState({ firstName: "", lastName: "", birthDate: "", email: "", university: "Universität Musterstadt", course: "", type: "" as StayType | "", country: "CA", city: "", institution: "", startDate: "", endDate: "", tuition: "0" });
+  const [f, setF] = useState({ firstName: "", lastName: "", birthDate: "", email: "", university: "University of Musterstadt", course: "", type: "" as StayType | "", country: "CA", city: "", institution: "", startDate: "", endDate: "", tuition: "0" });
   const set = (k: keyof typeof f) => (e: { target: { value: string } }) => setF((x) => ({ ...x, [k]: e.target.value }));
 
   // What the standard process will ask for, so nothing comes as a surprise.
@@ -32,13 +32,21 @@ export default function Apply() {
   function fillSample() {
     const later = new Date(Date.now() + 140 * 86_400_000);
     const start = new Date(Date.UTC(later.getUTCFullYear(), later.getUTCMonth() + 1, 1));
-    setF((x) => ({ ...x, firstName: "Mira", lastName: "Sommer", birthDate: "2003-05-17", email: "mira.sommer@example.org", university: "Universität Musterstadt", course: "Politikwissenschaft (B.A.)", type: "study", country: "CA", city: "Toronto", institution: "Lakeshore University", startDate: iso(start), endDate: iso(new Date(start.getTime() + 28 * 7 * 86_400_000)), tuition: "4200" }));
+    setF((x) => ({ ...x, firstName: "Mira", lastName: "Sommer", birthDate: "2003-05-17", email: "mira.sommer@example.org", university: "University of Musterstadt", course: "Political Science (B.A.)", type: "study", country: "CA", city: "Toronto", institution: "Lakeshore University", startDate: iso(start), endDate: iso(new Date(start.getTime() + 28 * 7 * 86_400_000)), tuition: "4200" }));
     setStep(2);
   }
-  // Hidden demo shortcut: Shift+Alt+D fills in the sample student that matches the sample documents.
+  /** Paul Neumann: internship in Rotterdam. His sample documents have one smudged number, so the process stops for a person to check it. */
+  function fillPaul() {
+    const later = new Date(Date.now() + 165 * 86_400_000);
+    const start = new Date(Date.UTC(later.getUTCFullYear(), later.getUTCMonth() + 1, 1));
+    setF((x) => ({ ...x, firstName: "Paul", lastName: "Neumann", birthDate: "2002-04-12", email: "paul.neumann@example.org", university: "Musterstadt University of Technology", course: "Industrial Engineering (B.Sc.)", type: "internship", country: "NL", city: "Rotterdam", institution: "Delta Logistics BV", startDate: iso(start), endDate: iso(new Date(start.getTime() + 17 * 7 * 86_400_000)), tuition: "" }));
+    setStep(2);
+  }
+  // Hidden demo shortcuts: Shift+Alt+D fills in Mira (study stay), Shift+Alt+P fills in Paul (internship, one unclear field).
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.shiftKey && e.altKey && e.code === "KeyD") fillSample();
+      if (e.shiftKey && e.altKey && e.code === "KeyP") fillPaul();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);

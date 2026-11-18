@@ -31,6 +31,12 @@ export interface EngineCtx {
 export type Outcome = "approved" | "rejected" | "info" | "confirmed";
 const MAX_STEPS = 60;
 
+/** A text of a step in the language of the applicant: "subject" or "subject_en", with the German one as the fallback. */
+const textOf = (node: FlowNode, key: string, app: Application): string => {
+  const en = node.config[`${key}_en`];
+  return app.language === "en" && typeof en === "string" && en.trim() !== "" ? en : String(node.config[key] ?? "");
+};
+
 const fill = (text: string, app: Application) =>
   text
     .replace(/\{name\}/g, `${app.student.firstName} ${app.student.lastName}`)
@@ -150,7 +156,7 @@ async function execute(def: ProcessDef, start: string, input: Application, ctx: 
       }
       case "review_fields":
         waiting = node.id;
-        entry(`Waiting for a person to check the fields${node.config.instruction ? `: ${node.config.instruction}` : ""}`);
+        entry(`Waiting for a person to check the fields${textOf(node, "instruction", app) ? `: ${textOf(node, "instruction", app)}` : ""}`);
         current = undefined;
         continue;
       case "condition": {
@@ -193,7 +199,7 @@ async function execute(def: ProcessDef, start: string, input: Application, ctx: 
           entry("Question sent, written by the caseworker");
           break;
         }
-        const body = mailDraft?.body ?? fill(String(node.config.fallback), app);
+        const body = mailDraft?.body ?? fill(textOf(node, "fallback", app), app);
         const subject = mailDraft?.subject ?? `Ihr Antrag ${app.reference}`;
         send({ to: "student", subject, body, aiDraft: Boolean(mailDraft), nodeId: node.id });
         app = { ...app, status: "info_requested", officeMessage: body.split("\n\n").slice(1, -1).join("\n\n") || body, history: [...app.history, { at: at(), kind: "info_requested", text: "Automatisch durch den Ablauf" }] };
@@ -201,7 +207,7 @@ async function execute(def: ProcessDef, start: string, input: Application, ctx: 
         break;
       }
       case "send_notification": {
-        send({ to: node.config.to as Mail["to"], subject: fill(String(node.config.subject), app), body: fill(String(node.config.body), app), aiDraft: false, nodeId: node.id });
+        send({ to: node.config.to as Mail["to"], subject: fill(textOf(node, "subject", app), app), body: fill(textOf(node, "body", app), app), aiDraft: false, nodeId: node.id });
         entry(`Message to ${node.config.to}`);
         break;
       }
@@ -215,7 +221,7 @@ async function execute(def: ProcessDef, start: string, input: Application, ctx: 
       }
       case "human_task":
         waiting = node.id;
-        entry(`Waiting for the caseworker${node.config.instruction ? `: ${node.config.instruction}` : ""}`);
+        entry(`Waiting for the caseworker${textOf(node, "instruction", app) ? `: ${textOf(node, "instruction", app)}` : ""}`);
         current = undefined;
         continue;
       case "end":

@@ -40,13 +40,13 @@ export function summary(d: StepData, bi: (b: Bi) => string): string {
   switch (d.kind) {
     case "condition": return `${c.field} ${c.op === "gte" ? "≥" : c.op === "lte" ? "≤" : c.op === "eq" ? "=" : "≠"} ${c.value}`;
     case "read_documents": return `${c.scope === "all" ? "All documents" : c.scope === "parents" ? "Parents' documents" : "Student's documents"} · ${!c.method || c.method === "default" ? "per type" : c.method}`;
-    case "review_fields": return String(c.instruction || "");
+    case "review_fields": return bi({ de: String(c.instruction || ""), en: String(c.instruction_en || c.instruction || "") });
     case "assign_team": return String(c.team);
     case "assign_caseworker": return "By family name";
     case "wait": return `${c.days} d`;
     case "ai_draft_mail": return c.tone === "formal" ? "Formal tone" : "Friendly tone";
     case "send_notification": return `${c.to}: ${c.subject}`;
-    case "human_task": return String(c.instruction || "");
+    case "human_task": return bi({ de: String(c.instruction || ""), en: String(c.instruction_en || c.instruction || "") });
     case "trigger": return c.source === "any" ? "Portal + direct" : String(c.source);
     case "connector": {
       const sys = CONNECTORS.find((x) => x.id === c.system);

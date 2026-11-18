@@ -51,7 +51,7 @@ function def(id: string, name: string, by: string, nodes: FlowNode[], edges: Flo
 
 /** Deliberately simple: no document reading, no systems, one generic mail for incomplete applications. */
 function nordhafen(): ProcessDef {
-  return def("nordhafen-abroad", "Auslands-BAföG Antrag (Nordhafen)", "Hr. Brandt", [
+  return def("nordhafen-abroad", "BAföG abroad application (Nordhafen)", "Hr. Brandt", [
     n("start", "trigger"), n("rules", "run_rules", { rules: ALL_RULE_IDS.join(",") }),
     n("notice", "send_notification", notify("student", "Ihr Antrag ist unvollständig", "Guten Tag {name}, Ihrem Antrag fehlen Unterlagen. Bitte reichen Sie diese nach.")),
     n("end-i", "end"), n("human", "human_task"),
@@ -65,7 +65,7 @@ function nordhafen(): ProcessDef {
 
 /** Reads documents, but without a review step; high amounts go through a second check; two systems connected. */
 function bergland(): ProcessDef {
-  return def("bergland-abroad", "Auslands-BAföG: Antragsablauf (Bergland)", "Fr. Aigner", [
+  return def("bergland-abroad", "BAföG abroad: application process (Bergland)", "Fr. Aigner", [
     n("start", "trigger"), n("read", "read_documents", { method: "builtin" }), n("rules", "run_rules", { rules: ALL_RULE_IDS.join(",") }),
     n("ask", "request_documents"), n("end-i", "end"),
     n("team", "assign_team", { team: "Team Ausland" }), n("cond", "condition", { field: "estimateMonthly", op: "gte", value: "800" }),
@@ -84,7 +84,7 @@ function bergland(): ProcessDef {
 
 /** The most complete one: AI reading, review of doubtful fields, AI mail with a reminder, four systems connected. */
 function rheinau(): ProcessDef {
-  return def("rheinau-abroad", "Auslands-BAföG Antrag (Rheinau)", "Fr. Çelik", [
+  return def("rheinau-abroad", "BAföG abroad application (Rheinau)", "Fr. Çelik", [
     n("start", "trigger"), n("assign", "assign_caseworker"), n("read", "read_documents"), n("review", "review_fields"), n("askq", "request_documents", { sending: "caseworker" }), n("waitq", "wait", { days: 7 }), n("end-r", "end"), n("rules", "run_rules", { rules: ALL_RULE_IDS.join(",") }),
     n("draft", "ai_draft_mail"), n("ask", "request_documents"), n("wait", "wait", { days: 7 }), n("end-i", "end"),
     n("human", "human_task"),

@@ -376,6 +376,8 @@ export interface DocumentTemplate {
   fields: TemplateField[];
   signatures: TemplateSignature[];
   source: "builtin" | "accepted";
+  /** The same document in English: the printed title and the labels by field key. The reader recognises both. */
+  en?: { title: string; fields: Record<string, string>; signatures: Record<string, string> };
 }
 
 export type ProposalStatus = "draft" | "submitted" | "accepted" | "rejected";

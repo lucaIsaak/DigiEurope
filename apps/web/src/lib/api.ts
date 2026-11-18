@@ -332,12 +332,12 @@ export const api = {
     call<{ config: ExtractionSettings["config"] }>("/office/extraction", { method: "PUT", json: { kind, method, minConfidence } }),
   reviewFields: (id: string, docId: string, fields: Record<string, string>) => call<CaseView>(`/office/cases/${id}/review`, { method: "POST", json: { docId, fields } }),
 
-  samples: () => call<SampleList>("/samples"),
+  samples: (lang: Lang = "en") => call<SampleList>(`/samples?lang=${lang}`),
   reset: () => call<{ ok: true }>("/admin/reset", { method: "POST" }),
 };
 
 export const documentUrl = (docId: string) => `/api/documents/${docId}`;
-export const sampleUrl = (set: string, folder: "docs" | "fixes", name: string) => `/api/samples/files/${set}/${folder}/${encodeURIComponent(name)}`;
+export const sampleUrl = (set: string, folder: "docs" | "fixes", name: string, lang: Lang = "en") => `/api/samples/files/${set}/${folder}/${encodeURIComponent(name)}?lang=${lang}`;
 
 /** Applications started on this device, so students find them again without an account. */
 export const myApplications = {
