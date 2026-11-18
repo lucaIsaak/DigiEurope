@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { BarChart3, Check, FileStack, FlaskConical, FolderTree, Globe, Inbox, KeyRound, LogOut, Moon, RotateCcw, ShieldCheck, SlidersHorizontal, Sun, Workflow, ArrowUpRight, Zap, type LucideIcon } from "lucide-react";
+import { BarChart3, Check, Clock, FileStack, FlaskConical, FolderTree, Globe, Inbox, KeyRound, LogOut, Moon, RotateCcw, ShieldCheck, SlidersHorizontal, Sun, Workflow, ArrowUpRight, Zap, type LucideIcon } from "lucide-react";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { api } from "@/lib/api";
 import { useI18n } from "@/lib/i18n";
@@ -168,6 +168,9 @@ function OfficeShell({ children, current, oversight }: { children: ReactNode; cu
                       }}
                     >
                       <Zap size={15} />{t("side.deliver")}
+                    </button>
+                    <button type="button" role="menuitem" onClick={async () => { close(); await api.advanceClock(7).catch(() => undefined); router.refresh(); window.dispatchEvent(new CustomEvent("ms:delivered", { detail: "" })); }}>
+                      <Clock size={15} />{t("side.skip")}
                     </button>
                     <button type="button" role="menuitem" onClick={async () => { close(); await api.reset().catch(() => undefined); router.refresh(); window.dispatchEvent(new CustomEvent("ms:delivered", { detail: "" })); }}>
                       <RotateCcw size={15} />{t("side.reset")}

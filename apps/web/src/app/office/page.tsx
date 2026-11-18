@@ -84,7 +84,7 @@ export default function Inbox() {
       .filter((r) => tab === "all" || TAB_OF[r.status] === tab)
       .filter((r) => !term || r.name.toLowerCase().includes(term) || r.reference.toLowerCase().includes(term))
       // Oldest first in the work tabs, so nobody waits longest by accident.
-      .sort((a, b) => (tab === "needs" || tab === "waiting" ? (a.submittedAt ?? "").localeCompare(b.submittedAt ?? "") : (b.submittedAt ?? "").localeCompare(a.submittedAt ?? "")));
+      .sort((a, b) => Number(b.failed) - Number(a.failed) || (tab === "needs" || tab === "waiting" ? (a.submittedAt ?? "").localeCompare(b.submittedAt ?? "") : (b.submittedAt ?? "").localeCompare(a.submittedAt ?? "")));
   }, [scoped, tab, q]);
 
   // Keep a selection, and load the preview for it.
@@ -208,6 +208,7 @@ export default function Inbox() {
                   <span>
                     <strong>{r.name.split(", ").reverse().join(" ")}{r.id === fresh && <em className="q-new">{t("wl.new")}</em>}</strong>
                     <small className="num">{r.reference} · {r.source === "portal" ? t("wl.portal") : t("wl.direct")}{r.assignedTo ? ` · ${r.assignedTo.name}` : ""}</small>
+                    {r.failed && <span className="q-chip-stopped" title={r.problem ?? ""}>{t("wl.chip.stopped")}</span>}
                   </span>
                 </span>
                 <span className="two"><strong>{country(r.country)}</strong><small>{tk(`stay.${r.stayType}`)}</small></span>

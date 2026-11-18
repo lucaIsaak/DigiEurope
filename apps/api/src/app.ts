@@ -1,8 +1,15 @@
+import { randomUUID } from "node:crypto";
 import { randomBytes } from "node:crypto";
 import Fastify, { type FastifyReply } from "fastify";
 import {
   RULES,
+  CONNECTORS,
   baselineFacts,
+  paramsOf,
+  diffProcess,
+  processDependencies,
+  upgradeTokens,
+  type ProcessTest,
   describeCheck,
   estimate,
   assignCaseworker,
@@ -39,7 +46,7 @@ import {
   type StudentInfo,
   validateProcess,
 } from "@digieurope/shared";
-import { resumeRun, startRun, type EngineCtx } from "./engine.js";
+import { resumeRun, resumeTimer, retryRun, startRun, timerDue, type EngineCtx } from "./engine.js";
 import { PEER_OFFICES, REFERENCE_SETTINGS, type OfficeProcess } from "./offices.js";
 import { DEFAULT_MIN_CONFIDENCE, aiAvailable, methodsInfo } from "./extraction.js";
 import { Store as ScratchStore } from "./store.js";
@@ -70,12 +77,13 @@ const EDITABLE: CaseStatus[] = ["draft", "info_requested"];
 
 export function buildApp(opts: AppOptions) {
   const { store } = opts;
-  const now = opts.now ?? (() => new Date());
+  /** The demo clock can run ahead of the real one (see /admin/clock), so timers can be shown without waiting. */
+  const now = opts.now ?? (() => new Date(Date.now() + store.clockOffsetMs()));
   const webUrl = opts.webUrl ?? "http://localhost:3000";
   const app = Fastify({ logger: opts.logger ?? false, bodyLimit: 12 * 1024 * 1024 });
   app.decorateRequest("staff", null);
   const needsBuild = (method: string, url: string) =>
-    url.startsWith("/office/processes") || (method !== "GET" && (url === "/office/rules" || /^\/office\/rules\/[^/]+\/(approve|revoke|draft|discard)/.test(url)));
+    url.startsWith("/office/processes") || (method !== "GET" && (url.startsWith("/office/messages") || url === "/office/rules" || /^\/office\/rules\/[^/]+\/(approve|revoke|draft|discard)/.test(url)));
   /** Setting up how documents are read: process designers and the extractor owner. */
   const needsExtractorAccess = (method: string, url: string) => method !== "GET" && (url.startsWith("/office/inputs") || url.startsWith("/office/config"));
   /** How a template is read is decided by the extractor owner (or an administrator). */
@@ -91,6 +99,7 @@ export function buildApp(opts: AppOptions) {
     if (oversightArea && !req.staff.isOversight) return reply.code(403).send({ error: "Only the oversight body can compare offices." });
     if (req.staff.isOversight && url.startsWith("/office")) return reply.code(403).send({ error: "Oversight accounts do not work in an office." });
     if (url.startsWith("/office/assignment") && req.method !== "GET" && !req.staff.isAdmin) return reply.code(403).send({ error: "Only administrators can change who gets which cases." });
+    if (url.startsWith("/office/connections") && req.method !== "GET" && !req.staff.isAdmin) return reply.code(403).send({ error: "Only administrators can change the office's connections." });
     if (url.startsWith("/office/staff") && !req.staff.isAdmin) return reply.code(403).send({ error: "Only administrators can do this." });
     if (needsBuild(req.method, url) && !req.staff.canBuild && !req.staff.isAdmin) return reply.code(403).send({ error: "You do not have access to the process builder." });
     if (needsOwner(req.method, url) && !req.staff.canApproveTemplates && !req.staff.isAdmin) return reply.code(403).send({ error: "Only the extractor owner can change how documents are read." });
@@ -100,9 +109,18 @@ export function buildApp(opts: AppOptions) {
   const bad = (reply: FastifyReply, error: string, code = 400) => reply.code(code).send({ error });
   const v = (a: Application) => view(store, a, webUrl, now());
   /** Hands a submitted application to the live process of the office. */
-  const engineCtx = (from: Store = store): EngineCtx => ({
+  const engineCtx = (from: Store = store, opts2: { instantWaits?: boolean } = {}): EngineCtx => ({
     now: now(),
-    check: (a, ids) => checksFor(store, a, now(), ids),
+    instantWaits: opts2.instantWaits,
+    check: (a, ids, scope) => checksFor(store, a, now(), ids, scope),
+    template: (id) => {
+      const t = store.liveMessage(id);
+      return t ? { id: t.id, name: t.name, version: t.version, subject: t.subject, body: t.body } : null;
+    },
+    connection: (system) => {
+      const c = store.connections()[system];
+      return c ? { enabled: c.enabled, mode: c.mode, name: CONNECTORS.find((x) => x.id === system)?.name.en ?? system } : null;
+    },
     review: (a) => reviewReport(store, a),
     assign: (a) => {
       const table = store.assignment();
@@ -259,6 +277,7 @@ export function buildApp(opts: AppOptions) {
     return {
       docsDone: docs.filter((x) => x.state === "ok").length, docsTotal: docs.length,
       id: a.id, reference: a.reference, name: `${a.student.lastName}, ${a.student.firstName}`, country: a.stay.country, stayType: a.stay.type, status: a.status,
+      failed: Boolean(a.flow?.failed), problem: a.flow?.error?.message ?? null,
       source: a.source, submittedAt: a.submittedAt ?? null, updatedAt: a.updatedAt, blockers: r.blockers, warnings: r.warnings, estimateMonthly: estimate(a, now()).monthly,
       assignedTo: a.assignedTo ? { id: a.assignedTo.id, name: a.assignedTo.name } : null, team: a.assignedTeam ?? null, waitingAt: liveDef()?.nodes.find((n) => n.id === a.flow?.waiting)?.kind ?? null,
     };
@@ -823,6 +842,96 @@ export function buildApp(opts: AppOptions) {
     return store.staff();
   });
 
+  // ---- Messages to applicants: written and approved once, used by many steps -------------------
+  const msgUsedIn = (id: string) =>
+    Object.values(store.processes()).flatMap((p) => {
+      const d = p.draft ?? p.live;
+      return d && d.nodes.some((n) => String(n.config.template ?? "") === id) ? [{ catalogId: d.catalogId, name: d.name }] : [];
+    });
+  const msgView = (id: string) => {
+    const m = store.message(id)!;
+    const base = (m.draft ?? m.live)!.tpl;
+    return {
+      id,
+      name: base.name,
+      purpose: base.purpose,
+      status: m.draft && m.live ? "changed" : m.draft ? "draft" : "live",
+      params: paramsOf(base),
+      live: m.live,
+      draft: m.draft ?? null,
+      history: m.history,
+      usedIn: msgUsedIn(id),
+    };
+  };
+  const cleanMsg = (b: { name?: string; purpose?: string; subject?: Bilingual; body?: Bilingual } | undefined) => {
+    const t = (x: unknown, n: number) => String(x ?? "").trim().slice(0, n);
+    const out = { name: t(b?.name, 80), purpose: t(b?.purpose, 200), subject: { de: t(b?.subject?.de, 160), en: t(b?.subject?.en, 160) }, body: { de: t(b?.body?.de, 4000), en: t(b?.body?.en, 4000) } };
+    if (!out.name) return "Please give the template a name.";
+    if (!out.subject.de || !out.subject.en || !out.body.de || !out.body.en) return "Subject and text are needed in German and in English.";
+    return out;
+  };
+  app.get("/office/messages", async () => Object.keys(store.messages()).map(msgView));
+  app.post<{ Body: { name?: string; purpose?: string; subject?: Bilingual; body?: Bilingual } }>("/office/messages", async (req, reply) => {
+    const c = cleanMsg(req.body);
+    if (typeof c === "string") return bad(reply, c);
+    const slug = c.name.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "message";
+    let id = `msg-${slug}`;
+    for (let i = 2; store.message(id); i++) id = `msg-${slug}-${i}`;
+    store.setMessage(id, { live: null, draft: { tpl: { id, ...c, version: 1 }, author: req.staff!.name, createdAt: now().toISOString() }, history: [] });
+    return reply.code(201).send(msgView(id));
+  });
+  app.put<{ Params: { id: string }; Body: { name?: string; purpose?: string; subject?: Bilingual; body?: Bilingual } }>("/office/messages/:id/draft", async (req, reply) => {
+    const m = store.message(req.params.id);
+    if (!m) return notFound(reply);
+    const c = cleanMsg(req.body);
+    if (typeof c === "string") return bad(reply, c);
+    store.setMessage(req.params.id, { ...m, draft: { tpl: { id: req.params.id, ...c, version: (m.live?.tpl.version ?? 0) + 1 }, author: req.staff!.name, createdAt: now().toISOString() } });
+    return msgView(req.params.id);
+  });
+  app.post<{ Params: { id: string } }>("/office/messages/:id/approve", async (req, reply) => {
+    const m = store.message(req.params.id);
+    if (!m?.draft) return notFound(reply);
+    if (m.draft.author === req.staff!.name) return bad(reply, "You wrote this version. Another person has to approve it.", 409);
+    const approved = { ...m.draft, approvedBy: req.staff!.name, approvedAt: now().toISOString() };
+    store.setMessage(req.params.id, { live: approved, draft: undefined, history: m.live ? [...m.history, m.live] : m.history });
+    return msgView(req.params.id);
+  });
+  app.post<{ Params: { id: string } }>("/office/messages/:id/discard", async (req, reply) => {
+    const m = store.message(req.params.id);
+    if (!m?.draft) return notFound(reply);
+    if (!m.live) {
+      if (msgUsedIn(req.params.id).length) return bad(reply, "This template is used by a process.", 409);
+      store.setMessage(req.params.id, { live: null, history: [] });
+      return { id: req.params.id, deleted: true };
+    }
+    store.setMessage(req.params.id, { ...m, draft: undefined });
+    return msgView(req.params.id);
+  });
+
+  // ---- The office's connections to its systems ---------------------------------------------------
+  const connView = (system: string) => {
+    const c = store.connections()[system]!;
+    const def = CONNECTORS.find((x) => x.id === system)!;
+    const usedIn = Object.values(store.processes()).flatMap((p) => {
+      const d = p.live ?? p.draft;
+      return d && d.nodes.some((n) => n.kind === "connector" && n.config.system === system) ? [{ catalogId: d.catalogId, name: d.name }] : [];
+    });
+    return { ...c, name: def.name, actions: def.actions, usedIn, owner: "The office (administrators)" };
+  };
+  app.get("/office/connections", async () => CONNECTORS.map((c) => connView(c.id)));
+  app.put<{ Params: { system: string }; Body: { enabled?: boolean; mode?: "sandbox" | "live" } }>("/office/connections/:system", async (req, reply) => {
+    const c = store.connections()[req.params.system];
+    if (!c) return notFound(reply);
+    store.setConnection({ ...c, ...(req.body?.enabled !== undefined ? { enabled: Boolean(req.body.enabled) } : {}), ...(req.body?.mode === "sandbox" || req.body?.mode === "live" ? { mode: req.body.mode } : {}) });
+    return connView(req.params.system);
+  });
+  app.post<{ Params: { system: string } }>("/office/connections/:system/test", async (req, reply) => {
+    const c = store.connections()[req.params.system];
+    if (!c) return notFound(reply);
+    store.setConnection({ ...c, lastTest: { at: now().toISOString(), by: req.staff!.name, ok: c.enabled } });
+    return connView(req.params.system);
+  });
+
   // ---- Process builder ------------------------------------------------------------
   /** Every process belongs to one entry of the central process catalogue. */
   const FIELD_TYPES: FieldType[] = ["text", "number", "date", "yesno"];
@@ -848,6 +957,16 @@ export function buildApp(opts: AppOptions) {
           };
         })
       : [];
+  const cleanTests = (tests: unknown): ProcessTest[] =>
+    Array.isArray(tests)
+      ? (tests as ProcessTest[]).slice(0, 30).map((t) => ({
+          id: String(t.id ?? randomUUID()).slice(0, 60),
+          name: String(t.name ?? "Test").slice(0, 120),
+          sample: ["incomplete", "complete", "internship", "unclear"].includes(t.sample) ? t.sample : "complete",
+          ...(t.decision && ["approved", "rejected", "info", "confirmed"].includes(t.decision) ? { decision: t.decision } : {}),
+          expect: { visits: Array.isArray(t.expect?.visits) ? t.expect.visits.map((x) => String(x).slice(0, 80)).slice(0, 60) : [], ...(t.expect && "waitingAt" in t.expect ? { waitingAt: t.expect.waitingAt === null ? null : String(t.expect.waitingAt ?? "").slice(0, 80) } : {}) },
+        }))
+      : [];
   const cleanDef = (def: ProcessDef | undefined, by: string, version: number): ProcessDef | null => {
     if (!def || !Array.isArray(def.nodes) || !Array.isArray(def.edges) || def.nodes.length > 80 || def.edges.length > 200) return null;
     if (!isCatalogVariant(def.catalogId)) return null;
@@ -859,7 +978,17 @@ export function buildApp(opts: AppOptions) {
       updatedAt: now().toISOString(),
       updatedBy: by,
       inputs: cleanInputs(def.inputs),
-      nodes: def.nodes.map((n) => ({ id: String(n.id), kind: n.kind, position: { x: Number(n.position?.x) || 0, y: Number(n.position?.y) || 0 }, config: n.config ?? {} })),
+      ...(def.owner ? { owner: String(def.owner).slice(0, 80) } : {}),
+      ...(def.changeNote ? { changeNote: String(def.changeNote).slice(0, 400) } : {}),
+      tests: cleanTests(def.tests),
+      nodes: def.nodes.map((n) => ({
+        id: String(n.id),
+        kind: n.kind,
+        ...(typeof n.name === "string" ? { name: n.name.slice(0, 80) } : {}),
+        ...(typeof n.purpose === "string" && n.purpose ? { purpose: n.purpose.slice(0, 200) } : {}),
+        position: { x: Number(n.position?.x) || 0, y: Number(n.position?.y) || 0 },
+        config: Object.fromEntries(Object.entries(n.config ?? {}).filter(([, v]) => typeof v === "string" || typeof v === "number")),
+      })),
       edges: def.edges.map((e) => ({ id: String(e.id), source: String(e.source), sourceHandle: String(e.sourceHandle), target: String(e.target) })),
     };
   };
@@ -870,6 +999,23 @@ export function buildApp(opts: AppOptions) {
     const checks = store.config().templateChecks;
     const unchecked = def.inputs.filter((i) => i.type === "document" && known.has(i.ref) && !checks[i.ref]).map((i) => ({ message: { de: `Die Vorlage „${i.ref}“ wurde noch nicht mit einem Beispiel geprüft und bestätigt.`, en: `The template “${i.ref}” has not been tested with a sample and confirmed yet.` } }));
     extra.push(...unchecked);
+    for (const n of def.nodes) {
+      const id = String(n.config.template ?? "");
+      if (!id) continue;
+      const label = n.name ?? n.kind;
+      const tpl = store.liveMessage(id);
+      if (!tpl) {
+        extra.push({ message: { de: `„${label}“: Die Nachrichtenvorlage „${id}“ gibt es nicht oder sie ist nicht freigegeben.`, en: `“${label}”: the message template “${id}” does not exist or has no approved version.` } });
+        continue;
+      }
+      let bound: Record<string, unknown> = {};
+      try {
+        bound = JSON.parse(String(n.config.params || "{}")) as Record<string, unknown>;
+      } catch {
+        extra.push({ message: { de: `„${label}“: Die Werte für die Vorlage sind kaputt.`, en: `“${label}”: the values for the template are broken.` } });
+      }
+      for (const param of paramsOf(tpl)) if (!String(bound[param] ?? "").trim()) extra.push({ message: { de: `„${label}“: Für {${param}} der Vorlage „${tpl.name}“ ist nichts eingesetzt.`, en: `“${label}”: nothing is put into {${param}} of the template “${tpl.name}”.` } });
+    }
     return [...validateProcess(def), ...extra];
   };
   const nextVersion = (category: string) => (store.process(category)?.live?.version ?? 0) + 1;
@@ -919,6 +1065,8 @@ export function buildApp(opts: AppOptions) {
     if (!def) return bad(reply, "Invalid process.");
     const issues = inputIssues(def);
     if (issues.length) return reply.code(422).send({ error: "The process has open issues.", issues });
+    const tests = await runProcessTests(def);
+    if (tests.some((t) => !t.ok)) return reply.code(422).send({ error: "The process fails its own test cases.", tests });
     store.setProcess(cat, { live: def, draft: undefined, history: p.live ? [...p.history, p.live] : p.history });
     return def;
   });
@@ -932,35 +1080,112 @@ export function buildApp(opts: AppOptions) {
     return store.process(cat)!.draft;
   });
 
-  /** Runs a process on a sample case in a scratch store. Nothing real is touched. */
+  const SAMPLES: Record<string, { person: string; defects: Defect[]; source: "web" | "portal" }> = {
+    unclear: { person: "paul", defects: ["unclear_income"], source: "portal" },
+    incomplete: { person: "mira", defects: ["parent_unsigned", "host_missing"], source: "portal" },
+    complete: { person: "lea", defects: [], source: "web" },
+    internship: { person: "jonas", defects: ["contract_unsigned"], source: "portal" },
+  };
+
+  /** Runs a process on a sample case in a scratch store. Nothing real is touched, and timers do not hold the process back. */
+  const runSample = async (def: ProcessDef, sampleKey: string | undefined, decision: "approved" | "rejected" | "info" | "confirmed" | undefined) => {
+    const sample = SAMPLES[sampleKey ?? "complete"] ?? SAMPLES.complete!;
+    const scratch = new ScratchStore();
+    const person = getPerson(sample.person, now());
+    let a = newApplication(scratch, { student: person.student, stay: person.stay, language: "en", source: sample.source }, now());
+    for (const d of sampleDocuments(person, sample.defects, "en")) a = addDocument(scratch, a, { filename: d.filename, mimeType: "application/pdf", content: d.content }, "student", now());
+    a = { ...a, status: "submitted", submittedAt: now().toISOString() };
+    const ctx = engineCtx(scratch, { instantWaits: true });
+    a = await startRun(def, a, ctx);
+    if (decision && a.flow?.waiting) {
+      if (decision === "approved") a = { ...a, status: "approved", decision: { outcome: "approved", monthlyAmount: estimate(a, now()).monthly, note: "Test explanation", decidedAt: now().toISOString(), decidedBy: "Test" } };
+      if (decision === "rejected") a = { ...a, status: "rejected", decision: { outcome: "rejected", monthlyAmount: 0, note: "Test explanation", decidedAt: now().toISOString(), decidedBy: "Test" } };
+      if (decision === "info") a = { ...a, status: "info_requested", officeMessage: "Test question" };
+      if (decision === "confirmed") a = { ...a, documents: a.documents.map((d) => ({ ...d, extraction: { ...d.extraction, needsReview: false } })) };
+      a = await resumeRun(def, a, decision, ctx);
+    }
+    return { log: a.flow?.log ?? [], status: a.status, waiting: a.flow?.waiting ?? null, finished: a.flow?.finished ?? false, failed: a.flow?.failed ?? false, error: a.flow?.error ?? null, mails: a.outbox ?? [], integrations: a.integrations ?? [], team: a.assignedTeam ?? null, assignedTo: a.assignedTo?.name ?? null };
+  };
+
+  /** The sample cases of a process: did each one go through the steps and stop where it was supposed to? */
+  const runProcessTests = async (def: ProcessDef) => {
+    const results: { id: string; name: string; ok: boolean; failures: string[] }[] = [];
+    for (const t of def.tests ?? []) {
+      const r = await runSample(def, t.sample, t.decision as "approved" | "rejected" | "info" | "confirmed" | undefined);
+      const visited = new Set(r.log.map((l) => l.nodeId));
+      const failures: string[] = [];
+      if (r.failed) failures.push(`The process stopped with an error: ${r.error?.message ?? "unknown"}`);
+      for (const id of t.expect.visits) if (!visited.has(id)) failures.push(`Did not pass through “${def.nodes.find((n) => n.id === id)?.name ?? id}”`);
+      if (t.expect.waitingAt !== undefined && (t.expect.waitingAt ?? null) !== r.waiting) failures.push(t.expect.waitingAt === null ? `Should not stop anywhere but stopped at “${def.nodes.find((n) => n.id === r.waiting)?.name ?? r.waiting}”` : `Should stop at “${def.nodes.find((n) => n.id === t.expect.waitingAt)?.name ?? t.expect.waitingAt}” but ${r.waiting ? `stopped at “${def.nodes.find((n) => n.id === r.waiting)?.name ?? r.waiting}”` : "did not stop"}`);
+      results.push({ id: t.id, name: t.name, ok: failures.length === 0, failures });
+    }
+    return results;
+  };
+
   app.post<{ Body: { def?: ProcessDef; sample?: string; decision?: "approved" | "rejected" | "info" | "confirmed" } }>("/office/processes/test", async (req, reply) => {
     const def = cleanDef(req.body?.def, req.staff!.name, 0);
     if (!def) return bad(reply, "Invalid process.");
     const issues = inputIssues(def);
     if (issues.length) return reply.code(422).send({ error: "The process has open issues.", issues });
-    const samples: Record<string, { person: string; defects: Defect[]; source: "web" | "portal" }> = {
-      unclear: { person: "paul", defects: ["unclear_income"], source: "portal" },
-      incomplete: { person: "mira", defects: ["parent_unsigned", "host_missing"], source: "portal" },
-      complete: { person: "lea", defects: [], source: "web" },
-      internship: { person: "jonas", defects: ["contract_unsigned"], source: "portal" },
+    return runSample(def, req.body?.sample, req.body?.decision);
+  });
+
+  app.post<{ Body: { def?: ProcessDef } }>("/office/processes/tests", async (req, reply) => {
+    const def = cleanDef(req.body?.def, req.staff!.name, 0);
+    if (!def) return bad(reply, "Invalid process.");
+    const issues = inputIssues(def);
+    if (issues.length) return reply.code(422).send({ error: "The process has open issues.", issues });
+    return { results: await runProcessTests(def) };
+  });
+
+  /** What changes against the live version, and what the process depends on: shown before publishing. */
+  app.post<{ Body: { def?: ProcessDef } }>("/office/processes/impact", async (req, reply) => {
+    const def = cleanDef(req.body?.def, req.staff!.name, 0);
+    if (!def) return bad(reply, "Invalid process.");
+    const live = store.process(def.catalogId)?.live ?? null;
+    const deps = processDependencies(def);
+    return {
+      changes: diffProcess(live, def),
+      liveVersion: live?.version ?? null,
+      dependencies: {
+        rules: deps.rules === null ? "all live rules" : `${deps.rules.length} rules`,
+        messages: deps.messages.map((id) => store.liveMessage(id)?.name ?? id),
+        documents: deps.documents.map((id) => allTemplates(store).find((t) => t.id === id)?.name.en ?? id),
+        systems: deps.systems.map((id) => CONNECTORS.find((c) => c.id === id)?.name.en ?? id),
+      },
     };
-    const sample = samples[req.body?.sample ?? "complete"] ?? samples.complete!;
-    const scratch = new ScratchStore();
-    const person = getPerson(sample.person, now());
-    let a = newApplication(scratch, { student: person.student, stay: person.stay, language: "de", source: sample.source }, now());
-    for (const d of sampleDocuments(person, sample.defects, "en")) a = addDocument(scratch, a, { filename: d.filename, mimeType: "application/pdf", content: d.content }, "student", now());
-    a = { ...a, status: "submitted", submittedAt: now().toISOString() };
-    const ctx = engineCtx(scratch);
-    a = await startRun(def, a, ctx);
-    const decision = req.body?.decision;
-    if (decision && a.flow?.waiting) {
-      if (decision === "approved") a = { ...a, status: "approved", decision: { outcome: "approved", monthlyAmount: estimate(a, now()).monthly, note: "", decidedAt: now().toISOString(), decidedBy: "Test" } };
-      if (decision === "rejected") a = { ...a, status: "rejected" };
-      if (decision === "info") a = { ...a, status: "info_requested" };
-      if (decision === "confirmed") a = { ...a, documents: a.documents.map((d) => ({ ...d, extraction: { ...d.extraction, needsReview: false } })) };
-      a = await resumeRun(def, a, decision, ctx);
+  });
+
+  // ---- Timers: a waiting step lets the process carry on when its time is up ------------------
+  const runTimers = async () => {
+    const def = liveDef();
+    if (!def) return 0;
+    let fired = 0;
+    for (const a of store.list()) {
+      if (!timerDue(a, now())) continue;
+      store.put(await resumeTimer(def, a, engineCtx()));
+      fired += 1;
     }
-    return { log: a.flow?.log ?? [], status: a.status, waiting: a.flow?.waiting ?? null, finished: a.flow?.finished ?? false, mails: a.outbox ?? [], integrations: a.integrations ?? [], team: a.assignedTeam ?? null };
+    return fired;
+  };
+  app.post("/admin/timers/run", async () => ({ fired: await runTimers() }));
+  /** Demo: moves the clock ahead so a timer can be shown without waiting for days. */
+  app.post<{ Body: { days?: number } }>("/admin/clock", async (req, reply) => {
+    const days = Number(req.body?.days ?? 0);
+    if (!Number.isFinite(days) || days < 0 || days > 400) return bad(reply, "Please give a number of days between 0 and 400.");
+    store.advanceClock(days);
+    return { aheadDays: Math.round(store.clockOffsetMs() / 86_400_000), fired: await runTimers() };
+  });
+
+  /** A case whose process stopped with an error can be started again by a caseworker. */
+  app.post<{ Params: { id: string } }>("/office/cases/:id/restart", async (req, reply) => {
+    const a = store.get(req.params.id);
+    if (!a) return notFound(reply);
+    const me = req.staff!;
+    if (!me.isAdmin && !me.isCaseworker) return bad(reply, "Only caseworkers and administrators can restart a process.", 403);
+    if (!a.flow?.failed) return bad(reply, "This case's process has not stopped with an error.", 409);
+    const def = liveDef();
+    return v(def ? store.put(await retryRun(def, a, engineCtx())) : a);
   });
 
   // ---- Oversight: compare the same process across offices ------------------------------

@@ -51,6 +51,14 @@ Alternative for step 4: if the amount is too unclear to read, use "Request docum
 - The question assistant works offline. The optional live AI needs `ANTHROPIC_API_KEY` in `.env`. Without it the checkbox is hidden and the answers come from the stored sources.
 - Sample documents are generated with start dates a few months from today, so they stay valid whenever you present. Do not use an old downloaded copy after a reset on a different day.
 
+## Optional extras: why this builder is safer than a generic one
+
+- **Data inspector (30 s).** In "Processes", press "Test run", choose "Unclear scan". In the steps list open "Data" under "Review unclear fields": the brief list and the reasons the step handed on. Say: every step shows what it produced, so a wrong message can be traced to its source.
+- **Test cases (30 s).** Press "Test cases (5)", then "Run all". Change a step, for example remove "Check required inputs", and run again: a case fails with the reason. Publishing is blocked until the samples hold or are changed on purpose.
+- **Publish (30 s).** Press "Publish": test cases, what changes against the live version, the rules, message templates and systems the process depends on, owner and a required reason.
+- **Failure (45 s).** In "Settings › Connections to systems" switch the payment connection off, approve a case: it stops with "The process stopped", visible in the Inbox. Switch the connection on and press "Try again": it carries on at the payment step and sends the approval message.
+- **Timer (30 s).** Ask a question about an unclear field (see above). The case shows "The process is waiting". Account menu › "Skip 7 days (demo)": the reminder goes out.
+
 ## Language
 
 The interface, the demo data (students, universities, courses), the sample PDFs, the process texts (approval and rejection messages, notes for the caseworker) and the staff titles are in English by default. The DE/EN toggle switches the interface and the samples page; messages to an applicant follow the language of that application. Not translated: the sample decision letter for "Check my letter" (it mirrors a German decision notice) and the legal sources, which are German law.

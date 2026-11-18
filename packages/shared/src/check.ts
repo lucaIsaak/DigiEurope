@@ -17,12 +17,13 @@ export function runChecks(
   states: Record<string, RuleState>,
   now: Date = new Date(),
   rules: Rule[] = RULES,
-  opts: { inputs?: ProcessInput[]; templates?: DocumentTemplate[] } = {},
+  opts: { inputs?: ProcessInput[]; templates?: DocumentTemplate[]; /** rules: only the rules. inputs: only the required inputs. all: both (the default). */ scope?: "all" | "rules" | "inputs" } = {},
 ): CheckReport {
   const facts: Facts = buildFacts(app, now);
   const findings: Finding[] = [];
   const passed: CheckReport["passed"] = [];
-  for (const rule of rules) {
+  const scope = opts.scope ?? "all";
+  for (const rule of scope === "inputs" ? [] : rules) {
     if (states[rule.id]?.status !== "approved") continue;
     const result = evaluateRule(rule, facts);
     if (result === "fail") {
@@ -38,7 +39,7 @@ export function runChecks(
   }
   // Inputs the office requires for this process. A missing one is only reported when no rule already says so for the same document.
   const requirements = opts.inputs ? computeRequirements(opts.inputs, app, opts.templates ?? BUILTIN_TEMPLATES, now) : undefined;
-  for (const r of requirements ?? []) {
+  for (const r of scope === "rules" ? [] : requirements ?? []) {
     if (!r.applies || !r.required || r.state === "ok") continue;
     if (r.type === "document" && findings.some((f) => f.documentKind === r.ref)) continue;
     findings.push(

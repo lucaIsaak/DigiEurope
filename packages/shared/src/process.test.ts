@@ -52,8 +52,8 @@ describe("question path", () => {
   });
   it("an older copy that ended right after the question is upgraded once", () => {
     const old = defaultProcess();
-    old.nodes = old.nodes.filter((n) => n.id !== "ask-q" && n.id !== "wait-q");
-    old.edges = old.edges.filter((e) => e.source !== "ask-q" && e.source !== "wait-q").map((e) => (e.id === "review:info" ? { ...e, target: "end-review" } : e));
+    old.nodes = old.nodes.filter((n) => n.id !== "ask-q" && n.id !== "wait-q" && n.id !== "remind");
+    old.edges = old.edges.filter((e) => e.source !== "ask-q" && e.source !== "wait-q" && e.source !== "remind").map((e) => (e.id === "review:info" ? { ...e, target: "end-review" } : e));
     const up = upgradeQuestionPath(old);
     expect(up.edges.find((e) => e.id === "review:info")!.target).toBe("ask-q");
     expect(validateProcess(up)).toEqual([]);

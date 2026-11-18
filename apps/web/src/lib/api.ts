@@ -2,6 +2,8 @@ import type { Condition, Application, CaseView, DocumentTemplate, FieldType, Tem
 
 export class ApiError extends Error {
   issues?: ProcessIssue[];
+  /** The sample cases of a process that failed, when publishing was refused because of them. */
+  tests?: ProcessTestResult[];
   constructor(message: string, readonly status: number) {
     super(message);
   }
@@ -24,6 +26,7 @@ async function call<T>(path: string, init?: RequestInit & { json?: unknown }): P
     }
     const err = new ApiError(body.error ?? res.statusText, res.status);
     err.issues = (body as { issues?: ProcessIssue[] }).issues;
+    err.tests = (body as { tests?: ProcessTestResult[] }).tests;
     throw err;
   }
   return res.json() as Promise<T>;
@@ -61,6 +64,9 @@ export interface CaseSummary {
   warnings: number;
   estimateMonthly: number;
   assignedTo: { id: string; name: string } | null;
+  /** The process stopped with an error: the case needs attention. */
+  failed: boolean;
+  problem: string | null;
   team: string | null;
   waitingAt: string | null;
   /** Required documents that are in, and how many are required. */
@@ -240,11 +246,65 @@ export interface CompareResult {
   offices: CompareOffice[];
 }
 
+export interface ProcessTestResult {
+  id: string;
+  name: string;
+  ok: boolean;
+  failures: string[];
+}
+
+export interface ProcessImpact {
+  changes: { kind: "added" | "removed" | "changed"; text: string }[];
+  liveVersion: number | null;
+  dependencies: { rules: string; messages: string[]; documents: string[]; systems: string[] };
+}
+
+export interface MessageVersionView {
+  tpl: { id: string; name: string; purpose: string; subject: { de: string; en: string }; body: { de: string; en: string }; version: number };
+  author: string;
+  createdAt: string;
+  approvedBy?: string;
+  approvedAt?: string;
+}
+
+export interface MessageEntry {
+  id: string;
+  name: string;
+  purpose: string;
+  status: "live" | "draft" | "changed";
+  params: string[];
+  live: MessageVersionView | null;
+  draft: MessageVersionView | null;
+  history: MessageVersionView[];
+  usedIn: { catalogId: string; name: string }[];
+}
+
+export interface MessageBody {
+  name: string;
+  purpose: string;
+  subject: { de: string; en: string };
+  body: { de: string; en: string };
+}
+
+export interface ConnectionView {
+  system: string;
+  name: { de: string; en: string };
+  enabled: boolean;
+  mode: "sandbox" | "live";
+  lastTest?: { at: string; by: string; ok: boolean };
+  actions: { id: string; label: { de: string; en: string } }[];
+  usedIn: { catalogId: string; name: string }[];
+  owner: string;
+}
+
 export interface TestRunResult {
   log: RunLogEntry[];
   status: string;
   waiting: string | null;
   finished: boolean;
+  failed?: boolean;
+  error?: { nodeId: string; message: string; at: string } | null;
+  assignedTo?: string | null;
   mails: Mail[];
   integrations: IntegrationEntry[];
   team: string | null;
@@ -323,6 +383,18 @@ export const api = {
   saveDraft: (def: ProcessDef) => call<ProcessDef>("/office/processes/draft", { method: "PUT", json: { def } }),
   validateProcess: (def: ProcessDef) => call<{ issues: ProcessIssue[] }>("/office/processes/validate", { method: "POST", json: { def } }),
   publish: (def: ProcessDef) => call<ProcessDef>("/office/processes/publish", { method: "POST", json: { def } }),
+  processTests: (def: ProcessDef) => call<{ results: ProcessTestResult[] }>("/office/processes/tests", { method: "POST", json: { def } }),
+  processImpact: (def: ProcessDef) => call<ProcessImpact>("/office/processes/impact", { method: "POST", json: { def } }),
+  restartCase: (id: string) => call<CaseView>(`/office/cases/${id}/restart`, { method: "POST", json: {} }),
+  messages: () => call<MessageEntry[]>("/office/messages"),
+  createMessage: (body: MessageBody) => call<MessageEntry>("/office/messages", { method: "POST", json: body }),
+  saveMessageDraft: (id: string, body: MessageBody) => call<MessageEntry>(`/office/messages/${id}/draft`, { method: "PUT", json: body }),
+  approveMessage: (id: string) => call<MessageEntry>(`/office/messages/${id}/approve`, { method: "POST", json: {} }),
+  discardMessage: (id: string) => call<MessageEntry | { id: string; deleted: true }>(`/office/messages/${id}/discard`, { method: "POST", json: {} }),
+  connections: () => call<ConnectionView[]>("/office/connections"),
+  setConnection: (system: string, body: { enabled?: boolean; mode?: "sandbox" | "live" }) => call<ConnectionView>(`/office/connections/${system}`, { method: "PUT", json: body }),
+  testConnection: (system: string) => call<ConnectionView>(`/office/connections/${system}/test`, { method: "POST", json: {} }),
+  advanceClock: (days: number) => call<{ aheadDays: number; fired: number }>("/admin/clock", { method: "POST", json: { days } }),
   restore: (category: string, version: number) => call<ProcessDef>("/office/processes/restore", { method: "POST", json: { category, version } }),
   testRun: (def: ProcessDef, sample: string, decision?: string) =>
     call<TestRunResult>("/office/processes/test", { method: "POST", json: { def, sample, decision } }),

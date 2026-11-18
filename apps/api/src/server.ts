@@ -12,9 +12,10 @@ if (store.isNew && process.env.SEED_DEMO_DATA !== "false") {
   console.log(`Seeded demo data into ${dataDir}`);
 }
 
-buildApp({ store, logger: true, webUrl: process.env.WEB_URL })
-  .listen({ port, host: "0.0.0.0" })
-  .catch((err) => {
-    console.error(err);
-    process.exit(1);
-  });
+const api = buildApp({ store, logger: true, webUrl: process.env.WEB_URL });
+api.listen({ port, host: "0.0.0.0" }).catch((err) => {
+  console.error(err);
+  process.exit(1);
+});
+// Timers: every minute, processes whose waiting step has run out carry on.
+setInterval(() => void api.inject({ method: "POST", url: "/admin/timers/run" }).catch(() => undefined), 60_000);

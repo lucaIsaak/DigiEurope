@@ -21,7 +21,7 @@ import {
   type StudentInfo,
 } from "@digieurope/shared";
 import { extractDocument, specOf } from "./documents.js";
-import { draftMail, nodeText, questionText } from "./engine.js";
+import { draftMail, nodeText, questionText, templateText } from "./engine.js";
 import { readConfigured } from "./extraction.js";
 import type { Store } from "./store.js";
 
@@ -32,11 +32,11 @@ export const allTemplates = (store: Store): DocumentTemplate[] => [...BUILTIN_TE
 export const allSpecs = (store: Store) => allTemplates(store).map(specOf);
 
 /** Runs the approved rules and the inputs the office's live process requires. */
-export function checksFor(store: Store, app: Application, now: Date = new Date(), ruleIds?: string[] | null) {
+export function checksFor(store: Store, app: Application, now: Date = new Date(), ruleIds?: string[] | null, scope: "all" | "rules" | "inputs" = "all") {
   const live = store.process(DEFAULT_CATEGORY)?.live;
   const ids = ruleIds === undefined ? (live ? processRuleIds(live) : null) : ruleIds;
   const rules = ids === null ? store.liveRules() : store.liveRules().filter((r) => ids.includes(r.id));
-  return runChecks(app, store.ruleStates(), now, rules, { inputs: live?.inputs, templates: allTemplates(store) });
+  return runChecks(app, store.ruleStates(), now, rules, { inputs: live?.inputs, templates: allTemplates(store), scope });
 }
 
 /** Open points about documents themselves: unreadable ones and fields read with low confidence. In the student's language. */
@@ -99,11 +99,13 @@ export function questionDraft(store: Store, app: Application, now: Date = new Da
   const reviewNode = def?.nodes.find((n) => n.id === app.flow?.waiting && n.kind === "review_fields");
   const target = reviewNode ? def?.edges.find((e) => e.source === reviewNode.id && e.sourceHandle === "info")?.target : undefined;
   const node = def?.nodes.find((n) => n.id === target && n.kind === "request_documents" && n.config.sending === "caseworker");
-  if (node && app.flow?.vars?.review_list !== undefined) {
-    const fresh = Object.fromEntries(Object.entries(reviewReport(store, app)).flatMap(([k, v]) => [[`review_${k}`, v], [`${reviewNode!.id}.review_${k}`, v]]));
+  if (node && app.flow?.vars && reviewNode && Object.keys(app.flow.vars).some((k) => k.endsWith(".review_list"))) {
+    const fresh = Object.fromEntries(Object.entries(reviewReport(store, app)).flatMap(([k, v]) => [[`${reviewNode.id}.review_${k}`, v]]));
     const vars = { ...app.flow.vars, ...fresh };
-    const message = nodeText(node, "fallback", app, vars).trim();
-    return { subject: app.language === "de" ? `Rückfrage zu Ihrem Antrag ${app.reference}` : `Question about your application ${app.reference}`, message, items: (vars.review_list ?? "").split("\n").filter(Boolean).length };
+    const tpl = node.config.template ? store.liveMessage(String(node.config.template)) : null;
+    const t = tpl ? templateText(tpl, node, app, vars) : null;
+    const message = (t ? t.middle : nodeText(node, "fallback", app, vars)).trim();
+    return { subject: t?.subject ?? (app.language === "de" ? `Rückfrage zu Ihrem Antrag ${app.reference}` : `Question about your application ${app.reference}`), message, items: (fresh[`${reviewNode.id}.review_list`] ?? "").split("\n").filter(Boolean).length };
   }
   const report = checksFor(store, app, now);
   const extra = documentQuestions(store, app);

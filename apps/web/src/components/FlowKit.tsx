@@ -6,16 +6,17 @@ import { Background, BackgroundVariant, Controls, Handle, MarkerType, Position, 
 import "@xyflow/react/dist/style.css";
 import { useMemo } from "react";
 import { useTheme } from "@/lib/theme";
-import { AlertTriangle, Check, Clock, FilePlus2, Flag, GitBranch, ListChecks, Plug, ScanText, Send, ShieldCheck, Sparkles, UserCheck, Users, Zap, type LucideIcon } from "lucide-react";
+import { AlertTriangle, Check, ClipboardCheck, Clock, FilePlus2, Flag, GitBranch, ListChecks, Plug, ScanText, Send, ShieldCheck, Sparkles, UserCheck, Users, Zap, type LucideIcon } from "lucide-react";
 import { useI18n } from "@/lib/i18n";
 import type { MessageKey } from "@/lib/messages";
 
-export type StepData = { kind: NodeKind; config: Record<string, ConfigValue>; state?: "visited" | "issue" | "only"; issue?: string };
+export type StepData = { kind: NodeKind; name?: string; purpose?: string; config: Record<string, ConfigValue>; state?: "visited" | "issue" | "only"; issue?: string };
 export type StepNode = Node<StepData, "step">;
 
 export const ICONS: Record<NodeKind, LucideIcon> = {
   trigger: Zap,
   run_rules: ShieldCheck,
+  check_inputs: ClipboardCheck,
   read_documents: ScanText,
   review_fields: ListChecks,
   condition: GitBranch,
@@ -82,8 +83,8 @@ function StepView({ id, data, selected }: NodeProps<StepNode>) {
       <div className="nd-head">
         <span className="ico"><Icon size={16} strokeWidth={2.2} /></span>
         <span>
-          <div className="nd-title">{bi(spec.title)}</div>
-          <div className="nd-cat">{t(`builder.cat.${spec.category}` as MessageKey)}</div>
+          <div className="nd-title">{data.name?.trim() || bi(spec.title)}</div>
+          <div className="nd-cat">{data.name?.trim() ? bi(spec.title) : t(`builder.cat.${spec.category}` as MessageKey)}</div>
         </span>
         {spec.ai && <span className="nd-ai"><Sparkles size={11} />{t("builder.ai")}</span>}
       </div>
@@ -107,7 +108,7 @@ function StepView({ id, data, selected }: NodeProps<StepNode>) {
 }
 export const nodeTypes = { step: StepView };
 
-export const toRfNode = (n: FlowNode): StepNode => ({ id: n.id, type: "step", position: n.position, data: { kind: n.kind, config: n.config } });
+export const toRfNode = (n: FlowNode): StepNode => ({ id: n.id, type: "step", position: n.position, data: { kind: n.kind, name: n.name, purpose: n.purpose, config: n.config } });
 export const ARROW = { type: MarkerType.ArrowClosed, width: 16, height: 16, color: "#8892a6" } as const;
 export const edgeBase = { type: "smoothstep" as const, pathOptions: { borderRadius: 14 }, markerEnd: ARROW, labelBgPadding: [8, 4] as [number, number], labelBgBorderRadius: 10 };
 
@@ -135,7 +136,7 @@ export function ProcessViewer({ def, only = [], height = 680 }: { def: Pick<Proc
   const { bi } = useI18n();
   const { theme } = useTheme();
   const { nodes, edges } = useMemo(() => {
-    const base = def.nodes.map((n) => ({ ...toRfNode(n), data: { kind: n.kind, config: n.config, state: only.includes(n.id) ? ("only" as const) : undefined } }));
+    const base = def.nodes.map((n) => ({ ...toRfNode(n), data: { kind: n.kind, name: n.name, purpose: n.purpose, config: n.config, state: only.includes(n.id) ? ("only" as const) : undefined } }));
     const label = (source: string, handle: string) => {
       const kind = def.nodes.find((n) => n.id === source)?.kind;
       const outs = kind ? outputsOf(kind) : [];

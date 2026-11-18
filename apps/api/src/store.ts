@@ -2,12 +2,12 @@ import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync 
 import { join } from "node:path";
 import {
   BUILTIN_TEMPLATES,
+  CONNECTORS,
   DEFAULT_CATEGORY,
   defaultInputs,
-  upgradeQuestionPath,
-  upgradeAssignment,
-  upgradeEnglish,
-  upgradeOutputs,
+  upgradeProcess,
+  DEFAULT_MESSAGE_TEMPLATES,
+  type MessageTemplate,
   defaultAssignment,
   assignCaseworker,
   type OfficeAssignment,
@@ -65,6 +65,39 @@ export function initialRules(states: Record<string, RuleState> = defaultRuleStat
   }
   return out;
 }
+
+/** One version of a message template: who wrote it, who approved it. */
+export interface MessageVersion {
+  tpl: MessageTemplate;
+  author: string;
+  createdAt: string;
+  approvedBy?: string;
+  approvedAt?: string;
+}
+
+/** A message template's lifecycle, like a rule's: the approved version, a change waiting for approval, earlier versions. */
+export interface MessageStore {
+  live: MessageVersion | null;
+  draft?: MessageVersion;
+  history: MessageVersion[];
+}
+
+/** The office's connection to a system. It belongs to the office, not to a person who set it up. */
+export interface Connection {
+  system: string;
+  enabled: boolean;
+  mode: "sandbox" | "live";
+  /** Last time someone tested it. */
+  lastTest?: { at: string; by: string; ok: boolean };
+}
+
+export const initialMessages = (): Record<string, MessageStore> =>
+  Object.fromEntries(
+    DEFAULT_MESSAGE_TEMPLATES.map((t) => [t.id, { live: { tpl: { ...t, version: 1 }, author: "Abroad unit (sample)", createdAt: "2026-08-20T10:00:00.000Z", approvedBy: "Herr Obermeier", approvedAt: "2026-09-01T09:00:00.000Z" }, history: [] }]),
+  );
+
+export const initialConnections = (): Record<string, Connection> =>
+  Object.fromEntries(CONNECTORS.map((c) => [c.id, { system: c.id, enabled: true, mode: "sandbox" as const }]));
 
 export interface TemplateCheck {
   confirmedAt: string;
@@ -139,12 +172,18 @@ interface Data {
   proposals: TemplateProposal[];
   /** Who gets which case, by the first letter of the family name. */
   assignment?: OfficeAssignment;
+  /** Messages to applicants, written and approved once. */
+  messages?: Record<string, MessageStore>;
+  /** The office's connections to its systems. */
+  connections?: Record<string, Connection>;
+  /** The demo clock runs ahead of the real one by this much, so timers can be shown without waiting. */
+  clockOffsetMs?: number;
 }
 
 const fresh = (): Data => ({
   seq: 0, applications: [], documents: [], parentTokens: {}, rules: initialRules(), config: defaultConfig(),
   staff: DEFAULT_STAFF.map((x) => ({ ...x })), sessions: {}, processes: { [DEFAULT_CATEGORY]: { live: defaultProcess(), history: [] } },
-  templates: [], proposals: [],
+  templates: [], proposals: [], messages: initialMessages(), connections: initialConnections(),
 });
 
 /** Prototype persistence: one JSON file plus an uploads folder. Without a directory everything stays in memory (tests). */
@@ -166,12 +205,14 @@ export class Store {
       const old = saved.processes as unknown as { live?: ProcessDef };
       const processes = old && "live" in old ? { [DEFAULT_CATEGORY]: old as unknown as ProcessStore } : saved.processes;
       for (const p of Object.values(processes)) for (const d of [p.live, p.draft, ...p.history]) if (d) { if (!d.catalogId) d.catalogId = DEFAULT_CATEGORY; if (!d.inputs) d.inputs = defaultInputs(); }
-      for (const p of Object.values(processes)) { if (p.live) p.live = upgradeOutputs(upgradeEnglish(upgradeAssignment(upgradeQuestionPath(p.live)))); if (p.draft) p.draft = upgradeOutputs(upgradeEnglish(upgradeAssignment(upgradeQuestionPath(p.draft)))); }
+      for (const p of Object.values(processes)) { if (p.live) p.live = upgradeProcess(p.live); if (p.draft) p.draft = upgradeProcess(p.draft); }
       const OLD_TITLES: Record<string, string> = { "Sachbearbeitung Ausland": "Caseworker, abroad", "Prozessverantwortliche": "Process owner", "Amtsleitung (Administrator)": "Head of office (administrator)", "Verantwortliche für Extraktoren und Vorlagen": "Owner of extractors and templates", "Aufsicht Bundesebene (alle Ämter)": "Federal oversight (all offices)", Sachbearbeitung: "Caseworker" };
       saved.staff = saved.staff.map((m) => ({ ...m, title: OLD_TITLES[m.title] ?? m.title }));
       const staff = [...saved.staff.map((m) => (m.isCaseworker === undefined ? { ...m, isCaseworker: DEFAULT_STAFF.find((d) => d.id === m.id)?.isCaseworker } : m)), ...DEFAULT_STAFF.filter((d) => !saved.staff.some((m) => m.id === d.id))];
       const rules = saved.rules ?? initialRules(saved.ruleStates);
       this.data = { ...fresh(), ...saved, staff, processes, rules, config: { ...defaultConfig(), ...saved.config } };
+      this.data.messages = { ...initialMessages(), ...(saved.messages ?? {}) };
+      this.data.connections = { ...initialConnections(), ...(saved.connections ?? {}) };
       // Cases that came in before the assignment existed get a caseworker by the same table.
       const table = this.data.assignment ?? defaultAssignment();
       this.data.applications = this.data.applications.map((a) => {
@@ -250,6 +291,15 @@ export class Store {
 
   staff = (): StaffMember[] => this.data.staff;
   addStaff = (m: StaffMember) => { this.data.staff = [...this.data.staff, m]; this.save(); };
+  messages = (): Record<string, MessageStore> => this.data.messages ?? {};
+  message = (id: string): MessageStore | undefined => this.data.messages?.[id];
+  /** The approved version of a message template, if there is one. */
+  liveMessage = (id: string): MessageTemplate | null => this.data.messages?.[id]?.live?.tpl ?? null;
+  setMessage = (id: string, m: MessageStore) => { this.data.messages = { ...(this.data.messages ?? {}), [id]: m }; this.save(); };
+  connections = (): Record<string, Connection> => this.data.connections ?? initialConnections();
+  setConnection = (c: Connection) => { this.data.connections = { ...this.connections(), [c.system]: c }; this.save(); };
+  clockOffsetMs = (): number => this.data.clockOffsetMs ?? 0;
+  advanceClock = (days: number) => { this.data.clockOffsetMs = this.clockOffsetMs() + days * 86_400_000; this.save(); };
   assignment = (): OfficeAssignment => this.data.assignment ?? defaultAssignment();
   setAssignment = (a: OfficeAssignment) => { this.data.assignment = a; this.save(); };
   setStaff(id: string, patch: Partial<StaffMember>) {

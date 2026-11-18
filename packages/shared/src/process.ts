@@ -5,6 +5,7 @@ import type { Bilingual, FieldType } from "./types.js";
 export type NodeKind =
   | "trigger"
   | "run_rules"
+  | "check_inputs"
   | "read_documents"
   | "review_fields"
   | "condition"
@@ -21,8 +22,13 @@ export type NodeKind =
 export type ConfigValue = string | number;
 
 export interface FlowNode {
+  /** Stable and invisible: texts refer to a step by this, so renaming or moving a step never breaks them. */
   id: string;
   kind: NodeKind;
+  /** What people see and call the step. Required and unique within a process. */
+  name?: string;
+  /** One line on what the step is for. */
+  purpose?: string;
   position: { x: number; y: number };
   config: Record<string, ConfigValue>;
 }
@@ -53,6 +59,22 @@ export interface ProcessInput {
   question?: { label: Bilingual; type: FieldType; help?: Bilingual };
 }
 
+/** A saved sample the process has to handle as expected, like the sample cases of a rule. Run before every publish. */
+export interface ProcessTest {
+  id: string;
+  name: string;
+  /** One of the sample cases of the builder: incomplete, complete, internship, unclear. */
+  sample: string;
+  /** What the caseworker does after the process stops for a person: approved, rejected, info or confirmed. */
+  decision?: string;
+  expect: {
+    /** Steps (by id) the case must pass through. */
+    visits: string[];
+    /** Where the process must stop for a person or a timer, or nowhere. */
+    waitingAt?: string | null;
+  };
+}
+
 export interface ProcessDef {
   id: string;
   /** Entry of the central process catalogue this process belongs to, for example "bafoeg.abroad". */
@@ -65,14 +87,23 @@ export interface ProcessDef {
   inputs: ProcessInput[];
   nodes: FlowNode[];
   edges: FlowEdge[];
+  /** Who is responsible for this process. */
+  owner?: string;
+  /** Why this version was published. */
+  changeNote?: string;
+  /** Samples that must still work before a new version goes live. */
+  tests?: ProcessTest[];
 }
 
 export interface FieldSpec {
   key: string;
   label: Bilingual;
-  type: "text" | "textarea" | "number" | "select";
+  /** rules: a list of rule ids. template: a message template. params: what the template's parameters are bound to. */
+  type: "text" | "textarea" | "number" | "select" | "rules" | "template" | "params";
   options?: { value: string; label: Bilingual }[];
   default: ConfigValue;
+  /** Must not be empty. */
+  required?: boolean;
 }
 
 export type Category = "start" | "check" | "decide" | "message" | "route" | "connector" | "finish";
@@ -83,7 +114,7 @@ export interface NodeSpec {
   title: Bilingual;
   description: Bilingual;
   /** Output handles. Steps with several outputs branch. */
-  outputs: { id: string; label: Bilingual }[];
+  outputs: { id: string; label: Bilingual; /** Followed only if it is connected; a missing connection is not an error. */ optional?: boolean }[];
   fields: FieldSpec[];
   /** True for steps that use AI (shown with a badge). */
   ai?: boolean;
@@ -162,13 +193,20 @@ export function processRuleIds(def: Pick<ProcessDef, "nodes">): string[] | null 
 }
 
 /** One thing a step hands on to the steps after it, usable as {name} in their texts. */
+export type OutputType = "text" | "number" | "list" | "date" | "yesno";
+
 export interface StepOutput {
   name: string;
   label: Bilingual;
   example: string;
+  /** What the value is, so a text can show a list as bullets or as a count, and a condition can refuse a list where a number is needed. */
+  type: OutputType;
 }
 
-const o = (name: string, de: string, en: string, example: string): StepOutput => ({ name, label: { de, en }, example });
+const o = (name: string, de: string, en: string, example: string, type: OutputType = "text"): StepOutput => ({ name, label: { de, en }, example, type });
+
+/** How a tile of a given type can be shown in a text: {step.output:format}. The first is the default. */
+export const OUTPUT_FORMATS: Record<OutputType, string[]> = { text: [], number: [], date: [], yesno: [], list: ["bullets", "comma", "count", "first"] };
 
 /** What each kind of step produces. A later step in the same branch can put these into its message with {name}. */
 export const STEP_OUTPUTS: Record<NodeKind, StepOutput[]> = {
@@ -176,26 +214,30 @@ export const STEP_OUTPUTS: Record<NodeKind, StepOutput[]> = {
   assign_caseworker: [o("caseworker", "Zuständige Sachbearbeitung", "The responsible caseworker", "Frau Demir")],
   assign_team: [o("team", "Zugewiesenes Team", "The assigned team", "Team Ausland")],
   read_documents: [
-    o("documents_read", "Liste der gelesenen Dokumente", "List of the documents read", "• Income tax assessment (built-in reader)"),
-    o("unreadable_documents", "Dokumente, die nicht gelesen werden konnten", "Documents that could not be read", "• Enrolment_certificate.pdf"),
+    o("documents_read", "Liste der gelesenen Dokumente", "List of the documents read", "• Income tax assessment (built-in reader)", "list"),
+    o("unreadable_documents", "Dokumente, die nicht gelesen werden konnten", "Documents that could not be read", "• Enrolment_certificate.pdf", "list"),
   ],
   review_fields: [
-    o("review_list", "Kurze Liste der unklaren Dokumente und Felder", "Brief list of the unclear documents and fields", "• Income tax assessment: Total income (EUR)"),
-    o("review_details", "Ausführlich, warum Felder nicht lesbar waren", "Detailed reasons why fields could not be read", "Total income (EUR): read as \"54?00 (illegible)\", 55 % sure (80 % needed). Part of the value could not be read."),
+    o("review_list", "Kurze Liste der unklaren Dokumente und Felder", "Brief list of the unclear documents and fields", "• Income tax assessment: Total income (EUR)", "list"),
+    o("review_details", "Ausführlich, warum Felder nicht lesbar waren", "Detailed reasons why fields could not be read", "Total income (EUR): read as \"54?00 (illegible)\", 55 % sure (80 % needed). Part of the value could not be read.", "list"),
+  ],
+  check_inputs: [
+    o("missing_inputs", "Fehlende Angaben und Dokumente", "Missing documents and answers", "• Host university confirmation\n• Destination country", "list"),
+    o("missing_inputs_count", "Anzahl der fehlenden Angaben", "Number of missing items", "2", "number"),
   ],
   run_rules: [
-    o("open_items", "Offene Punkte, die den Antrag blockieren", "Open items that block the application", "• The parents' signature is missing."),
-    o("missing_documents", "Fehlende erforderliche Dokumente", "Required documents that are missing", "• Host university confirmation"),
-    o("warnings", "Hinweise, die nicht blockieren", "Notes that do not block", "• Your stay is short."),
-    o("open_count", "Anzahl der offenen Punkte", "Number of open items", "2"),
+    o("open_items", "Offene Punkte, die den Antrag blockieren", "Open items that block the application", "• The parents' signature is missing.", "list"),
+    o("missing_documents", "Fehlende erforderliche Dokumente", "Required documents that are missing", "• Host university confirmation", "list"),
+    o("warnings", "Hinweise, die nicht blockieren", "Notes that do not block", "• Your stay is short.", "list"),
+    o("open_count", "Anzahl der offenen Punkte", "Number of open items", "2", "number"),
   ],
-  condition: [o("condition_result", "Ergebnis der Bedingung (ja/nein)", "Result of the condition (yes/no)", "yes")],
+  condition: [o("condition_result", "Ergebnis der Bedingung (ja/nein)", "Result of the condition (yes/no)", "yes", "yesno")],
   human_task: [
     o("decision", "Entscheidung der Sachbearbeitung", "The caseworker's decision", "approved"),
     o("decision_note", "Begründung für die Studierenden", "The explanation for the student", "Your monthly need is …"),
     o("decision_amount", "Bewilligter Betrag pro Monat", "Approved amount per month", "840 €"),
   ],
-  wait: [o("reminder_date", "Datum der Erinnerung", "Date of the reminder", "2026-11-25")],
+  wait: [o("reminder_date", "Datum der Erinnerung", "Date of the reminder", "2026-11-25", "date")],
   ai_draft_mail: [
     o("draft_subject", "Betreff des KI-Entwurfs", "Subject of the AI draft", "Your application: what is still missing (2)"),
     o("draft_body", "Text des KI-Entwurfs", "Text of the AI draft", "Hi Paul, thank you for your application …"),
@@ -212,6 +254,7 @@ export const STEP_OUTPUTS: Record<NodeKind, StepOutput[]> = {
     o("connector_id", "Kennung der Antwort des Systems", "ID returned by the system", "PA-00044"),
     o("connector_system", "Angesprochenes System", "The system that was called", "payment"),
     o("connector_action", "Ausgeführte Aktion", "The action that was run", "create_payment_order"),
+    o("connector_error", "Fehlermeldung, falls der Aufruf scheiterte", "Error message if the call failed", "The payment system did not answer."),
   ],
   end: [],
 };
@@ -252,12 +295,12 @@ export function upstreamOutputs(def: { nodes: { id: string; kind: NodeKind }[]; 
 }
 
 /** Every field where a person types something, and so can put outputs of earlier steps into. */
-export const TOKEN_KEYS = ["subject", "body", "fallback", "instruction", "subject_en", "body_en", "fallback_en", "instruction_en", "value", "payload"];
+export const TOKEN_KEYS = ["subject", "body", "fallback", "instruction", "subject_en", "body_en", "fallback_en", "instruction_en", "value", "payload", "params"];
 const ALL_OUTPUT_NAMES = new Set(Object.values(STEP_OUTPUTS).flatMap((l) => l.map((x) => x.name)));
-export const TOKEN_RE = /\{([A-Za-z0-9_-]+)(?:\.([a-z_]+))?\}/g;
+export const TOKEN_RE = /\{([A-Za-z0-9_-]+)(?:\.([a-z_]+))?(?::([a-z]+))?\}/g;
 /** The tokens in a text: {name} for the basics and for the latest output of that name, {stepId.output} for one particular step. */
-export const tokensIn = (text: string): { raw: string; step?: string; name: string }[] =>
-  [...text.matchAll(TOKEN_RE)].map((m) => (m[2] ? { raw: m[0], step: m[1]!, name: m[2] } : { raw: m[0], name: m[1]! }));
+export const tokensIn = (text: string): { raw: string; step?: string; name: string; format?: string }[] =>
+  [...text.matchAll(TOKEN_RE)].map((m) => (m[2] ? { raw: m[0], step: m[1]!, name: m[2], ...(m[3] ? { format: m[3] } : {}) } : { raw: m[0], name: m[1], ...(m[3] ? { format: m[3] } : {}) }));
 
 export const NODE_CATALOG: Record<NodeKind, NodeSpec> = {
   trigger: {
@@ -267,13 +310,23 @@ export const NODE_CATALOG: Record<NodeKind, NodeSpec> = {
     outputs: OUT,
     fields: [{ key: "source", label: { de: "Herkunft", en: "Source" }, type: "select", default: "any", options: [opt("any", "Alle", "All"), opt("portal", "Nur Portal", "Portal only"), opt("web", "Nur direkt", "Direct only")] }],
   },
+  check_inputs: {
+    kind: "check_inputs", category: "check",
+    title: { de: "Erforderliche Angaben prüfen", en: "Check required inputs" },
+    description: { de: "Prüft, ob alle Formulare und Angaben da sind, die dieser Ablauf unter „Eingaben“ verlangt. Keine Regel, keine KI.", en: "Checks that every form and answer this process requires under “Inputs” is there. No rules, no AI." },
+    outputs: [{ id: "complete", label: { de: "vollständig", en: "complete" } }, { id: "incomplete", label: { de: "unvollständig", en: "incomplete" } }],
+    fields: [],
+  },
   run_rules: {
     kind: "run_rules", category: "check",
     title: { de: "Freigegebene Regeln prüfen", en: "Run approved rules" },
     description: { de: "Prüft den Antrag gegen die hier ausgewählten, freigegebenen Regeln. Feste Prüfung, keine KI.", en: "Checks the application against the approved rules ticked here. Fixed check, no AI." },
     outputs: [{ id: "complete", label: { de: "vollständig", en: "complete" } }, { id: "incomplete", label: { de: "unvollständig", en: "incomplete" } }],
-    /** Comma-separated rule ids. Empty means no rule runs. A block saved before this existed has no value and runs all live rules. */
-    fields: [{ key: "rules", label: { de: "Regeln", en: "Rules" }, type: "text", default: "" }],
+    /** rules: comma-separated rule ids. Empty means no rule runs. A block saved before this existed has no value and runs all live rules. withInputs: older steps also checked the required inputs; new ones do that in their own step. */
+    fields: [
+      { key: "rules", label: { de: "Regeln", en: "Rules" }, type: "rules", default: "" },
+      { key: "withInputs", label: { de: "Auch die erforderlichen Angaben prüfen", en: "Also check the required inputs" }, type: "select", default: "no", options: [opt("no", "Nein, dafür gibt es einen eigenen Schritt", "No, there is a step of its own for that"), opt("yes", "Ja (wie in älteren Abläufen)", "Yes (as in older processes)")] },
+    ],
   },
   read_documents: {
     kind: "read_documents", category: "check", ai: true,
@@ -331,7 +384,7 @@ export const NODE_CATALOG: Record<NodeKind, NodeSpec> = {
   wait: {
     kind: "wait", category: "route",
     title: { de: "Frist / Erinnerung", en: "Deadline / reminder" },
-    description: { de: "Plant eine Erinnerung nach einigen Tagen. Im Prototyp wird nur vermerkt, nicht gewartet.", en: "Schedules a reminder after some days. The prototype records it instead of waiting." },
+    description: { de: "Der Ablauf hält an und läuft nach der eingestellten Zeit weiter. Meldet sich die Person vorher mit neuen Unterlagen, beginnt der Ablauf neu.", en: "The process stops and carries on after the set time. If the person sends new documents before that, the process starts again." },
     outputs: OUT,
     fields: [{ key: "days", label: { de: "Tage", en: "Days" }, type: "number", default: 7 }],
   },
@@ -345,23 +398,30 @@ export const NODE_CATALOG: Record<NodeKind, NodeSpec> = {
   request_documents: {
     kind: "request_documents", category: "message",
     title: { de: "Unterlagen nachfordern", en: "Request documents" },
-    description: { de: "Setzt den Antrag auf „Rückfrage“ und schickt die Nachricht. Automatisch mit dem KI-Entwurf, oder von der Sachbearbeitung geschrieben (der Entwurf ist vorbefüllt).", en: "Sets the case to “question” and sends the message. Either automatically with the AI draft, or written by the caseworker (the draft is prefilled)." },
+    description: { de: "Setzt den Antrag auf „Rückfrage“ und schickt die Nachricht. Wählen Sie eine freigegebene Nachrichtenvorlage oder schreiben Sie den Text selbst; Ergebnisse früherer Schritte setzen Sie als Kacheln ein.", en: "Sets the case to “question” and sends the message. Pick an approved message template or write the text yourself; put outputs of earlier steps in as tiles." },
     outputs: OUT,
     fields: [
-      { key: "sending", label: { de: "Wer schreibt die Nachricht", en: "Who writes the message" }, type: "select", default: "auto", options: [opt("auto", "Automatisch (KI-Entwurf)", "Automatically (AI draft)"), opt("caseworker", "Sachbearbeitung prüft und sendet", "Caseworker checks and sends")] },
-      { key: "fallback", label: { de: "Text, falls kein KI-Entwurf", en: "Text if there is no AI draft" }, type: "textarea", default: "Bitte laden Sie die fehlenden Unterlagen hoch." },
-      { key: "fallback_en", label: { de: "Text, falls kein KI-Entwurf (Englisch)", en: "Text if there is no AI draft (English)" }, type: "textarea", default: "Please upload the missing documents." },
+      { key: "sending", label: { de: "Wer schreibt die Nachricht", en: "Who writes the message" }, type: "select", default: "auto", options: [opt("auto", "Der Ablauf, automatisch", "The process, automatically"), opt("caseworker", "Sachbearbeitung prüft und sendet", "Caseworker checks and sends")] },
+      { key: "template", label: { de: "Nachrichtenvorlage", en: "Message template" }, type: "template", default: "" },
+      { key: "params", label: { de: "Werte für die Vorlage", en: "Values for the template" }, type: "params", default: "" },
+      { key: "use_draft", label: { de: "KI-Entwurf von früher übernehmen", en: "Take over an earlier AI draft" }, type: "select", default: "no", options: [opt("no", "Nein, nur was ich hier einsetze", "No, only what I put in here"), opt("yes", "Ja, wie in älteren Abläufen", "Yes (as in older processes)")] },
+      { key: "subject", label: { de: "Betreff (ohne Vorlage)", en: "Subject (without a template)" }, type: "text", default: "" },
+      { key: "subject_en", label: { de: "Betreff (Englisch)", en: "Subject (English)" }, type: "text", default: "" },
+      { key: "fallback", label: { de: "Text (ohne Vorlage)", en: "Text (without a template)" }, type: "textarea", default: "Bitte laden Sie die fehlenden Unterlagen hoch." },
+      { key: "fallback_en", label: { de: "Text (Englisch)", en: "Text (English)" }, type: "textarea", default: "Please upload the missing documents." },
     ],
   },
   send_notification: {
     kind: "send_notification", category: "message",
     title: { de: "Nachricht senden", en: "Send message" },
-    description: { de: "Sendet eine Nachricht. Platzhalter: {name}, {reference}, {amount}.", en: "Sends a message. Placeholders: {name}, {reference}, {amount}." },
+    description: { de: "Sendet eine Nachricht. Wählen Sie eine freigegebene Nachrichtenvorlage oder schreiben Sie den Text selbst; Ergebnisse früherer Schritte setzen Sie als Kacheln ein.", en: "Sends a message. Pick an approved message template or write the text yourself; put outputs of earlier steps in as tiles." },
     outputs: OUT,
     fields: [
       { key: "to", label: { de: "An", en: "To" }, type: "select", default: "student", options: [opt("student", "Studierende", "Student"), opt("parents", "Eltern", "Parents"), opt("office", "Amt (intern)", "Office (internal)")] },
-      { key: "subject", label: { de: "Betreff", en: "Subject" }, type: "text", default: "Neuigkeiten zu Ihrem Antrag {reference}" },
-      { key: "body", label: { de: "Text", en: "Text" }, type: "textarea", default: "Guten Tag {name}, es gibt Neuigkeiten zu Ihrem Antrag." },
+      { key: "template", label: { de: "Nachrichtenvorlage", en: "Message template" }, type: "template", default: "" },
+      { key: "params", label: { de: "Werte für die Vorlage", en: "Values for the template" }, type: "params", default: "" },
+      { key: "subject", label: { de: "Betreff (ohne Vorlage)", en: "Subject (without a template)" }, type: "text", default: "Neuigkeiten zu Ihrem Antrag {reference}" },
+      { key: "body", label: { de: "Text (ohne Vorlage)", en: "Text (without a template)" }, type: "textarea", default: "Guten Tag {name}, es gibt Neuigkeiten zu Ihrem Antrag." },
       { key: "subject_en", label: { de: "Betreff (Englisch)", en: "Subject (English)" }, type: "text", default: "News about your application {reference}" },
       { key: "body_en", label: { de: "Text (Englisch)", en: "Text (English)" }, type: "textarea", default: "Hello {name}, there is news about your application." },
     ],
@@ -369,12 +429,14 @@ export const NODE_CATALOG: Record<NodeKind, NodeSpec> = {
   connector: {
     kind: "connector", category: "connector",
     title: { de: "Verbindung zu Fachsystem", en: "System connector" },
-    description: { de: "Ruft ein angebundenes System auf. Im Prototyp ein Platzhalter mit Beispielantwort.", en: "Calls a connected system. A placeholder with a sample response in the prototype." },
-    outputs: OUT,
+    description: { de: "Ruft ein angebundenes System über die Verbindung des Amts auf. Im Prototyp ein Platzhalter mit Beispielantwort. Scheitert der Aufruf, folgt der Ausgang „Fehler“; ist er nicht verbunden, hält der Ablauf an und der Fall erscheint unter „Braucht Aufmerksamkeit“.", en: "Calls a connected system through the office's connection. A placeholder with a sample response in the prototype. If the call fails, the “error” output is followed; if it is not connected, the process stops and the case shows up as “Needs attention”." },
+    outputs: [...OUT, { id: "error", label: { de: "Fehler", en: "error" }, optional: true }],
     fields: [
       { key: "system", label: { de: "System", en: "System" }, type: "select", default: "case_software", options: CONNECTORS.map((c) => ({ value: c.id, label: c.name })) },
       { key: "action", label: { de: "Aktion", en: "Action" }, type: "select", default: "create_case", options: CONNECTORS.flatMap((c) => c.actions.map((a) => ({ value: a.id, label: a.label }))) },
       { key: "payload", label: { de: "Daten, die gesendet werden", en: "Data sent to the system" }, type: "textarea", default: "reference: {reference}\namount: {amount}" },
+      { key: "retries", label: { de: "Wiederholungen bei Fehlern", en: "Retries on failure" }, type: "number", default: 0 },
+      { key: "simulate", label: { de: "Fehler simulieren (zum Testen)", en: "Simulate a failure (for testing)" }, type: "select", default: "none", options: [opt("none", "Nein", "No"), opt("once", "Nur beim ersten Versuch", "On the first attempt only"), opt("always", "Immer", "Always")] },
     ],
   },
   end: {
@@ -409,15 +471,35 @@ export function validateProcess(def: Pick<ProcessDef, "nodes" | "edges"> & { cat
   const byId = new Map(def.nodes.map((n) => [n.id, n]));
   const triggers = def.nodes.filter((n) => n.kind === "trigger");
   if (triggers.length !== 1) issues.push({ message: { de: "Es braucht genau einen Startpunkt „Antrag geht ein“.", en: "There must be exactly one “Application arrives” start." } });
+  const names = new Map<string, string[]>();
   for (const n of def.nodes) {
-    const label = NODE_CATALOG[n.kind].title;
-    for (const out of outputsOf(n.kind)) {
+    const label = n.name?.trim() ? { de: n.name, en: n.name } : NODE_CATALOG[n.kind].title;
+    const nm = n.name?.trim().toLowerCase();
+    if (!nm) issues.push({ nodeId: n.id, message: { de: `„${NODE_CATALOG[n.kind].title.de}“ hat keinen Namen. Jeder Schritt braucht einen Namen.`, en: `“${NODE_CATALOG[n.kind].title.en}” has no name. Every step needs a name.` } });
+    else names.set(nm, [...(names.get(nm) ?? []), n.id]);
+    // The settings have to match what the kind of step offers.
+    const spec = NODE_CATALOG[n.kind];
+    for (const [key, value] of Object.entries(n.config)) {
+      const f = spec.fields.find((x) => x.key === key);
+      if (!f) {
+        if (key !== "method") issues.push({ nodeId: n.id, message: { de: `„${label.de}“: Die Einstellung „${key}“ gibt es für diesen Schritt nicht.`, en: `“${label.en}”: there is no setting “${key}” for this kind of step.` } });
+        continue;
+      }
+      if (f.type === "select" && f.options && !f.options.some((o) => o.value === String(value))) issues.push({ nodeId: n.id, message: { de: `„${label.de}“: „${String(value)}“ ist bei „${f.label.de}“ nicht möglich.`, en: `“${label.en}”: “${String(value)}” is not a possible value for “${f.label.en}”.` } });
+      if (f.type === "number" && !Number.isFinite(Number(value))) issues.push({ nodeId: n.id, message: { de: `„${label.de}“: „${f.label.de}“ muss eine Zahl sein.`, en: `“${label.en}”: “${f.label.en}” has to be a number.` } });
+      if (f.required && String(value ?? "").trim() === "") issues.push({ nodeId: n.id, message: { de: `„${label.de}“: „${f.label.de}“ fehlt.`, en: `“${label.en}”: “${f.label.en}” is missing.` } });
+    }
+    for (const out of outputsOf(n.kind).filter((o) => !o.optional)) {
       if (!def.edges.some((e) => e.source === n.id && e.sourceHandle === out.id)) {
         issues.push({ nodeId: n.id, message: { de: `„${label.de}“: Ausgang „${out.label.de}“ ist nicht verbunden.`, en: `“${label.en}”: output “${out.label.en}” is not connected.` } });
       }
     }
-    if (n.kind === "condition" && String(n.config.value ?? "").trim() === "") issues.push({ nodeId: n.id, message: { de: "„Bedingung“: Vergleichswert fehlt.", en: "“Condition”: compare-to value is missing." } });
-    if (n.kind === "run_rules" && ruleSelection(n)?.length === 0) issues.push({ nodeId: n.id, message: { de: "„Freigegebene Regeln prüfen“: Es ist keine Regel ausgewählt.", en: "“Run approved rules”: no rule is ticked." } });
+    if (n.kind === "condition" && String(n.config.value ?? "").trim() === "") issues.push({ nodeId: n.id, message: { de: `„${label.de}“: Vergleichswert fehlt.`, en: `“${label.en}”: compare-to value is missing.` } });
+    if (n.kind === "run_rules" && ruleSelection(n)?.length === 0) issues.push({ nodeId: n.id, message: { de: `„${label.de}“: Es ist keine Regel ausgewählt.`, en: `“${label.en}”: no rule is ticked.` } });
+    if (n.kind === "request_documents" || n.kind === "send_notification") {
+      const bound = tokensIn(String(n.config.params ?? "")).length;
+      if (n.config.template && String(n.config.params ?? "").trim() !== "" && bound === 0) issues.push({ nodeId: n.id, message: { de: `„${label.de}“: Den Werten der Vorlage ist nichts zugeordnet.`, en: `“${label.en}”: nothing is put into the values of the template.` } });
+    }
     {
       const up = upstreamOutputs(def, n.id);
       const have = new Set(up.map((x) => x.output.name));
@@ -427,6 +509,9 @@ export function validateProcess(def: Pick<ProcessDef, "nodes" | "edges"> & { cat
         for (const tk of tokensIn(String(n.config[k] ?? ""))) {
           if (seenTokens.has(tk.raw)) continue;
           seenTokens.add(tk.raw);
+          const outType = (STEP_OUTPUTS[(tk.step ? byId.get(tk.step)?.kind : undefined) ?? n.kind] ?? []).find((x) => x.name === tk.name)?.type ?? Object.values(STEP_OUTPUTS).flat().find((x) => x.name === tk.name)?.type;
+          if (tk.format && outType && !OUTPUT_FORMATS[outType].includes(tk.format)) issues.push({ nodeId: n.id, message: { de: `„${label.de}“: ${tk.raw}: „${tk.format}“ gibt es für diesen Wert nicht.`, en: `“${label.en}”: ${tk.raw}: there is no “${tk.format}” format for this value.` } });
+          if (n.kind === "condition" && k === "value" && outType && outType !== "number" && tk.format !== "count") issues.push({ nodeId: n.id, message: { de: `„${label.de}“: ${tk.raw} ist keine Zahl. Eine Bedingung vergleicht Zahlen; bei einer Liste nehmen Sie „Anzahl“.`, en: `“${label.en}”: ${tk.raw} is not a number. A condition compares numbers; for a list use “count”.` } });
           if (tk.step) {
             const src = byId.get(tk.step);
             const srcLabel = src ? NODE_CATALOG[src.kind].title : null;
@@ -438,8 +523,9 @@ export function validateProcess(def: Pick<ProcessDef, "nodes" | "edges"> & { cat
         }
       }
     }
-    if (n.kind === "send_notification" && !String(n.config.body ?? "").trim()) issues.push({ nodeId: n.id, message: { de: "„Nachricht senden“: Text fehlt.", en: "“Send message”: text is missing." } });
+    if (n.kind === "send_notification" && !n.config.template && !String(n.config.body ?? "").trim()) issues.push({ nodeId: n.id, message: { de: `„${label.de}“: Text fehlt.`, en: `“${label.en}”: text is missing.` } });
   }
+  for (const ids of names.values()) if (ids.length > 1) issues.push({ nodeId: ids[1], message: { de: `Zwei Schritte heißen „${def.nodes.find((x) => x.id === ids[0])!.name}“. Jeder Name darf nur einmal vorkommen.`, en: `Two steps are named “${def.nodes.find((x) => x.id === ids[0])!.name}”. Every name can be used once.` } });
   for (const e of def.edges) if (!byId.has(e.source) || !byId.has(e.target)) issues.push({ message: { de: "Eine Verbindung zeigt auf einen gelöschten Schritt.", en: "A connection points to a deleted step." } });
   if (triggers.length === 1) {
     const seen = new Set<string>();
@@ -493,8 +579,8 @@ export function upgradeQuestionPath(def: ProcessDef): ProcessDef {
   const at = target.position;
   const nodes = [
     ...def.nodes,
-    { id: "ask-q", kind: "request_documents" as const, position: { x: at.x, y: at.y - 130 }, config: defaultConfig("request_documents", { sending: "caseworker", fallback: QUESTION_TEXT.de, fallback_en: QUESTION_TEXT.en }) },
-    { id: "wait-q", kind: "wait" as const, position: { x: at.x, y: at.y - 60 }, config: defaultConfig("wait") },
+    { id: "ask-q", kind: "request_documents" as const, name: STANDARD_STEPS["ask-q"]!.name, purpose: STANDARD_STEPS["ask-q"]!.purpose, position: { x: at.x, y: at.y - 130 }, config: defaultConfig("request_documents", { sending: "caseworker", fallback: QUESTION_TEXT.de, fallback_en: QUESTION_TEXT.en }) },
+    { id: "wait-q", kind: "wait" as const, name: STANDARD_STEPS["wait-q"]!.name, purpose: STANDARD_STEPS["wait-q"]!.purpose, position: { x: at.x, y: at.y - 60 }, config: defaultConfig("wait") },
   ];
   const edges = [
     ...def.edges.map((e) => (e.id === edge.id ? { ...e, target: "ask-q" } : e)),
@@ -520,7 +606,7 @@ export function upgradeAssignment(def: ProcessDef): ProcessDef {
       { id: "assign:out", source: "assign", sourceHandle: "out", target: startEdge.target },
       ...into.map((e) => ({ ...e, target: out.target })),
     );
-  const nodes = def.nodes.filter((n) => n.id !== "team").concat({ id: "assign", kind: "assign_caseworker", position: { x: 330, y: 55 }, config: defaultConfig("assign_caseworker") });
+  const nodes = def.nodes.filter((n) => n.id !== "team").concat({ id: "assign", kind: "assign_caseworker", name: STANDARD_STEPS.assign!.name, purpose: STANDARD_STEPS.assign!.purpose, position: { x: 330, y: 55 }, config: defaultConfig("assign_caseworker") });
   return { ...def, nodes, edges };
 }
 
@@ -568,42 +654,81 @@ export function upgradeEnglish(def: ProcessDef): ProcessDef {
   return { ...def, nodes, name: renamed, updatedBy: by };
 }
 
-/** The standard process an office starts with. It reproduces the fixed workflow of the first version. */
+/** Names and one-line purposes of the steps of the standard process. */
+const STANDARD_STEPS: Record<string, { name: string; purpose: string }> = {
+  start: { name: "Application arrives", purpose: "Starts the process when an application is submitted or delivered from the portal." },
+  assign: { name: "Assign caseworker by surname", purpose: "Gives the case to the caseworker responsible for the first letter of the family name." },
+  read: { name: "Read documents", purpose: "Reads every uploaded document into fields with the method set for its type." },
+  review: { name: "Review unclear fields", purpose: "A person checks the fields the reader was not sure about." },
+  inputs: { name: "Check required inputs", purpose: "Checks that every form and answer the process requires is there." },
+  rules: { name: "Check approved rules", purpose: "Applies the ticked, approved rules to the application." },
+  draft: { name: "Draft e-mail about what is missing", purpose: "Writes a message to the applicant from the open items." },
+  ask: { name: "Send the missing-items e-mail", purpose: "Sends the draft and sets the case to waiting for the applicant." },
+  "end-incomplete": { name: "End: waiting for the applicant", purpose: "The applicant has been asked for the missing items; a new upload starts the process again." },
+  human: { name: "Caseworker decides", purpose: "A person decides: approve, reject or ask a question." },
+  case: { name: "Create payment order", purpose: "Hands the approved amount to the payment system." },
+  "notify-ok": { name: "Approval message", purpose: "Tells the applicant the application was approved." },
+  "end-ok": { name: "End: approved", purpose: "The case is approved." },
+  "notify-no": { name: "Rejection message", purpose: "Tells the applicant the application was not approved." },
+  "end-no": { name: "End: rejected", purpose: "The case is rejected." },
+  "end-info": { name: "End: question to the applicant", purpose: "The caseworker asked the applicant a question." },
+  "ask-q": { name: "Ask the applicant about unclear fields", purpose: "The caseworker checks and sends a question about the unclear fields." },
+  "wait-q": { name: "Wait for the applicant", purpose: "Holds the case for the set time; a new upload starts the process again." },
+  remind: { name: "Remind the applicant", purpose: "Sends a reminder if nothing came back." },
+  "end-review": { name: "End: reminder sent", purpose: "The applicant has been asked and reminded." },
+};
+
+/** The samples the standard process must keep handling as described. */
+export const STANDARD_TESTS: ProcessTest[] = [
+  { id: "t-unclear", name: "Unclear scan: stops for a person to check the field", sample: "unclear", expect: { visits: ["start", "assign", "read", "review"], waitingAt: "review" } },
+  { id: "t-unclear-confirmed", name: "Unclear scan, field confirmed: goes to the caseworker", sample: "unclear", decision: "confirmed", expect: { visits: ["review", "inputs", "rules", "human"], waitingAt: "human" } },
+  { id: "t-incomplete", name: "Missing documents: the applicant gets an e-mail", sample: "incomplete", expect: { visits: ["inputs", "draft", "ask", "end-incomplete"], waitingAt: null } },
+  { id: "t-complete", name: "Complete case: waits for the caseworker", sample: "complete", expect: { visits: ["inputs", "rules", "human"], waitingAt: "human" } },
+  { id: "t-approved", name: "Approved: payment order and approval message", sample: "complete", decision: "approved", expect: { visits: ["human", "case", "notify-ok", "end-ok"], waitingAt: null } },
+];
+
+/** The standard process an office starts with. */
 export function defaultProcess(now = "2026-09-01T09:00:00.000Z"): ProcessDef {
-  const n = (id: string, kind: NodeKind, x: number, y: number, config: Record<string, ConfigValue> = {}): FlowNode => ({ id, kind, position: { x, y }, config: defaultConfig(kind, config) });
+  const n = (id: string, kind: NodeKind, x: number, y: number, config: Record<string, ConfigValue> = {}): FlowNode => ({ id, kind, name: STANDARD_STEPS[id]?.name, purpose: STANDARD_STEPS[id]?.purpose, position: { x, y }, config: defaultConfig(kind, config) });
   const e = (source: string, sourceHandle: string, target: string): FlowEdge => ({ id: `${source}:${sourceHandle}`, source, sourceHandle, target });
   void nid;
+  const ALL = RULES.map((r) => r.id).join(",");
   const nodes: FlowNode[] = [
     n("start", "trigger", 330, 0),
     n("assign", "assign_caseworker", 330, 55),
     n("read", "read_documents", 330, 110),
     n("review", "review_fields", 20, 230),
-    n("ask-q", "request_documents", -200, 330, { sending: "caseworker", fallback: QUESTION_TEXT.de, fallback_en: QUESTION_TEXT.en }),
-    n("wait-q", "wait", -200, 450),
-    n("end-review", "end", -200, 570),
-    n("rules", "run_rules", 330, 260, { rules: RULES.map((r) => r.id).join(",") }),
-    // incomplete branch
-    n("draft", "ai_draft_mail", 20, 270),
-    n("ask", "request_documents", 20, 400),
-    n("end-incomplete", "end", 20, 540),
-    // complete branch
-    n("human", "human_task", 480, 390, { instruction: "Inhaltlich prüfen und entscheiden.", instruction_en: "Review the content and decide." }),
-    n("end-info", "end", 300, 560),
-    n("notify-no", "send_notification", 560, 560, { to: "student", subject: "Entscheidung zu Ihrem Antrag {reference}", body: "Guten Tag {name}, Ihr Antrag wurde abgelehnt. Die Begründung steht im Bescheid.", subject_en: "Decision on your application {reference}", body_en: "Hello {name}, your application was not approved. The reasons are in the decision notice." }),
-    n("end-no", "end", 560, 720),
-    n("case", "connector", 820, 470, { system: "payment", action: "create_payment_order" }),
-    n("notify-ok", "send_notification", 820, 590, { to: "student", subject: "Ihr Antrag {reference} wurde bewilligt", body: "Guten Tag {name}, Ihr Antrag wurde bewilligt: {amount} pro Monat. Der Bescheid folgt.", subject_en: "Your application {reference} has been approved", body_en: "Hello {name}, your application has been approved: {amount} per month. The decision notice follows." }),
-    n("end-ok", "end", 820, 750),
+    n("inputs", "check_inputs", 330, 230),
+    n("rules", "run_rules", 330, 330, { rules: ALL, withInputs: "no" }),
+    n("draft", "ai_draft_mail", 20, 400),
+    n("ask", "request_documents", 20, 520, { sending: "auto", use_draft: "no", subject: "{draft.draft_subject}", subject_en: "{draft.draft_subject}", fallback: "{draft.draft_body}", fallback_en: "{draft.draft_body}" }),
+    n("end-incomplete", "end", 20, 650),
+    n("human", "human_task", 480, 430, { instruction: "Inhaltlich prüfen und entscheiden.", instruction_en: "Review the content and decide." }),
+    n("end-info", "end", 300, 620),
+    n("notify-no", "send_notification", 560, 620, { to: "student", template: "msg-rejected", params: '{"explanation":"{human.decision_note}"}' }),
+    n("end-no", "end", 560, 780),
+    n("case", "connector", 820, 520, { system: "payment", action: "create_payment_order" }),
+    n("notify-ok", "send_notification", 820, 640, { to: "student", template: "msg-approved", params: '{"explanation":"{human.decision_note}"}' }),
+    n("end-ok", "end", 820, 800),
+    n("ask-q", "request_documents", -200, 330, { sending: "caseworker", template: "msg-question", params: '{"unclear":"{review.review_list}","details":"{review.review_details}"}' }),
+    n("wait-q", "wait", -200, 450, { days: 7 }),
+    n("remind", "send_notification", -200, 560, { to: "student", template: "msg-reminder", params: '{"pending":"{review.review_list}"}' }),
+    n("end-review", "end", -200, 690),
   ];
   const edges: FlowEdge[] = [
-    e("start", "out", "assign"), e("assign", "out", "read"), e("read", "clear", "rules"), e("read", "review", "review"), e("review", "confirmed", "rules"), e("review", "info", "ask-q"), e("ask-q", "out", "wait-q"), e("wait-q", "out", "end-review"),
+    e("start", "out", "assign"), e("assign", "out", "read"), e("read", "clear", "inputs"), e("read", "review", "review"),
+    e("review", "confirmed", "inputs"), e("review", "info", "ask-q"), e("ask-q", "out", "wait-q"), e("wait-q", "out", "remind"), e("remind", "out", "end-review"),
+    e("inputs", "complete", "rules"), e("inputs", "incomplete", "draft"),
     e("rules", "incomplete", "draft"), e("draft", "out", "ask"), e("ask", "out", "end-incomplete"),
     e("rules", "complete", "human"),
     e("human", "approved", "case"), e("case", "out", "notify-ok"), e("notify-ok", "out", "end-ok"),
     e("human", "rejected", "notify-no"), e("notify-no", "out", "end-no"),
     e("human", "info", "end-info"),
   ];
-  return { id: "bafoeg-ausland", catalogId: "bafoeg.abroad", name: "Abroad BAföG: standard process", version: 1, updatedAt: now, updatedBy: "Abroad unit (sample)", inputs: defaultInputs(), nodes, edges };
+  return {
+    id: "bafoeg-ausland", catalogId: "bafoeg.abroad", name: "Abroad BAföG: standard process", version: 1, updatedAt: now, updatedBy: "Abroad unit (sample)",
+    owner: "Frau Lindner", inputs: defaultInputs(), nodes, edges, tests: STANDARD_TESTS.map((t) => ({ ...t, expect: { ...t.expect, visits: [...t.expect.visits] } })),
+  };
 }
 
 /**
@@ -614,12 +739,167 @@ export function referenceProcess(): ProcessDef {
   const base = defaultProcess("2026-06-01T09:00:00.000Z");
   const nodes: FlowNode[] = base.nodes.map((x) => ({ ...x, config: { ...x.config } }));
   const edges: FlowEdge[] = base.edges.map((x) => ({ ...x }));
-  const n = (id: string, kind: NodeKind, x: number, y: number, config: Record<string, ConfigValue> = {}): FlowNode => ({ id, kind, position: { x, y }, config: defaultConfig(kind, config) });
+  const n = (id: string, kind: NodeKind, x: number, y: number, config: Record<string, ConfigValue> = {}, name?: string): FlowNode => ({ id, kind, name, position: { x, y }, config: defaultConfig(kind, config) });
   // After the payment, the case is archived and the status is reported to the portal.
   const notifyOk = edges.find((e) => e.source === "notify-ok")!;
-  nodes.push(n("portal", "connector", 820, 690, { system: "portal", action: "send_status" }), n("archive", "connector", 820, 800, { system: "efile", action: "archive_case" }));
+  nodes.push(n("portal", "connector", 820, 690, { system: "portal", action: "send_status" }, "Report status to the portal"), n("archive", "connector", 820, 800, { system: "efile", action: "archive_case" }, "Archive the case"));
   notifyOk.target = "portal";
   edges.push({ id: "portal:out", source: "portal", sourceHandle: "out", target: "archive" }, { id: "archive:out", source: "archive", sourceHandle: "out", target: "end-ok" });
   nodes.find((x) => x.id === "end-ok")!.position = { x: 820, y: 920 };
   return { ...base, id: "bafoeg-abroad-reference", name: "Reference model: BAföG abroad (application)", version: 1, nodes, edges, updatedBy: "Federal oversight (sample)" };
+}
+
+// ---- Upgrading stored processes --------------------------------------------------------
+
+/** A name for a step that does not have one: what it is, numbered if the same kind appears again. */
+export function uniqueStepName(base: string, taken: string[]): string {
+  const lower = new Set(taken.map((x) => x.toLowerCase()));
+  if (!lower.has(base.toLowerCase())) return base;
+  for (let i = 2; ; i++) if (!lower.has(`${base} ${i}`.toLowerCase())) return `${base} ${i}`;
+}
+
+/** Older texts referred to an output by its plain name. Now they refer to the step: {open_items} becomes {rules.open_items}. */
+export function upgradeTokens(def: ProcessDef): ProcessDef {
+  const globals = new Set(GLOBAL_PLACEHOLDERS.map((g) => g.name));
+  let changed = false;
+  const nodes = def.nodes.map((n) => {
+    let config = n.config;
+    for (const k of TOKEN_KEYS) {
+      const v = config[k];
+      if (typeof v !== "string" || !v.includes("{")) continue;
+      const up = upstreamOutputs(def, n.id);
+      const next = v.replace(TOKEN_RE, (whole, a: string, b: string | undefined, fmt: string | undefined) => {
+        if (b || globals.has(a) || !ALL_OUTPUT_NAMES.has(a)) return whole;
+        const src = up.find((x) => x.output.name === a);
+        return src ? `{${src.nodeId}.${a}${fmt ? `:${fmt}` : ""}}` : whole;
+      });
+      if (next !== v) {
+        config = { ...config, [k]: next };
+        changed = true;
+      }
+    }
+    return config === n.config ? n : { ...n, config };
+  });
+  return changed ? { ...def, nodes } : def;
+}
+
+/** Brings the standard process of an older copy up to date: its own step for the required inputs, texts that name their source, templates, a real reminder, step names and samples. */
+export function upgradeSteps(def: ProcessDef): ProcessDef {
+  let nodes = def.nodes.map((n) => ({ ...n, config: { ...n.config } }));
+  let edges = def.edges.map((e) => ({ ...e }));
+  const byId = (id: string) => nodes.find((n) => n.id === id);
+  const standard = def.id === "bafoeg-ausland";
+
+  // The required inputs are checked by a step of their own.
+  const rules = byId("rules");
+  if (rules?.kind === "run_rules" && rules.config.withInputs === undefined && !nodes.some((n) => n.kind === "check_inputs") && edges.some((e) => e.id === "rules:incomplete")) {
+    const incompleteTarget = edges.find((e) => e.id === "rules:incomplete")!.target;
+    rules.config.withInputs = "no";
+    edges = edges.map((e) => (e.target === "rules" ? { ...e, target: "inputs" } : e)).concat(
+      { id: "inputs:complete", source: "inputs", sourceHandle: "complete", target: "rules" },
+      { id: "inputs:incomplete", source: "inputs", sourceHandle: "incomplete", target: incompleteTarget },
+    );
+    nodes.push({ id: "inputs", kind: "check_inputs", position: { x: rules.position.x, y: rules.position.y - 100 }, config: {} });
+  }
+
+  // The e-mail about what is missing says where its text comes from, instead of silently taking the AI draft.
+  const ask = byId("ask");
+  if (ask?.kind === "request_documents" && ask.config.use_draft === undefined && edges.some((e) => e.source === "draft" && e.target === "ask")) {
+    Object.assign(ask.config, { use_draft: "no", subject: "{draft.draft_subject}", subject_en: "{draft.draft_subject}", fallback: "{draft.draft_body}", fallback_en: "{draft.draft_body}" });
+  }
+  // The question and the decision messages use the approved templates.
+  const askQ = byId("ask-q");
+  if (askQ?.kind === "request_documents" && askQ.config.template === undefined && edges.some((e) => e.source === "review" && e.sourceHandle === "info" && e.target === "ask-q")) {
+    Object.assign(askQ.config, { template: "msg-question", params: '{"unclear":"{review.review_list}","details":"{review.review_details}"}' });
+  }
+  for (const [id, template] of [["notify-ok", "msg-approved"], ["notify-no", "msg-rejected"]] as const) {
+    const m = byId(id);
+    if (standard && m?.kind === "send_notification" && m.config.template === undefined) Object.assign(m.config, { template, params: '{"explanation":"{human.decision_note}"}' });
+  }
+  // The wait is a real timer, and a reminder goes out when it runs out.
+  const waitQ = byId("wait-q");
+  const waitOut = edges.find((e) => e.id === "wait-q:out");
+  if (waitQ?.kind === "wait" && waitOut && byId(waitOut.target)?.kind === "end" && !byId("remind") && standard) {
+    nodes.push({ id: "remind", kind: "send_notification", position: { x: waitQ.position.x, y: waitQ.position.y + 110 }, config: defaultConfig("send_notification", { to: "student", template: "msg-reminder", params: '{"pending":"{review.review_list}"}' }) });
+    edges = edges.map((e) => (e.id === "wait-q:out" ? { ...e, target: "remind" } : e)).concat({ id: "remind:out", source: "remind", sourceHandle: "out", target: waitOut.target });
+  }
+  // Every step has a name and a purpose.
+  const taken: string[] = nodes.map((n) => n.name?.trim() ?? "").filter(Boolean);
+  nodes = nodes.map((n) => {
+    const std = standard ? STANDARD_STEPS[n.id] : undefined;
+    if (n.name?.trim()) return { ...n, purpose: n.purpose ?? std?.purpose };
+    const name = uniqueStepName(std?.name ?? NODE_CATALOG[n.kind].title.en, taken);
+    taken.push(name);
+    return { ...n, name, purpose: n.purpose ?? std?.purpose };
+  });
+  return {
+    ...def,
+    nodes,
+    edges,
+    ...(standard ? { owner: def.owner ?? "Frau Lindner", tests: def.tests ?? STANDARD_TESTS.map((t) => ({ ...t, expect: { ...t.expect, visits: [...t.expect.visits] } })) } : {}),
+  };
+}
+
+/** Everything that brings a stored process up to the current shape. */
+export const upgradeProcess = (def: ProcessDef): ProcessDef => upgradeTokens(upgradeSteps(upgradeOutputs(upgradeEnglish(upgradeAssignment(upgradeQuestionPath(def))))));
+
+// ---- What changed, and what a process depends on --------------------------------------------
+
+export interface ProcessChange {
+  kind: "added" | "removed" | "changed";
+  text: string;
+}
+
+const stepLabel = (d: Pick<ProcessDef, "nodes">, id: string) => d.nodes.find((n) => n.id === id)?.name ?? d.nodes.find((n) => n.id === id)?.kind ?? id;
+
+/** What differs between the live version and a new one, in words a person can read before publishing. */
+export function diffProcess(before: ProcessDef | null, after: ProcessDef): ProcessChange[] {
+  if (!before) return [{ kind: "added", text: `First version with ${after.nodes.length} steps` }];
+  const out: ProcessChange[] = [];
+  const old = new Map(before.nodes.map((n) => [n.id, n]));
+  const cur = new Map(after.nodes.map((n) => [n.id, n]));
+  for (const n of after.nodes) if (!old.has(n.id)) out.push({ kind: "added", text: `Step “${stepLabel(after, n.id)}” added` });
+  for (const n of before.nodes) if (!cur.has(n.id)) out.push({ kind: "removed", text: `Step “${stepLabel(before, n.id)}” removed` });
+  for (const n of after.nodes) {
+    const o = old.get(n.id);
+    if (!o) continue;
+    if ((o.name ?? "") !== (n.name ?? "")) out.push({ kind: "changed", text: `Step “${o.name ?? o.kind}” renamed to “${n.name ?? n.kind}”` });
+    const keys = [...new Set([...Object.keys(o.config), ...Object.keys(n.config)])].filter((k) => String(o.config[k] ?? "") !== String(n.config[k] ?? ""));
+    for (const k of keys) {
+      if (k === "rules") {
+        const a = String(o.config.rules ?? "").split(",").filter(Boolean);
+        const b = String(n.config.rules ?? "").split(",").filter(Boolean);
+        const added = b.filter((x) => !a.includes(x));
+        const removed = a.filter((x) => !b.includes(x));
+        out.push({ kind: "changed", text: `“${n.name}”: rules ${added.length ? `+${added.length} (${added.join(", ")})` : ""}${added.length && removed.length ? " " : ""}${removed.length ? `−${removed.length} (${removed.join(", ")})` : ""}`.trim() });
+      } else if (["subject", "body", "fallback", "instruction", "subject_en", "body_en", "fallback_en", "instruction_en"].includes(k)) out.push({ kind: "changed", text: `“${n.name}”: text “${k}” changed` });
+      else out.push({ kind: "changed", text: `“${n.name}”: ${k} ${String(o.config[k] ?? "–")} → ${String(n.config[k] ?? "–")}` });
+    }
+  }
+  const edgeKey = (d: ProcessDef, e: FlowEdge) => `${stepLabel(d, e.source)} (${e.sourceHandle}) → ${stepLabel(d, e.target)}`;
+  const oldEdges = new Map(before.edges.map((e) => [`${e.source}:${e.sourceHandle}`, e]));
+  const newEdges = new Map(after.edges.map((e) => [`${e.source}:${e.sourceHandle}`, e]));
+  for (const [k, e] of newEdges) {
+    const o = oldEdges.get(k);
+    if (!o) out.push({ kind: "added", text: `Connection ${edgeKey(after, e)}` });
+    else if (o.target !== e.target) out.push({ kind: "changed", text: `Connection from ${stepLabel(after, e.source)} (${e.sourceHandle}) now goes to ${stepLabel(after, e.target)} instead of ${stepLabel(before, o.target)}` });
+  }
+  for (const [k, e] of oldEdges) if (!newEdges.has(k)) out.push({ kind: "removed", text: `Connection ${edgeKey(before, e)}` });
+  const oi = new Map(before.inputs.map((i) => [i.id, i]));
+  const ni = new Map(after.inputs.map((i) => [i.id, i]));
+  for (const [id, i] of ni) if (!oi.has(id)) out.push({ kind: "added", text: `Required input “${i.ref}”` });
+  for (const [id, i] of oi) if (!ni.has(id)) out.push({ kind: "removed", text: `Required input “${i.ref}”` });
+  for (const [id, i] of ni) if (oi.has(id) && oi.get(id)!.required !== i.required) out.push({ kind: "changed", text: `Input “${i.ref}” is now ${i.required ? "required" : "optional"}` });
+  if ((before.owner ?? "") !== (after.owner ?? "")) out.push({ kind: "changed", text: `Owner: ${before.owner ?? "–"} → ${after.owner ?? "–"}` });
+  const bt = before.tests?.length ?? 0;
+  const at = after.tests?.length ?? 0;
+  if (bt !== at) out.push({ kind: "changed", text: `Test cases: ${bt} → ${at}` });
+  return out;
+}
+
+/** What a process uses: the rules it applies, the message templates, the forms it requires and the systems it calls. */
+export function processDependencies(def: ProcessDef): { rules: string[] | null; messages: string[]; documents: string[]; systems: string[] } {
+  const messages = [...new Set(def.nodes.map((n) => String(n.config.template ?? "")).filter(Boolean))];
+  const systems = [...new Set(def.nodes.filter((n) => n.kind === "connector").map((n) => String(n.config.system ?? "")).filter(Boolean))];
+  return { rules: processRuleIds(def), messages, documents: def.inputs.filter((i) => i.type === "document").map((i) => i.ref), systems };
 }

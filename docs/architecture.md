@@ -116,3 +116,20 @@ Decisions are recorded in `docs/adr/`.
 ## Outputs between steps
 
 Every step of a process can hand named results to the steps after it (`STEP_OUTPUTS` in `packages/shared/src/process.ts`): the review step hands on a brief list of unclear fields and the reasons, the rules step the open items and missing documents, the decision step the explanation and amount, a system connector the ID the system returned, and so on. A later step in the same branch puts them into any of its texts (subject, message, note for the caseworker, compare-to value, data sent to a system) as a coloured tile. Stored, a tile is `{stepId.output}`, so two steps of the same kind never get mixed up; `{name}`, `{reference}` and `{amount}` are always available. The engine keeps the results with the case (`flow.vars`), so they survive the waits for a person, and "Validate" reports a tile whose step is not connected before the step that uses it.
+
+
+## What makes a process trustworthy
+
+The builder borrows from tools like Power Automate and Make, and deliberately fixes what goes wrong in them.
+
+- **Named steps.** Every step has a required, unique name and a one-line purpose. Texts refer to a step by a stable id, so renaming or moving a step never breaks them.
+- **Typed outputs.** An output is text, a number, a list, a date or yes/no. A list can be shown as bullets, one line, a count or its first item (`{step.output:count}`), and a condition refuses a text where it needs a number.
+- **Data inspector.** Every step records what it produced (`RunLogEntry.outputs`). The test run and the case page show it per step.
+- **No silent failures.** A step whose output leads nowhere, an unreachable connection, a missing template or a loop stops the process with an error (`flow.failed`). The case shows as "Process stopped" in the Inbox and a caseworker can try again at the step that failed. System connectors have an optional "error" output and a retry count.
+- **Explicit steps.** "Check required inputs" is a step of its own; "Request documents" takes the AI draft only if its text says so, by putting the draft in as a tile.
+- **Message templates.** Messages to applicants are written, translated and approved by a second person once (`Templates › Messages`). A step picks a template and binds each of its parameters to a tile. The system adds greeting and sign-off.
+- **Real timers.** A "Deadline / reminder" step holds the process until its time is up (`flow.waitUntil`). A timer runner checks every minute; the demo menu can skip days. New documents from the applicant start the process again.
+- **Test cases.** A process carries samples (which steps a case must pass, where it must stop). They run before every publish and can be saved from a test run.
+- **Impact.** Before publishing, the dialog shows the changes against the live version, the rules, templates, forms and systems the process depends on, the owner and a required reason.
+- **Typed settings.** Each kind of step declares its settings (`NODE_CATALOG`); the validation rejects unknown settings and values that do not fit.
+- **Connections belong to the office.** Each system has one connection that administrators manage (on or off, sandbox or live, last test), independent of who built the process.

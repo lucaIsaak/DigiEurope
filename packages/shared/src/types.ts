@@ -208,6 +208,8 @@ export interface RunLogEntry {
   kind: string;
   handle?: string;
   note: string;
+  /** What the step produced, by output name: the data it handed on. */
+  outputs?: Record<string, string>;
 }
 
 export interface FlowState {
@@ -222,6 +224,11 @@ export interface FlowState {
   vars?: Record<string, string>;
   /** The note of the step a person has to act on, with the outputs of earlier steps filled in. */
   briefing?: string;
+  /** The process stopped because something went wrong. The case needs attention; nothing continues by itself. */
+  failed?: boolean;
+  error?: { nodeId: string; message: string; at: string };
+  /** When a timer step lets the process carry on. */
+  waitUntil?: string;
 }
 
 // ---- Rules -------------------------------------------------------------

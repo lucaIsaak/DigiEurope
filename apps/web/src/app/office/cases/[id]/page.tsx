@@ -119,6 +119,24 @@ function OfficeCase({ id }: { id: string }) {
         </p>
       </header>
 
+      {c.flow?.failed && (
+        <aside className="cp-fail" role="alert">
+          <div>
+            <strong>{t("cd.stopped")}</strong>
+            <p>{c.flow.error?.message}</p>
+            <small>{t("cd.stopped.lead")}</small>
+          </div>
+          {(staff?.isAdmin || staff?.isCaseworker) && (
+            <button className="button button-small" type="button" onClick={async () => { const r = await run(() => api.restartCase(id)); if (r) setC(r); }}>{t("cd.restart")}</button>
+          )}
+        </aside>
+      )}
+      {c.flow?.waitUntil && c.flow.waiting && !c.flow.failed && (
+        <aside className="cp-brief">
+          <strong>{t("cd.timer")}</strong>
+          <p>{t("cd.timer.until", { d: date(c.flow.waitUntil) })}</p>
+        </aside>
+      )}
       {c.flow?.briefing && c.flow.waiting && !decided && (
         <aside className="cp-brief" aria-label={t("cd.briefing")}>
           <strong>{t("cd.briefing")}</strong>

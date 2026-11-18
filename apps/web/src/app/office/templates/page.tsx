@@ -23,6 +23,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { MessagesTab } from "@/components/MessagesTab";
 import { TodoBar, refreshTodo, useTodo, type TodoItem } from "@/components/TodoBar";
 import { DropZone, Field, Spinner, useAsyncError } from "@/components/ui";
 import { api, sampleUrl, type LibraryTemplate, type MethodInfo, type ProposalBody, type TemplateLibrary } from "@/lib/api";
@@ -68,7 +69,7 @@ export default function Templates() {
   const todo = useTodo();
   const [lib, setLib] = useState<TemplateLibrary | null>(null);
   const [methods, setMethods] = useState<MethodInfo[]>([]);
-  const [tab, setTab] = useState<"library" | "proposals">("library");
+  const [tab, setTab] = useState<"library" | "proposals" | "messages">("library");
   const [cat, setCat] = useState<TemplateCategory | "all">("all");
   const [q, setQ] = useState("");
   const [open, setOpen] = useState<string | null>(null);
@@ -119,12 +120,14 @@ export default function Templates() {
       <TodoBar items={todoItems} />
 
       <div className="tabs" role="tablist" style={{ marginBottom: "1.2rem" }}>
-        {(["library", "proposals"] as const).map((k) => (
+        {(["library", "proposals", "messages"] as const).map((k) => (
           <button key={k} type="button" role="tab" aria-selected={tab === k} onClick={() => setTab(k)}>
-            {t(`tpl.tab.${k}` as MessageKey)}{k === "proposals" ? ` (${lib.proposals.filter((p) => p.status === "submitted").length})` : ` (${lib.templates.length})`}
+            {t(`tpl.tab.${k}` as MessageKey)}{k === "proposals" ? ` (${lib.proposals.filter((p) => p.status === "submitted").length})` : k === "library" ? ` (${lib.templates.length})` : ""}
           </button>
         ))}
       </div>
+
+      {tab === "messages" && <MessagesTab />}
 
       {tab === "library" && (
         <>

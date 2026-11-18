@@ -271,10 +271,16 @@ export function FlowPanel({ c }: { c: CaseView }) {
       <div>
         {c.flow.log.map((l, i) => (
           <div className="log-line" key={i}>
-            <span aria-hidden>{l.handle === "info" || l.note.startsWith("Waiting") ? "…" : "✓"}</span>
+            <span aria-hidden>{l.note.startsWith("Stopped") ? "!" : l.handle === "info" || l.note.startsWith("Waiting") ? "…" : "✓"}</span>
             <span>
               <strong>{bi(NODE_CATALOG[l.kind as NodeKind]?.title ?? { de: l.kind, en: l.kind })}</strong> <span className="muted small">{dateTime(l.at)}</span>
-              <br /><span className="muted">{l.note}</span>
+              <br /><span className={l.note.startsWith("Stopped") ? "bad-text" : "muted"}>{l.note}</span>
+              {l.outputs && Object.keys(l.outputs).length > 0 && (
+                <details>
+                  <summary className="small muted">{t("builder.step.data")} ({Object.keys(l.outputs).length})</summary>
+                  <div className="data-box">{Object.entries(l.outputs).map(([k, v]) => <div key={k}><code>{k}</code><pre>{v || "–"}</pre></div>)}</div>
+                </details>
+              )}
             </span>
           </div>
         ))}

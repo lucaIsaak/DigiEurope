@@ -4,7 +4,7 @@ import { PROPOSAL_SAMPLE_TITLE, SAMPLE_SETS, fixDocuments, formblatt8, getPerson
 import { extractDocument } from "./documents.js";
 import { seedDemoData } from "./seed.js";
 import { startRun } from "./engine.js";
-import type { ProcessDef } from "@digieurope/shared";
+import type { Application, ProcessDef } from "@digieurope/shared";
 import { checksFor, reviewReport } from "./cases.js";
 import { Store } from "./store.js";
 
@@ -251,8 +251,14 @@ describe("process builder and engine", () => {
     const quiet = {
       ...live,
       nodes: live.nodes.filter((n: { id: string }) => !gone.includes(n.id)),
-      edges: live.edges.filter((e: { source: string }) => !gone.includes(e.source)).map((e: { id: string; target: string }) => (e.id === "rules:incomplete" ? { ...e, target: "end-incomplete" } : e)),
+      edges: live.edges.filter((e: { source: string }) => !gone.includes(e.source)).map((e: { id: string; target: string }) => (e.id === "rules:incomplete" || e.id === "inputs:incomplete" ? { ...e, target: "end-incomplete" } : e)),
+      // The sample that expects the e-mail no longer applies to this variant.
+      tests: live.tests.filter((t: { id: string }) => t.id !== "t-incomplete"),
     };
+    // A process that fails its own samples cannot be published.
+    const failing = await app.inject({ method: "POST", url: "/office/processes/publish", payload: { def: { ...quiet, tests: live.tests } } });
+    expect(failing.statusCode).toBe(422);
+    expect(failing.json().tests.some((t: { ok: boolean }) => !t.ok)).toBe(true);
     expect((await app.inject({ method: "POST", url: "/office/processes/publish", payload: { def: quiet } })).statusCode).toBe(200);
     const delivered = (await app.inject({ method: "POST", url: "/office/portal/deliver" })).json();
     expect(delivered.status).toBe("submitted");
@@ -352,13 +358,36 @@ describe("document reading", () => {
     expect(draft.message).toContain("•");
     const sent = (await app.inject({ method: "POST", url: `/office/cases/${id}/actions`, payload: { action: "request_info", message: draft.message } })).json();
     expect(sent.status).toBe("info_requested");
-    expect(sent.flow.finished).toBe(true);
+    // The process now really waits: a timer holds it until the time is up.
+    expect(sent.flow.finished).toBe(false);
+    expect(sent.flow.waiting).toBe("wait-q");
+    expect(sent.flow.waitUntil).toBeTruthy();
     const steps = sent.flow.log.map((l: { kind: string }) => l.kind);
     expect(steps).toContain("request_documents");
     expect(steps).toContain("wait");
     const mail = sent.outbox.find((m: { nodeId?: string }) => m.nodeId === "ask-q");
     expect(mail.body).toContain(draft.message);
     expect(mail.body).toContain("Kind regards");
+  });
+
+  it("when the time is up the timer lets the process carry on and sends the reminder; a new upload would have started it again", async () => {
+    const { app, store } = setup();
+    const { id, person } = await create(app, "paul");
+    for (const d of sampleDocuments(person, ["unclear_income"], "en")) await upload(app, `/applications/${id}/documents`, d.filename, d.content);
+    await app.inject({ method: "POST", url: `/applications/${id}/submit` });
+    const draft = (await app.inject({ method: "GET", url: `/office/cases/${id}/question-draft` })).json();
+    await app.inject({ method: "POST", url: `/office/cases/${id}/actions`, payload: { action: "request_info", message: draft.message } });
+    // Nothing happens before the time is up.
+    expect((await app.inject({ method: "POST", url: "/admin/timers/run" })).json().fired).toBe(0);
+    const early = store.get(id)!;
+    expect(early.flow!.waiting).toBe("wait-q");
+    // Seven days later the reminder goes out and the run ends.
+    store.put({ ...early, flow: { ...early.flow!, waitUntil: new Date(NOW.getTime() - 1000).toISOString() } });
+    const later = (await app.inject({ method: "POST", url: "/admin/timers/run" })).json();
+    expect(later.fired).toBe(1);
+    const done = store.get(id)!;
+    expect(done.flow!.finished).toBe(true);
+    expect(done.outbox!.some((m) => m.nodeId === "remind" && /Reminder/.test(m.subject))).toBe(true);
   });
 
   it("the builder test run shows the review path", async () => {
@@ -778,7 +807,7 @@ describe("texts in the language of the applicant", () => {
       const done = (await app.inject({ method: "POST", url: `/office/cases/${created.id}/actions`, payload: { action: "approve", amount: c.estimate.monthly } })).json();
       const mail = done.outbox.find((m: { to: string }) => m.to === "student");
       expect(mail.subject).toContain(word);
-      expect(mail.body).toContain(language === "en" ? "Hello" : "Guten Tag");
+      expect(mail.body).toContain(language === "en" ? "Hi " : "Hallo ");
     }
   });
 });
@@ -791,10 +820,10 @@ describe("outputs handed on between steps (running)", () => {
     const submitted = (await app.inject({ method: "POST", url: `/applications/${id}/submit` })).json();
     expect(submitted.flow.waiting).toBe("review");
     const vars = submitted.flow.vars;
-    expect(vars.review_list).toContain("Total income (EUR)");
-    expect(vars.review_details).toContain("55 %");
-    expect(vars.review_details).toContain("Part of the value could not be read");
-    expect(vars.caseworker).toBeTruthy();
+    expect(vars["review.review_list"]).toContain("Total income (EUR)");
+    expect(vars["review.review_details"]).toContain("55 %");
+    expect(vars["review.review_details"]).toContain("Part of the value could not be read");
+    expect(vars["assign.caseworker"]).toBeTruthy();
     const draft = (await app.inject({ method: "GET", url: `/office/cases/${id}/question-draft` })).json();
     expect(draft.message).toContain("Total income (EUR)");
     expect(draft.message).toContain("Details:");
@@ -812,7 +841,7 @@ describe("outputs handed on between steps (running)", () => {
       nodes: [
         { id: "s", kind: "trigger" as const, position: { x: 0, y: 0 }, config: { source: "any" } },
         { id: "r", kind: "run_rules" as const, position: { x: 0, y: 0 }, config: { rules: "" } },
-        { id: "m", kind: "send_notification" as const, position: { x: 0, y: 0 }, config: { to: "student", subject_en: "{open_count} open", subject: "x", body_en: "Open:\n{open_items}\nMissing:\n{missing_documents}", body: "x" } },
+        { id: "m", kind: "send_notification" as const, position: { x: 0, y: 0 }, config: { to: "student", subject_en: "{r.open_count} open", subject: "x", body_en: "Open:\n{r.open_items}\nMissing:\n{r.missing_documents}", body: "x" } },
         { id: "e", kind: "end" as const, position: { x: 0, y: 0 }, config: {} },
       ],
       edges: [
@@ -828,7 +857,7 @@ describe("outputs handed on between steps (running)", () => {
     expect(mail.subject).toMatch(/^\d+ open$/);
     expect(mail.body).toContain("Host university confirmation");
     expect(mail.body).not.toContain("{open_items}");
-    expect(run.flow!.vars!.open_count).toBe(mail.subject.split(" ")[0]);
+    expect(run.flow!.vars!["r.open_count"]).toBe(mail.subject.split(" ")[0]);
   });
 });
 
@@ -843,16 +872,14 @@ describe("outputs of one particular step", () => {
     const all = (store.liveRules().map((r) => r.id)).join(",");
     const def: ProcessDef = {
       id: "t2", catalogId: "bafoeg.abroad", name: "t2", version: 1, updatedAt: "", updatedBy: "", inputs: [],
-      nodes: [n("s", "trigger", { source: "any" }), n("first", "run_rules", { rules: "" }), n("second", "run_rules", { rules: all }), n("m", "send_notification", { to: "student", subject: "x", body: "x", subject_en: "Counts", body_en: "First: {first.open_count}, second: {second.open_count}, latest: {open_count}" }), n("e", "end")],
+      nodes: [n("s", "trigger", { source: "any" }), n("first", "run_rules", { rules: "" }), n("second", "run_rules", { rules: all }), n("m", "send_notification", { to: "student", subject: "x", body: "x", subject_en: "Counts", body_en: "First: {first.open_count}, second: {second.open_count}" }), n("e", "end")],
       edges: [e("s", "out", "first"), e("first", "incomplete", "second"), e("first", "complete", "e"), e("second", "incomplete", "m"), e("second", "complete", "e"), e("m", "out", "e")],
     };
     const run = await startRun(def, { ...a, language: "en" }, { now: NOW, check: (x, ids) => checksFor(store, x, NOW, ids) });
     const body = run.outbox!.find((m) => m.nodeId === "m")!.body;
     const first = Number(/First: (\d+)/.exec(body)![1]);
     const second = Number(/second: (\d+)/.exec(body)![1]);
-    const latest = Number(/latest: (\d+)/.exec(body)![1]);
     expect(second).toBeGreaterThan(first);
-    expect(latest).toBe(second);
     expect(run.flow!.vars!["first.open_count"]).toBe(String(first));
   });
 
@@ -871,5 +898,190 @@ describe("outputs of one particular step", () => {
     const run = await startRun(def, { ...a, language: "en" }, { now: NOW, check: (x, ids) => checksFor(store, x, NOW, ids) });
     expect(run.flow!.waiting).toBe("h");
     expect(run.flow!.briefing).toMatch(/^\d+ open items for Mira Sommer$/);
+  });
+});
+
+// ---- Robustness, data inspector, typed outputs, templates, tests, impact -----------------------
+
+function defOf(nodes: { id: string; kind: ProcessDef["nodes"][number]["kind"]; config?: Record<string, string | number> }[], edges: [string, string, string][]): ProcessDef {
+  return {
+    id: "x", catalogId: "bafoeg.abroad", name: "x", version: 1, updatedAt: "", updatedBy: "", inputs: [],
+    nodes: nodes.map((n) => ({ id: n.id, kind: n.kind, name: n.id, position: { x: 0, y: 0 }, config: n.config ?? {} })),
+    edges: edges.map(([source, handle, target]) => ({ id: `${source}:${handle}`, source, sourceHandle: handle, target })),
+  };
+}
+
+async function sampleApp(key = "lea") {
+  const { app, store } = setup();
+  const { id, person } = await create(app, key);
+  for (const d of sampleDocuments(person, key === "mira" ? ["host_missing", "parent_unsigned"] : [], "en")) await upload(app, `/applications/${id}/documents`, d.filename, d.content);
+  const a: Application = { ...store.get(id)!, language: "en" };
+  const ctx = (over: Partial<Parameters<typeof startRun>[2]> = {}) => ({
+    now: NOW,
+    check: (x: Application, ids?: string[] | null, scope?: "all" | "rules" | "inputs") => checksFor(store, x, NOW, ids, scope),
+    template: (tid: string) => { const t = store.liveMessage(tid); return t ? { id: t.id, name: t.name, version: t.version, subject: t.subject, body: t.body } : null; },
+    connection: (system: string) => { const c = store.connections()[system]; return c ? { enabled: c.enabled, mode: c.mode, name: system } : null; },
+    ...over,
+  });
+  return { app, store, a, ctx };
+}
+
+describe("failures are visible, never silent", () => {
+  it("a step whose output leads nowhere stops the process with an error instead of ending quietly", async () => {
+    const { a, ctx } = await sampleApp();
+    const def = defOf([{ id: "s", kind: "trigger", config: { source: "any" } }, { id: "c", kind: "check_inputs" }], [["s", "out", "c"]]);
+    const run = await startRun(def, a, ctx());
+    expect(run.flow!.failed).toBe(true);
+    expect(run.flow!.error!.message).toContain("not connected");
+    expect(run.flow!.finished).toBe(false);
+    // A loop is caught as well.
+    const loop = defOf([{ id: "s", kind: "trigger", config: { source: "any" } }, { id: "c", kind: "check_inputs" }], [["s", "out", "c"], ["c", "complete", "c"], ["c", "incomplete", "c"]]);
+    const looped = await startRun(loop, a, ctx());
+    expect(looped.flow!.failed).toBe(true);
+    expect(looped.flow!.error!.message).toContain("More than");
+  });
+
+  it("a connector that fails is retried, then follows the error output, or stops the process if that is not connected", async () => {
+    const { a, ctx } = await sampleApp();
+    const base: Parameters<typeof defOf>[0] = [{ id: "s", kind: "trigger", config: { source: "any" } }, { id: "pay", kind: "connector", config: { system: "payment", action: "create_payment_order", retries: 1, simulate: "once" } }, { id: "e", kind: "end" }];
+    const ok = await startRun(defOf(base, [["s", "out", "pay"], ["pay", "out", "e"]]), a, ctx());
+    expect(ok.flow!.finished).toBe(true);
+    expect(ok.flow!.log.some((l) => /Attempt 1 failed/.test(l.note))).toBe(true);
+    const always: Parameters<typeof defOf>[0] = base.map((n) => (n.id === "pay" ? { ...n, config: { ...n.config, simulate: "always" } } : n));
+    const stopped = await startRun(defOf(always, [["s", "out", "pay"], ["pay", "out", "e"]]), a, ctx());
+    expect(stopped.flow!.failed).toBe(true);
+    expect(stopped.flow!.error!.message).toContain("error");
+    const routed = await startRun(defOf([...always, { id: "n", kind: "send_notification", config: { to: "office", subject: "Payment failed: {pay.connector_error}", subject_en: "Payment failed: {pay.connector_error}", body: "x", body_en: "x" } }], [["s", "out", "pay"], ["pay", "out", "e"], ["pay", "error", "n"], ["n", "out", "e"]]), a, ctx());
+    expect(routed.flow!.failed).toBeUndefined();
+    expect(routed.outbox![0]!.subject).toContain("did not answer");
+  });
+
+  it("a switched-off connection of the office stops the step, and a caseworker can try a stopped case again at the step that failed", async () => {
+    const { app, store, a, ctx } = await sampleApp();
+    store.setConnection({ ...store.connections().payment!, enabled: false });
+    const def = defOf([{ id: "s", kind: "trigger", config: { source: "any" } }, { id: "pay", kind: "connector", config: { system: "payment", action: "create_payment_order" } }, { id: "e", kind: "end" }], [["s", "out", "pay"], ["pay", "out", "e"]]);
+    const run = await startRun(def, a, ctx());
+    expect(run.flow!.failed).toBe(true);
+    expect(run.flow!.error!.message).toContain("switched off");
+    // The standard process: the case listed as stopped can be tried again.
+    const { id, person } = await create(app, "lea");
+    for (const d of sampleDocuments(person, [], "en")) await upload(app, `/applications/${id}/documents`, d.filename, d.content);
+    await app.inject({ method: "POST", url: `/applications/${id}/submit` });
+    expect((await app.inject({ method: "POST", url: `/office/cases/${id}/restart` })).statusCode).toBe(409);
+    store.put({ ...store.get(id)!, flow: { ...store.get(id)!.flow!, failed: true, error: { nodeId: "human", message: "x", at: NOW.toISOString() } } });
+    const list = (await app.inject({ method: "GET", url: "/office/cases" })).json();
+    expect(list.find((c: { id: string }) => c.id === id).failed).toBe(true);
+    const restarted = (await app.inject({ method: "POST", url: `/office/cases/${id}/restart` })).json();
+    expect(restarted.flow.failed).toBeUndefined();
+    expect(restarted.flow.waiting).toBe("human");
+  });
+});
+
+describe("the data inspector and typed outputs", () => {
+  it("every step records what it produced, and a list can be shown as bullets, a line, a count or its first item", async () => {
+    const { a, ctx } = await sampleApp("mira");
+    const def = defOf(
+      [{ id: "s", kind: "trigger", config: { source: "any" } }, { id: "in", kind: "check_inputs" }, { id: "m", kind: "send_notification", config: { to: "office", subject: "{in.missing_inputs_count} missing", subject_en: "{in.missing_inputs_count} missing", body: "x", body_en: "List {in.missing_inputs:bullets}\nLine {in.missing_inputs:comma}\nCount {in.missing_inputs:count}\nFirst {in.missing_inputs:first}" } }, { id: "e", kind: "end" }],
+      [["s", "out", "in"], ["in", "incomplete", "m"], ["in", "complete", "e"], ["m", "out", "e"]],
+    );
+    const run = await startRun(def, a, ctx());
+    const inputsEntry = run.flow!.log.find((l) => l.nodeId === "in")!;
+    expect(inputsEntry.outputs!.missing_inputs).toContain("•");
+    expect(Number(inputsEntry.outputs!.missing_inputs_count)).toBeGreaterThan(0);
+    const body = run.outbox![0]!.body;
+    const count = Number(/Count (\d+)/.exec(body)![1]);
+    const items = inputsEntry.outputs!.missing_inputs!.split("\n").length;
+    expect(count).toBe(items);
+    expect(/Line (.+)/.exec(body)![1]).toBe(inputsEntry.outputs!.missing_inputs!.split("\n").map((l) => l.replace(/^•\s*/, "")).join(", "));
+    expect(/First (.+)/.exec(body)![1]).not.toContain("•");
+    expect(body).toContain("List •");
+  });
+
+  it("the required inputs have a step of their own; the rules step can leave them out", async () => {
+    const { a, ctx } = await sampleApp("mira");
+    const mk = (withInputs: string) => defOf([{ id: "s", kind: "trigger", config: { source: "any" } }, { id: "r", kind: "run_rules", config: { rules: "", withInputs } }, { id: "e", kind: "end" }], [["s", "out", "r"], ["r", "complete", "e"], ["r", "incomplete", "e"]]);
+    const without = await startRun(mk("no"), a, ctx());
+    expect(without.flow!.log.find((l) => l.nodeId === "r")!.handle).toBe("complete");
+    const withAll = await startRun(mk("yes"), a, ctx());
+    expect(withAll.flow!.log.find((l) => l.nodeId === "r")!.handle).toBe("incomplete");
+  });
+});
+
+describe("message templates", () => {
+  it("are written, approved by a second person, and used by a step that fills their parameters", async () => {
+    const { app, store } = setup("s-lindner");
+    const created = (await app.inject({ method: "POST", url: "/office/messages", payload: { name: "Thanks", purpose: "Says thanks", subject: { de: "Danke {reference}", en: "Thanks {reference}" }, body: { de: "Danke für {thing}.", en: "Thanks for {thing}." } } })).json();
+    expect(created.status).toBe("draft");
+    expect(created.params).toEqual(["thing"]);
+    expect(store.liveMessage(created.id)).toBeNull();
+    expect((await app.inject({ method: "POST", url: `/office/messages/${created.id}/approve` })).statusCode).toBe(409);
+    store.login("s-obermeier", "admin");
+    const live = (await app.inject({ method: "POST", url: `/office/messages/${created.id}/approve`, headers: { "x-staff-token": "admin" } })).json();
+    expect(live.status).toBe("live");
+    expect(store.liveMessage(created.id)!.version).toBe(1);
+    // A change is a new version; the live one keeps running until approved.
+    const changed = (await app.inject({ method: "PUT", url: `/office/messages/${created.id}/draft`, payload: { name: "Thanks", purpose: "x", subject: { de: "Danke", en: "Thanks" }, body: { de: "Danke!", en: "Thanks!" } } })).json();
+    expect(changed.status).toBe("changed");
+    expect(store.liveMessage(created.id)!.body.en).toBe("Thanks for {thing}.");
+  });
+
+  it("a step that uses a template needs every parameter filled, and the message comes out filled and framed", async () => {
+    const { app, store, a, ctx } = await sampleApp("mira");
+    const node = { id: "m", kind: "send_notification" as const, config: { to: "student", template: "msg-missing", params: '{"open_items":"{r.open_items}"}' } };
+    const def = defOf([{ id: "s", kind: "trigger", config: { source: "any" } }, { id: "r", kind: "run_rules", config: { rules: "", withInputs: "yes" } }, node, { id: "e", kind: "end" }], [["s", "out", "r"], ["r", "incomplete", "m"], ["r", "complete", "e"], ["m", "out", "e"]]);
+    const run = await startRun(def, a, ctx());
+    const mail = run.outbox![0]!;
+    expect(mail.subject).toContain(a.reference);
+    expect(mail.body).toContain("Hi Mira");
+    expect(mail.body).toContain("• ");
+    expect(mail.body).not.toContain("{open_items}");
+    expect(run.flow!.log.find((l) => l.nodeId === "m")!.note).toContain("template “What is still missing” v1");
+    // Missing parameter: the process cannot be saved as valid.
+    const live = (await app.inject({ method: "GET", url: "/office/processes" })).json().live;
+    const broken = { ...live, nodes: live.nodes.map((n: { id: string; config: Record<string, string> }) => (n.id === "notify-ok" ? { ...n, config: { ...n.config, params: "" } } : n)) };
+    const res = (await app.inject({ method: "POST", url: "/office/processes/validate", payload: { def: broken } })).json();
+    expect(JSON.stringify(res.issues)).toContain("nothing is put into {explanation}");
+    expect(store.process("bafoeg.abroad")).toBeTruthy();
+  });
+});
+
+describe("test cases, impact and ownership", () => {
+  it("the standard process passes its own samples, and the impact shows changes, rules, messages and systems", async () => {
+    const { app } = setup();
+    const live = (await app.inject({ method: "GET", url: "/office/processes" })).json().live;
+    expect(live.tests.length).toBeGreaterThanOrEqual(5);
+    expect(live.owner).toBe("Frau Lindner");
+    const tests = (await app.inject({ method: "POST", url: "/office/processes/tests", payload: { def: live } })).json();
+    expect(tests.results.filter((r: { ok: boolean }) => !r.ok)).toEqual([]);
+    const changed = { ...live, nodes: live.nodes.map((n: { id: string; name: string }) => (n.id === "human" ? { ...n, name: "Final decision" } : n)) };
+    const impact = (await app.inject({ method: "POST", url: "/office/processes/impact", payload: { def: changed } })).json();
+    expect(impact.changes.some((c: { text: string }) => c.text.includes("renamed to “Final decision”"))).toBe(true);
+    expect(impact.dependencies.messages).toContain("Approval notice");
+    expect(impact.dependencies.systems).toContain("Payment (Kasse)");
+    expect(impact.dependencies.rules).toMatch(/rules/);
+  });
+
+  it("a test case that no longer holds is reported with the reason", async () => {
+    const { app } = setup();
+    const live = (await app.inject({ method: "GET", url: "/office/processes" })).json().live;
+    const odd = { ...live, tests: [{ id: "x", name: "Complete case ends in approval without a decision", sample: "complete", expect: { visits: ["end-ok"], waitingAt: null } }] };
+    const res = (await app.inject({ method: "POST", url: "/office/processes/tests", payload: { def: odd } })).json();
+    expect(res.results[0].ok).toBe(false);
+    expect(res.results[0].failures.join(" ")).toContain("Did not pass through “End: approved”");
+  });
+});
+
+describe("connections belong to the office", () => {
+  it("are listed with where they are used, can be tested and switched off by an administrator only", async () => {
+    const { app, store } = setup();
+    const list = (await app.inject({ method: "GET", url: "/office/connections" })).json();
+    expect(list.map((c: { system: string }) => c.system)).toEqual(["case_software", "efile", "payment", "portal"]);
+    expect(list.find((c: { system: string }) => c.system === "payment").usedIn).toHaveLength(1);
+    const tested = (await app.inject({ method: "POST", url: "/office/connections/payment/test" })).json();
+    expect(tested.lastTest.ok).toBe(true);
+    const off = (await app.inject({ method: "PUT", url: "/office/connections/payment", payload: { enabled: false } })).json();
+    expect(off.enabled).toBe(false);
+    store.login("s-lindner", "pd");
+    expect((await app.inject({ method: "PUT", url: "/office/connections/payment", payload: { enabled: true }, headers: { "x-staff-token": "pd" } })).statusCode).toBe(403);
   });
 });

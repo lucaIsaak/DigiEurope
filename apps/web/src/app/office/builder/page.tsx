@@ -9,6 +9,7 @@ import {
   CONNECTORS,
   NODE_CATALOG,
   TOKEN_KEYS,
+  uniqueStepName,
   defaultConfig,
   outputsOf,
   validateProcess,
@@ -19,6 +20,7 @@ import {
   type NodeKind,
   type ProcessDef,
   type ProcessIssue,
+  type ProcessTest,
 } from "@digieurope/shared";
 import dagre from "@dagrejs/dagre";
 import {
@@ -76,12 +78,15 @@ import {
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AssignmentTable } from "@/components/AssignmentTable";
 import { OutputTiles, ProvidesList, useTokenResolver } from "@/components/StepOutputs";
+import { ProcessTestsPanel } from "@/components/ProcessTestsPanel";
+import { PublishDialog } from "@/components/PublishDialog";
+import { TemplateParams } from "@/components/TemplateParams";
 import { TokenField, type TokenFieldHandle } from "@/components/TokenField";
 import { RulePicker } from "@/components/RulePicker";
 import { InputsEditor } from "@/components/InputsEditor";
 import { CATEGORIES, ICONS, NODE_W, edgeBase, layout, ARROW, nodeTypes, toRfNode, type StepNode } from "@/components/FlowKit";
 import { Spinner } from "@/components/ui";
-import { ApiError, api, type TestRunResult } from "@/lib/api";
+import { ApiError, api, type MessageEntry, type ProcessImpact, type ProcessTestResult, type TestRunResult } from "@/lib/api";
 import { useI18n } from "@/lib/i18n";
 import type { MessageKey } from "@/lib/messages";
 import { useStaff } from "@/lib/staff";
@@ -117,6 +122,13 @@ function Builder() {
   const [showVersions, setShowVersions] = useState(false);
   const [inputs, setInputs] = useState<ProcessInput[]>([]);
   const [showInputs, setShowInputs] = useState(false);
+  const [owner, setOwner] = useState("");
+  const [tests, setTests] = useState<ProcessTest[]>([]);
+  const [showTests, setShowTests] = useState(false);
+  const [testResults, setTestResults] = useState<ProcessTestResult[] | null>(null);
+  const [messages, setMessages] = useState<MessageEntry[]>([]);
+  const [publishDlg, setPublishDlg] = useState<{ impact: ProcessImpact; tests: ProcessTestResult[] } | null>(null);
+  const [changeNote, setChangeNote] = useState("");
   /** The tiles with the outputs of earlier steps open beside the panel while a text field is in use. */
   const [tilesOpen, setTilesOpen] = useState(false);
   useEffect(() => setTilesOpen(false), [selected]);
@@ -139,7 +151,7 @@ function Builder() {
   const rfEdge = useCallback((e: FlowEdge, all: StepNode[]): Edge => ({ id: e.id, source: e.source, sourceHandle: e.sourceHandle, target: e.target, label: edgeLabel(e.source, e.sourceHandle, all), ...edgeBase }), [edgeLabel]);
 
   const snapshot = (): Snapshot => ({
-    nodes: nodesRef.current.map((n) => ({ id: n.id, kind: n.data.kind, position: n.position, config: n.data.config })),
+    nodes: nodesRef.current.map((n) => ({ id: n.id, kind: n.data.kind, name: n.data.name, purpose: n.data.purpose, position: n.position, config: n.data.config })),
     edges: edgesRef.current.map((e) => ({ id: e.id, source: e.source, sourceHandle: e.sourceHandle ?? "out", target: e.target })),
   });
   const checkpoint = () => {
@@ -176,6 +188,9 @@ function Builder() {
     setEdges(es);
     setName(def.name);
     setInputs(def.inputs ?? []);
+    setOwner(def.owner ?? "");
+    setTests(def.tests ?? []);
+    setTestResults(null);
     setDirty(isDraft);
     setResult(null);
     setIssues([]);
@@ -188,8 +203,9 @@ function Builder() {
 
   const refresh = useCallback(async (cat?: string) => {
     const target = cat ?? category;
-    const [p, list, lib] = await Promise.all([api.processes(target), api.processList(), api.templates().catch(() => null)]);
+    const [p, list, lib, msgs] = await Promise.all([api.processes(target), api.processList(), api.templates().catch(() => null), api.messages().catch(() => [] as MessageEntry[])]);
     if (lib) setTemplates(lib.templates);
+    setMessages(msgs);
     setCategory(target);
     setProcessList(list);
     setLive(p.live);
@@ -212,9 +228,9 @@ function Builder() {
 
   const toDef = useCallback((): ProcessDef => {
     const s = snapshot();
-    return { id: live?.id ?? category, catalogId: category, name, version: (live?.version ?? 0) + 1, updatedAt: new Date().toISOString(), updatedBy: "", inputs, nodes: s.nodes, edges: s.edges };
+    return { id: live?.id ?? category, catalogId: category, name, version: (live?.version ?? 0) + 1, updatedAt: new Date().toISOString(), updatedBy: "", owner, tests, inputs, nodes: s.nodes, edges: s.edges };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [live, name, inputs]);
+  }, [live, name, inputs, owner, tests]);
 
   const onConnect = useCallback((c: Connection) => {
     if (c.source === c.target) return;
@@ -230,7 +246,8 @@ function Builder() {
   const addNode = (kind: NodeKind, preset: Record<string, ConfigValue> | undefined, position: { x: number; y: number }) => {
     checkpoint();
     const id = `${kind}-${Date.now().toString(36)}`;
-    setNodes((ns) => [...ns.map((n) => ({ ...n, selected: false })), { id, type: "step", position, selected: true, data: { kind, config: defaultConfig(kind, preset) } }]);
+    const stepName = uniqueStepName(bi(NODE_CATALOG[kind].title), nodesRef.current.map((n) => n.data.name ?? ""));
+    setNodes((ns) => [...ns.map((n) => ({ ...n, selected: false })), { id, type: "step", position, selected: true, data: { kind, name: stepName, config: defaultConfig(kind, preset) } }]);
     setSelected(id);
     touch();
   };
@@ -286,17 +303,27 @@ function Builder() {
   };
 
   const sel = useMemo(() => nodes.find((n) => n.id === selected) ?? null, [nodes, selected]);
+  /** Texts a message template replaces. */
+  const TEMPLATE_TEXTS = ["subject", "subject_en", "body", "body_en", "fallback", "fallback_en"];
+  const setMeta = (key: "name" | "purpose", value: string) => {
+    setNodes((ns) => ns.map((n) => (n.id === selected ? { ...n, data: { ...n.data, [key]: value } } : n)));
+    touch();
+  };
   /** The fields where outputs of earlier steps can be put in as tiles. */
   const tokenRefs = useRef<Record<string, TokenFieldHandle | null>>({});
   const activeToken = useRef<string | null>(null);
-  const graph = useMemo(() => ({ nodes: nodes.map((n) => ({ id: n.id, kind: n.data.kind, x: n.position.x, y: n.position.y })), edges: edges.map((e) => ({ source: e.source, target: e.target })) }), [nodes, edges]);
+  const graph = useMemo(() => ({ nodes: nodes.map((n) => ({ id: n.id, kind: n.data.kind, name: n.data.name, x: n.position.x, y: n.position.y })), edges: edges.map((e) => ({ source: e.source, target: e.target })) }), [nodes, edges]);
   const tokens = useTokenResolver(graph, selected ?? "");
-  const hasTokenFields = sel ? NODE_CATALOG[sel.data.kind].fields.some((f) => (f.type === "text" || f.type === "textarea") && TOKEN_KEYS.includes(f.key)) : false;
+  const hasTokenFields = sel ? NODE_CATALOG[sel.data.kind].fields.some((f) => ((f.type === "text" || f.type === "textarea") && TOKEN_KEYS.includes(f.key)) || f.type === "params") : false;
   const insertToken = (raw: string) => {
     if (!sel) return;
-    const keys = NODE_CATALOG[sel.data.kind].fields.filter((f) => (f.type === "text" || f.type === "textarea") && TOKEN_KEYS.includes(f.key)).map((f) => f.key);
+    const withTemplate = Boolean(sel.data.config.template);
+    const keys = NODE_CATALOG[sel.data.kind].fields.filter((f) => (f.type === "text" || f.type === "textarea") && TOKEN_KEYS.includes(f.key) && !(withTemplate && TEMPLATE_TEXTS.includes(f.key))).map((f) => f.key);
     const base = keys.includes("body") ? "body" : keys.includes("fallback") ? "fallback" : keys.includes("payload") ? "payload" : keys.includes("instruction") ? "instruction" : keys[0];
-    const key = activeToken.current && keys.includes(activeToken.current) ? activeToken.current : base && lang === "en" && keys.includes(`${base}_en`) ? `${base}_en` : base;
+    const preferred = base && lang === "en" && keys.includes(`${base}_en`) ? `${base}_en` : base;
+    // The field the person is in; otherwise the first value of the chosen template; otherwise the main text.
+    const paramKey = Object.keys(tokenRefs.current).find((k) => k.startsWith("params:") && tokenRefs.current[k]);
+    const key = activeToken.current && tokenRefs.current[activeToken.current] ? activeToken.current : withTemplate && paramKey ? paramKey : preferred;
     if (key) tokenRefs.current[key]?.insert(raw);
   };
   const setConfig = (key: string, value: ConfigValue) => {
@@ -405,7 +432,8 @@ function Builder() {
         <span className="ws-spacer" />
         <button className={`button button-small ${showInputs ? "" : "button-ghost"}`} type="button" onClick={() => { setShowInputs((v) => !v); setSelected(null); }}><ListChecks size={15} />{t("builder.inputs")} ({inputs.length})</button>
         <button className="button button-ghost button-small" type="button" onClick={validate}><CheckCircle2 size={15} />{t("builder.validate")}</button>
-        <button className={`button button-small ${drawer ? "" : "button-ghost"}`} type="button" onClick={() => setDrawer((d) => !d)}><Play size={14} />{t("builder.testRun")}</button>
+        <button className={`button button-small ${drawer ? "" : "button-ghost"}`} type="button" onClick={() => { setDrawer((d) => !d); setShowTests(false); }}><Play size={14} />{t("builder.testRun")}</button>
+        <button className={`button button-small ${showTests ? "" : "button-ghost"}`} type="button" onClick={() => { setShowTests((d) => !d); setDrawer(false); }}><CheckCircle2 size={14} />{t("builder.testsBtn")} ({tests.length})</button>
         <button className="button button-ghost button-small" type="button" disabled={busy} onClick={async () => { const r = await run(() => api.saveDraft(toDef())); if (r) { setDirty(false); setToast({ text: t("builder.saved"), tone: "ok" }); } }}>{t("builder.save")}</button>
         <button
           className="button button-small"
@@ -414,10 +442,10 @@ function Builder() {
           onClick={async () => {
             const found = validate();
             if (found.length) return;
-            const r = await run(() => api.publish(toDef()));
-            if (r) {
-              setToast({ text: `${t("builder.published", { v: r.version })} ${t("builder.publish.note")}`, tone: "ok" });
-              await refresh();
+            const [impact, tr] = await Promise.all([run(() => api.processImpact(toDef())), run(() => api.processTests(toDef()))]);
+            if (impact && tr) {
+              setChangeNote("");
+              setPublishDlg({ impact, tests: tr.results });
             }
           }}
         >
@@ -543,6 +571,8 @@ function Builder() {
                 <button className="icon-button" type="button" aria-label={t("builder.close")} onClick={() => { setSelected(null); setNodes((ns) => ns.map((n) => ({ ...n, selected: false }))); }}><X size={16} /></button>
               </header>
               <div className="body">
+                <label className="field">{t("builder.stepName")}<input value={sel.data.name ?? ""} onFocus={checkpoint} onChange={(e) => setMeta("name", e.target.value)} /></label>
+                <label className="field">{t("builder.purpose")}<input value={sel.data.purpose ?? ""} onFocus={checkpoint} onChange={(e) => setMeta("purpose", e.target.value)} /></label>
                 <p className="small muted" style={{ margin: 0 }}>{bi(NODE_CATALOG[sel.data.kind].description)}</p>
                 {NODE_CATALOG[sel.data.kind].ai && <p className="banner banner-info small" style={{ margin: 0 }}>{t("builder.aiNote")}</p>}
                 {sel.data.kind === "connector" && <p className="small muted" style={{ margin: 0 }}>{t("builder.connectorNote")}</p>}
@@ -558,8 +588,25 @@ function Builder() {
                 <ProvidesList kind={sel.data.kind} stepId={sel.id} names={tokens.names} />
                 {hasTokenFields && <p className="small muted tiles-hint" style={{ margin: 0 }}>{t("builder.tilesHint")}</p>}
                 {sel.data.kind === "assign_caseworker" && <AssignmentTable embedded />}
-                {sel.data.kind === "run_rules" && <RulePicker value={sel.data.config.rules === undefined ? undefined : String(sel.data.config.rules)} onChange={(v) => { checkpoint(); setConfig("rules", v); }} />}
-                {NODE_CATALOG[sel.data.kind].fields.filter((f) => !(sel.data.kind === "run_rules" && f.key === "rules")).map((f) => {
+                {NODE_CATALOG[sel.data.kind].fields.filter((f) => !(sel.data.config.template && TEMPLATE_TEXTS.includes(f.key))).map((f) => {
+                  if (f.type === "rules") return <RulePicker key={f.key} value={sel.data.config.rules === undefined ? undefined : String(sel.data.config.rules)} onChange={(v) => { checkpoint(); setConfig("rules", v); }} />;
+                  if (f.type === "template") {
+                    return (
+                      <TemplateParams
+                        key={f.key}
+                        templates={messages}
+                        template={String(sel.data.config.template ?? "")}
+                        params={String(sel.data.config.params ?? "")}
+                        onTemplate={(id) => { checkpoint(); setConfig("template", id); setConfig("params", ""); }}
+                        onParams={(json) => setConfig("params", json)}
+                        resolve={tokens.resolve}
+                        sig={tokens.sig}
+                        register={(key, h) => { tokenRefs.current[key] = h; }}
+                        onFocusKey={(key) => { checkpoint(); activeToken.current = key; setTilesOpen(true); }}
+                      />
+                    );
+                  }
+                  if (f.type === "params") return null;
                   let options = f.options;
                   if (sel.data.kind === "connector" && f.key === "action") options = CONNECTORS.find((c) => c.id === sel.data.config.system)?.actions.map((a) => ({ value: a.id, label: a.label }));
                   const val = sel.data.config[f.key] ?? f.default;
@@ -600,7 +647,10 @@ function Builder() {
                     </label>
                   );
                 })}
-                <button className="button button-ghost button-small" type="button" onClick={() => { checkpoint(); setNodes((ns) => ns.filter((n) => n.id !== sel.id)); setEdges((es) => es.filter((e) => e.source !== sel.id && e.target !== sel.id)); setSelected(null); touch(); }}>{t("builder.delete")}</button>
+                <button className="button button-ghost button-small" type="button" onClick={() => {
+                  const usedBy = nodes.some((n) => n.id !== sel.id && Object.values(n.data.config).some((v) => typeof v === "string" && v.includes(`{${sel.id}.`)));
+                  if (usedBy && !window.confirm(t("builder.deleteRefs", { name: tokens.names.get(sel.id) ?? sel.id }))) return;
+                  checkpoint(); setNodes((ns) => ns.filter((n) => n.id !== sel.id)); setEdges((es) => es.filter((e) => e.source !== sel.id && e.target !== sel.id)); setSelected(null); touch(); }}>{t("builder.delete")}</button>
               </div>
             </aside>
           )}
@@ -612,6 +662,55 @@ function Builder() {
           )}
         </div>
       </div>
+
+      {publishDlg && (
+        <PublishDialog
+          impact={publishDlg.impact}
+          tests={publishDlg.tests}
+          owner={owner}
+          setOwner={setOwner}
+          note={changeNote}
+          setNote={setChangeNote}
+          busy={busy}
+          onCancel={() => setPublishDlg(null)}
+          onConfirm={async () => {
+            try {
+              setBusy(true);
+              const r = await api.publish({ ...toDef(), owner, changeNote });
+              setPublishDlg(null);
+              setToast({ text: `${t("builder.published", { v: r.version })} ${t("builder.publish.note")}`, tone: "ok" });
+              await refresh();
+            } catch (e) {
+              if (e instanceof ApiError && e.tests) setPublishDlg((d) => (d ? { ...d, tests: e.tests! } : d));
+              else if (e instanceof ApiError && e.issues) { markIssues(e.issues); setPublishDlg(null); }
+              setToast({ text: e instanceof Error ? e.message : String(e), tone: "warn" });
+            } finally {
+              setBusy(false);
+            }
+          }}
+        />
+      )}
+
+      {showTests && (
+        <section className="ws-drawer" aria-label={t("builder.testsBtn")}>
+          <ProcessTestsPanel
+            tests={tests}
+            setTests={(next) => { setTests(next); setTestResults(null); touch(); }}
+            last={result}
+            lastSample={sample}
+            lastDecision={decision}
+            results={testResults}
+            busy={busy}
+            stepName={(id) => tokens.names.get(id) ?? id}
+            onRun={async () => {
+              const found = validate();
+              if (found.length) return;
+              const r = await run(() => api.processTests(toDef()));
+              if (r) setTestResults(r.results);
+            }}
+          />
+        </section>
+      )}
 
       {drawer && (
         <section className="ws-drawer" aria-label={t("builder.testRun")}>
@@ -651,10 +750,22 @@ function Builder() {
             <div className="cols">
               <div className="col">
                 <h3>{t("builder.steps")}</h3>
+                {result.failed && <p className="banner banner-warn small" role="alert">{t("builder.test.stopped", { m: result.error?.message ?? "" })}</p>}
                 {result.log.map((l, i) => (
-                  <div className="log-line" key={i}>
-                    <span aria-hidden style={{ color: "var(--ok)" }}><Check size={14} /></span>
-                    <span><strong>{bi(NODE_CATALOG[l.kind as NodeKind]?.title ?? { de: l.kind, en: l.kind })}</strong><br /><span className="muted">{l.note}</span></span>
+                  <div className={`log-line${l.note.startsWith("Stopped") ? " stopped" : ""}`} key={i}>
+                    <span aria-hidden style={{ color: l.note.startsWith("Stopped") ? "var(--bad)" : "var(--ok)" }}>{l.note.startsWith("Stopped") ? <AlertTriangle size={14} /> : <Check size={14} />}</span>
+                    <span>
+                      <strong>{tokens.names.get(l.nodeId) ?? bi(NODE_CATALOG[l.kind as NodeKind]?.title ?? { de: l.kind, en: l.kind })}</strong><br />
+                      <span className="muted">{l.note}</span>
+                      {l.outputs && Object.keys(l.outputs).length > 0 && (
+                        <details>
+                          <summary className="small muted">{t("builder.step.data")} ({Object.keys(l.outputs).length})</summary>
+                          <div className="data-box">
+                            {Object.entries(l.outputs).map(([k, v]) => <div key={k}><code>{k}</code><pre>{v || "–"}</pre></div>)}
+                          </div>
+                        </details>
+                      )}
+                    </span>
                   </div>
                 ))}
               </div>
