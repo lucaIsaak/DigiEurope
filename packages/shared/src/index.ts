@@ -16,3 +16,6 @@ export * from "./requirements.js";
 export * from "./conditions.js";
 export * from "./assignment.js";
 export * from "./messages.js";
+export * from "./expressions.js";
+export * from "./json.js";
+export * from "./documentation.js";

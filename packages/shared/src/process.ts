@@ -1,5 +1,7 @@
 import { isCatalogVariant } from "./catalog.js";
 import { RULES } from "./rules.js";
+import { checkText, typeOfText } from "./expressions.js";
+import { parsePath, parsePicks, type JsonPickType } from "./json.js";
 import type { Bilingual, FieldType } from "./types.js";
 
 export type NodeKind =
@@ -17,6 +19,7 @@ export type NodeKind =
   | "request_documents"
   | "send_notification"
   | "connector"
+  | "http_request"
   | "end";
 
 export type ConfigValue = string | number;
@@ -29,8 +32,19 @@ export interface FlowNode {
   name?: string;
   /** One line on what the step is for. */
   purpose?: string;
+  /** A note for the people who read the process later: why the step is there, what to know about it. */
+  comment?: string;
+  /** What the AI documentation proposes for the name and the comment. Waits for a person: keep, reject or merge. */
+  suggestion?: NodeSuggestion;
   position: { x: number; y: number };
   config: Record<string, ConfigValue>;
+}
+
+/** A proposal of the AI documentation for one step. Nothing changes until a person accepts it. */
+export interface NodeSuggestion {
+  name?: string;
+  comment?: string;
+  at: string;
 }
 
 export interface FlowEdge {
@@ -99,7 +113,11 @@ export interface FieldSpec {
   key: string;
   label: Bilingual;
   /** rules: a list of rule ids. template: a message template. params: what the template's parameters are bound to. */
-  type: "text" | "textarea" | "number" | "select" | "rules" | "template" | "params";
+  type: "text" | "textarea" | "number" | "select" | "rules" | "template" | "params" | "picks";
+  /** Shown only while another setting has this value. */
+  showIf?: { key: string; value: string };
+  /** Kept in the settings but not drawn as a field of its own. */
+  hidden?: boolean;
   options?: { value: string; label: Bilingual }[];
   default: ConfigValue;
   /** Must not be empty. */
@@ -216,6 +234,7 @@ export const STEP_OUTPUTS: Record<NodeKind, StepOutput[]> = {
   read_documents: [
     o("documents_read", "Liste der gelesenen Dokumente", "List of the documents read", "• Income tax assessment (built-in reader)", "list"),
     o("unreadable_documents", "Dokumente, die nicht gelesen werden konnten", "Documents that could not be read", "• Enrolment_certificate.pdf", "list"),
+    o("read_result", "Ergebnis des Lesens (valid / invalid)", "Result of reading (valid / invalid)", "valid"),
   ],
   review_fields: [
     o("review_list", "Kurze Liste der unklaren Dokumente und Felder", "Brief list of the unclear documents and fields", "• Income tax assessment: Total income (EUR)", "list"),
@@ -256,8 +275,23 @@ export const STEP_OUTPUTS: Record<NodeKind, StepOutput[]> = {
     o("connector_action", "Ausgeführte Aktion", "The action that was run", "create_payment_order"),
     o("connector_error", "Fehlermeldung, falls der Aufruf scheiterte", "Error message if the call failed", "The payment system did not answer."),
   ],
+  http_request: [
+    o("http_status", "Statuscode der Antwort", "Status code of the answer", "200", "number"),
+    o("http_body", "Ganze Antwort als Text", "The whole answer as text", '{"ok":true}'),
+    o("http_error", "Fehlermeldung, falls der Aufruf scheiterte", "Error message if the call failed", "The system did not answer in time."),
+  ],
   end: [],
 };
+
+const PICK_TYPE: Record<JsonPickType, OutputType> = { text: "text", number: "number", list: "list", yesno: "yesno" };
+
+/** What a step hands on: what its kind always produces, plus the fields a person picked from an answer (JSON picker). */
+export function outputsOfNode(node: { kind: NodeKind; config?: Record<string, ConfigValue> }): StepOutput[] {
+  const base = STEP_OUTPUTS[node.kind];
+  if (node.kind !== "http_request") return base;
+  const picked = parsePicks(node.config?.picks).map((p) => o(p.name, `Feld ${p.path}`, `Field ${p.path}`, p.type === "number" ? "42" : p.type === "list" ? "• first\n• second" : p.type === "yesno" ? "yes" : "value", PICK_TYPE[p.type]));
+  return [...base, ...picked];
+}
 
 /** Available in every text, without any step: name, reference and the estimated amount. */
 /** The text a question to the student starts from after a review: what is unclear and why. The caseworker edits it before it is sent. */
@@ -273,7 +307,7 @@ export const GLOBAL_PLACEHOLDERS: StepOutput[] = [
 ];
 
 /** The outputs a step can use: everything produced by the steps that lead to it, nearest first. */
-export function upstreamOutputs(def: { nodes: { id: string; kind: NodeKind }[]; edges: { source: string; target: string }[] }, nodeId: string): { nodeId: string; kind: NodeKind; output: StepOutput }[] {
+export function upstreamOutputs(def: { nodes: { id: string; kind: NodeKind; config?: Record<string, ConfigValue> }[]; edges: { source: string; target: string }[] }, nodeId: string): { nodeId: string; kind: NodeKind; output: StepOutput }[] {
   const byId = new Map(def.nodes.map((n) => [n.id, n]));
   const seen = new Set<string>([nodeId]);
   const order: string[] = [];
@@ -291,12 +325,13 @@ export function upstreamOutputs(def: { nodes: { id: string; kind: NodeKind }[]; 
     }
     frontier = next;
   }
-  return order.flatMap((id) => STEP_OUTPUTS[byId.get(id)!.kind].map((output) => ({ nodeId: id, kind: byId.get(id)!.kind, output })));
+  return order.flatMap((id) => outputsOfNode(byId.get(id)!).map((output) => ({ nodeId: id, kind: byId.get(id)!.kind, output })));
 }
 
 /** Every field where a person types something, and so can put outputs of earlier steps into. */
-export const TOKEN_KEYS = ["subject", "body", "fallback", "instruction", "subject_en", "body_en", "fallback_en", "instruction_en", "value", "payload", "params"];
+export const TOKEN_KEYS = ["subject", "body", "fallback", "instruction", "subject_en", "body_en", "fallback_en", "instruction_en", "value", "left", "payload", "params", "url", "headers"];
 const ALL_OUTPUT_NAMES = new Set(Object.values(STEP_OUTPUTS).flatMap((l) => l.map((x) => x.name)));
+const allKnownOutputs = (def: { nodes: { kind: NodeKind; config?: Record<string, ConfigValue> }[] }) => def.nodes.flatMap((n) => outputsOfNode(n));
 export const TOKEN_RE = /\{([A-Za-z0-9_-]+)(?:\.([a-z_]+))?(?::([a-z]+))?\}/g;
 /** The tokens in a text: {name} for the basics and for the latest output of that name, {stepId.output} for one particular step. */
 export const tokensIn = (text: string): { raw: string; step?: string; name: string; format?: string }[] =>
@@ -331,8 +366,8 @@ export const NODE_CATALOG: Record<NodeKind, NodeSpec> = {
   read_documents: {
     kind: "read_documents", category: "check", ai: true,
     title: { de: "Dokumente lesen", en: "Read documents" },
-    description: { de: "Liest Dokumente in Felder, mit der Methode, die bei jedem Dokumenttyp unter „Vorlagen“ eingestellt ist. Bei unsicheren Feldern geht es zur Prüfung durch eine Person.", en: "Reads documents into fields with the method set for each document type under Templates. Doubtful fields go to a person for review." },
-    outputs: [{ id: "clear", label: { de: "klar", en: "clear" } }, { id: "review", label: { de: "prüfen", en: "review" } }],
+    description: { de: "Liest Dokumente in Felder, mit der Methode, die bei jedem Dokumenttyp unter „Vorlagen“ eingestellt ist. Das Ergebnis ist „valid“ oder „invalid“ (unsichere Felder); verzweigen Sie danach mit einer Bedingung.", en: "Reads documents into fields with the method set for each document type under Templates. The result is “valid” or “invalid” (doubtful fields); branch on it with a condition step afterwards." },
+    outputs: OUT,
     fields: [
       { key: "scope", label: { de: "Welche Dokumente", en: "Which documents" }, type: "select", default: "all", options: [opt("all", "Alle", "All"), opt("student", "Nur der Studierenden", "Student's only"), opt("parents", "Nur der Eltern", "Parents' only")] },
     ],
@@ -349,12 +384,13 @@ export const NODE_CATALOG: Record<NodeKind, NodeSpec> = {
   condition: {
     kind: "condition", category: "decide",
     title: { de: "Bedingung", en: "Condition" },
-    description: { de: "Verzweigt den Ablauf anhand eines Wertes des Antrags.", en: "Branches the process on a value of the application." },
+    description: { de: "Verzweigt den Ablauf: „ja“ nach links, „nein“ nach rechts. Verglichen wird das Ergebnis eines früheren Schritts (als Kachel) oder ein Wert des Antrags.", en: "Branches the process: “yes” to the left, “no” to the right. It compares the result of an earlier step (as a tile) or a value of the application." },
     outputs: [{ id: "yes", label: { de: "ja", en: "yes" } }, { id: "no", label: { de: "nein", en: "no" } }],
     fields: [
-      { key: "field", label: { de: "Wert", en: "Value" }, type: "select", default: "estimateMonthly", options: CONDITION_FIELDS.map((f) => ({ value: f.key, label: f.label })) },
-      { key: "op", label: { de: "Vergleich", en: "Comparison" }, type: "select", default: "gte", options: [opt("gte", "ist mindestens", "is at least"), opt("lte", "ist höchstens", "is at most"), opt("eq", "ist gleich", "equals"), opt("ne", "ist nicht gleich", "does not equal")] },
-      { key: "value", label: { de: "Vergleichswert", en: "Compare to" }, type: "text", default: "500" },
+      { key: "field", label: { de: "Verglichen wird", en: "What is compared" }, type: "select", default: "custom", options: [opt("custom", "Ergebnis eines früheren Schritts (Kachel)", "Result of an earlier step (tile)"), ...CONDITION_FIELDS.map((f) => ({ value: f.key, label: f.label }))] },
+      { key: "left", label: { de: "Wert", en: "Value" }, type: "text", default: "", showIf: { key: "field", value: "custom" } },
+      { key: "op", label: { de: "Vergleich", en: "Comparison" }, type: "select", default: "eq", options: [opt("eq", "ist gleich", "equals"), opt("ne", "ist nicht gleich", "does not equal"), opt("contains", "enthält", "contains"), opt("gte", "ist mindestens", "is at least"), opt("lte", "ist höchstens", "is at most")] },
+      { key: "value", label: { de: "Vergleichswert", en: "Compare to" }, type: "text", default: "valid" },
     ],
   },
   human_task: {
@@ -439,6 +475,22 @@ export const NODE_CATALOG: Record<NodeKind, NodeSpec> = {
       { key: "simulate", label: { de: "Fehler simulieren (zum Testen)", en: "Simulate a failure (for testing)" }, type: "select", default: "none", options: [opt("none", "Nein", "No"), opt("once", "Nur beim ersten Versuch", "On the first attempt only"), opt("always", "Immer", "Always")] },
     ],
   },
+  http_request: {
+    kind: "http_request", category: "connector",
+    title: { de: "HTTP-Aufruf (API)", en: "HTTP request (API)" },
+    description: { de: "Ruft eine Web-Schnittstelle über http oder https auf. Aus der Antwort wählen Sie mit dem JSON-Picker die Felder, die Sie brauchen; jedes Feld wird zu einer Kachel für spätere Schritte. Scheitert der Aufruf, folgt der Ausgang „Fehler“.", en: "Calls a web API over http or https. With the JSON picker you choose the fields you need from the answer; each becomes a tile for later steps. If the call fails, the “error” output is followed." },
+    outputs: [...OUT, { id: "error", label: { de: "Fehler", en: "error" }, optional: true }],
+    fields: [
+      { key: "method", label: { de: "Methode", en: "Method" }, type: "select", default: "GET", options: ["GET", "POST", "PUT", "PATCH", "DELETE"].map((m) => opt(m, m)) },
+      { key: "url", label: { de: "Adresse (URL)", en: "Address (URL)" }, type: "text", default: "", required: true },
+      { key: "headers", label: { de: "Kopfzeilen (Name: Wert, eine pro Zeile)", en: "Headers (Name: value, one per line)" }, type: "textarea", default: "Accept: application/json" },
+      { key: "body", label: { de: "Inhalt, der gesendet wird", en: "Body that is sent" }, type: "textarea", default: "" },
+      { key: "picks", label: { de: "Felder aus der Antwort (JSON-Picker)", en: "Fields from the answer (JSON picker)" }, type: "picks", default: "[]" },
+      { key: "sample", label: { de: "Beispielantwort", en: "Sample answer" }, type: "text", default: "", hidden: true },
+      { key: "retries", label: { de: "Wiederholungen bei Fehlern", en: "Retries on failure" }, type: "number", default: 0 },
+      { key: "simulate", label: { de: "Fehler simulieren (zum Testen)", en: "Simulate a failure (for testing)" }, type: "select", default: "none", options: [opt("none", "Nein", "No"), opt("once", "Nur beim ersten Versuch", "On the first attempt only"), opt("always", "Immer", "Always")] },
+    ],
+  },
   end: {
     kind: "end", category: "finish",
     title: { de: "Ende", en: "End" },
@@ -495,6 +547,22 @@ export function validateProcess(def: Pick<ProcessDef, "nodes" | "edges"> & { cat
       }
     }
     if (n.kind === "condition" && String(n.config.value ?? "").trim() === "") issues.push({ nodeId: n.id, message: { de: `„${label.de}“: Vergleichswert fehlt.`, en: `“${label.en}”: compare-to value is missing.` } });
+    if (n.kind === "condition" && String(n.config.field ?? "custom") === "custom" && String(n.config.left ?? "").trim() === "") issues.push({ nodeId: n.id, message: { de: `„${label.de}“: Es ist nicht gesagt, was verglichen wird. Setzen Sie das Ergebnis eines früheren Schritts als Kachel ein.`, en: `“${label.en}”: it does not say what is compared. Put the result of an earlier step in as a tile.` } });
+    if (n.kind === "http_request") {
+      const url = String(n.config.url ?? "").trim();
+      if (url && !/^(https?:\/\/|\{)/i.test(url)) issues.push({ nodeId: n.id, message: { de: `„${label.de}“: Die Adresse muss mit http:// oder https:// beginnen.`, en: `“${label.en}”: the address has to start with http:// or https://.` } });
+      const seenPick = new Set<string>();
+      for (const p of parsePicks(n.config.picks)) {
+        if (!/^[a-z][a-z0-9_]*$/.test(p.name)) issues.push({ nodeId: n.id, message: { de: `„${label.de}“: Der Name „${p.name}“ ist nicht möglich (Kleinbuchstaben, Ziffern, _).`, en: `“${label.en}”: the name “${p.name}” is not possible (lowercase letters, digits, _).` } });
+        if (seenPick.has(p.name) || STEP_OUTPUTS.http_request.some((x) => x.name === p.name)) issues.push({ nodeId: n.id, message: { de: `„${label.de}“: Der Name „${p.name}“ ist schon vergeben.`, en: `“${label.en}”: the name “${p.name}” is already used.` } });
+        seenPick.add(p.name);
+        try {
+          parsePath(p.path);
+        } catch (e) {
+          issues.push({ nodeId: n.id, message: { de: `„${label.de}“: ${(e as Error).message}`, en: `“${label.en}”: ${(e as Error).message}` } });
+        }
+      }
+    }
     if (n.kind === "run_rules" && ruleSelection(n)?.length === 0) issues.push({ nodeId: n.id, message: { de: `„${label.de}“: Es ist keine Regel ausgewählt.`, en: `“${label.en}”: no rule is ticked.` } });
     if (n.kind === "request_documents" || n.kind === "send_notification") {
       const bound = tokensIn(String(n.config.params ?? "")).length;
@@ -509,9 +577,8 @@ export function validateProcess(def: Pick<ProcessDef, "nodes" | "edges"> & { cat
         for (const tk of tokensIn(String(n.config[k] ?? ""))) {
           if (seenTokens.has(tk.raw)) continue;
           seenTokens.add(tk.raw);
-          const outType = (STEP_OUTPUTS[(tk.step ? byId.get(tk.step)?.kind : undefined) ?? n.kind] ?? []).find((x) => x.name === tk.name)?.type ?? Object.values(STEP_OUTPUTS).flat().find((x) => x.name === tk.name)?.type;
+          const outType = outputsOfNode((tk.step ? byId.get(tk.step) : undefined) ?? n).find((x) => x.name === tk.name)?.type ?? allKnownOutputs(def).find((x) => x.name === tk.name)?.type;
           if (tk.format && outType && !OUTPUT_FORMATS[outType].includes(tk.format)) issues.push({ nodeId: n.id, message: { de: `„${label.de}“: ${tk.raw}: „${tk.format}“ gibt es für diesen Wert nicht.`, en: `“${label.en}”: ${tk.raw}: there is no “${tk.format}” format for this value.` } });
-          if (n.kind === "condition" && k === "value" && outType && outType !== "number" && tk.format !== "count") issues.push({ nodeId: n.id, message: { de: `„${label.de}“: ${tk.raw} ist keine Zahl. Eine Bedingung vergleicht Zahlen; bei einer Liste nehmen Sie „Anzahl“.`, en: `“${label.en}”: ${tk.raw} is not a number. A condition compares numbers; for a list use “count”.` } });
           if (tk.step) {
             const src = byId.get(tk.step);
             const srcLabel = src ? NODE_CATALOG[src.kind].title : null;
@@ -521,6 +588,26 @@ export function validateProcess(def: Pick<ProcessDef, "nodes" | "edges"> & { cat
             issues.push({ nodeId: n.id, message: { de: `„${label.de}“: {${tk.name}} gibt es hier nicht. Verbinden Sie vorher den Schritt, der es liefert.`, en: `“${label.en}”: {${tk.name}} is not available here. Connect the step that provides it before this one.` } });
           }
         }
+      }
+    }
+    {
+      // Functions in the texts: well formed, known, with enough values.
+      const outputType = (name: string) => allKnownOutputs(def).find((x) => x.name === name)?.type;
+      const texts: [string, string][] = [];
+      for (const k of TOKEN_KEYS) {
+        const v = String(n.config[k] ?? "");
+        if (k === "params") {
+          try {
+            for (const [pk, pv] of Object.entries(JSON.parse(v || "{}") as Record<string, unknown>)) texts.push([`${k}.${pk}`, String(pv ?? "")]);
+          } catch {
+            /* reported elsewhere */
+          }
+        } else texts.push([k, v]);
+      }
+      for (const [k, v] of texts) for (const msg of checkText(v)) issues.push({ nodeId: n.id, message: { de: `„${label.de}“ (${k}): ${msg}`, en: `“${label.en}” (${k}): ${msg}` } });
+      if (n.kind === "condition" && (String(n.config.field ?? "custom") !== "custom" || ["gte", "lte"].includes(String(n.config.op)))) {
+        const ty = typeOfText(String(n.config.value ?? ""), (name) => outputType(name));
+        if (ty !== "number" && ty !== "any") issues.push({ nodeId: n.id, message: { de: `„${label.de}“: Der Vergleichswert ist ${ty === "list" ? "eine Liste" : "keine Zahl"}. Eine Bedingung vergleicht Zahlen; nehmen Sie bei einer Liste „Anzahl“ oder die Funktion „Anzahl“.`, en: `“${label.en}”: the compare-to value is ${ty === "list" ? "a list" : "not a number"}. A condition compares numbers; for a list use the format “count” or the function “Count”.` } });
       }
     }
     if (n.kind === "send_notification" && !n.config.template && !String(n.config.body ?? "").trim()) issues.push({ nodeId: n.id, message: { de: `„${label.de}“: Text fehlt.`, en: `“${label.en}”: text is missing.` } });
@@ -659,6 +746,7 @@ const STANDARD_STEPS: Record<string, { name: string; purpose: string }> = {
   start: { name: "Application arrives", purpose: "Starts the process when an application is submitted or delivered from the portal." },
   assign: { name: "Assign caseworker by surname", purpose: "Gives the case to the caseworker responsible for the first letter of the family name." },
   read: { name: "Read documents", purpose: "Reads every uploaded document into fields with the method set for its type." },
+  "read-ok": { name: "Documents readable?", purpose: "Goes on if the documents were read with enough confidence, otherwise a person checks the unclear fields." },
   review: { name: "Review unclear fields", purpose: "A person checks the fields the reader was not sure about." },
   inputs: { name: "Check required inputs", purpose: "Checks that every form and answer the process requires is there." },
   rules: { name: "Check approved rules", purpose: "Applies the ticked, approved rules to the application." },
@@ -697,6 +785,7 @@ export function defaultProcess(now = "2026-09-01T09:00:00.000Z"): ProcessDef {
     n("start", "trigger", 330, 0),
     n("assign", "assign_caseworker", 330, 55),
     n("read", "read_documents", 330, 110),
+    n("read-ok", "condition", 330, 170, { field: "custom", left: "{read.read_result}", op: "eq", value: "valid" }),
     n("review", "review_fields", 20, 230),
     n("inputs", "check_inputs", 330, 230),
     n("rules", "run_rules", 330, 330, { rules: ALL, withInputs: "no" }),
@@ -716,7 +805,7 @@ export function defaultProcess(now = "2026-09-01T09:00:00.000Z"): ProcessDef {
     n("end-review", "end", -200, 690),
   ];
   const edges: FlowEdge[] = [
-    e("start", "out", "assign"), e("assign", "out", "read"), e("read", "clear", "inputs"), e("read", "review", "review"),
+    e("start", "out", "assign"), e("assign", "out", "read"), e("read", "out", "read-ok"), e("read-ok", "yes", "inputs"), e("read-ok", "no", "review"),
     e("review", "confirmed", "inputs"), e("review", "info", "ask-q"), e("ask-q", "out", "wait-q"), e("wait-q", "out", "remind"), e("remind", "out", "end-review"),
     e("inputs", "complete", "rules"), e("inputs", "incomplete", "draft"),
     e("rules", "incomplete", "draft"), e("draft", "out", "ask"), e("ask", "out", "end-incomplete"),
@@ -840,8 +929,28 @@ export function upgradeSteps(def: ProcessDef): ProcessDef {
   };
 }
 
+/** "Read documents" used to branch by itself (clear / review). Now it hands on a result and a condition step branches. */
+export function upgradeReadBranch(def: ProcessDef): ProcessDef {
+  let nodes = def.nodes;
+  let edges = def.edges;
+  for (const n of def.nodes.filter((x) => x.kind === "read_documents")) {
+    const clear = edges.find((e) => e.source === n.id && e.sourceHandle === "clear");
+    const review = edges.find((e) => e.source === n.id && e.sourceHandle === "review");
+    if (!clear && !review) continue;
+    const id = `${n.id}-ok`;
+    if (nodes.some((x) => x.id === id)) continue;
+    const taken = nodes.map((x) => x.name ?? "");
+    const name = uniqueStepName("Documents readable?", taken);
+    nodes = [...nodes, { id, kind: "condition", name, purpose: STANDARD_STEPS["read-ok"]!.purpose, position: { x: n.position.x, y: n.position.y + 60 }, config: defaultConfig("condition", { field: "custom", left: `{${n.id}.read_result}`, op: "eq", value: "valid" }) }];
+    edges = edges.filter((e) => !(e.source === n.id && (e.sourceHandle === "clear" || e.sourceHandle === "review"))).concat({ id: `${n.id}:out`, source: n.id, sourceHandle: "out", target: id });
+    if (clear) edges = edges.concat({ id: `${id}:yes`, source: id, sourceHandle: "yes", target: clear.target });
+    if (review) edges = edges.concat({ id: `${id}:no`, source: id, sourceHandle: "no", target: review.target });
+  }
+  return nodes === def.nodes ? def : { ...def, nodes, edges };
+}
+
 /** Everything that brings a stored process up to the current shape. */
-export const upgradeProcess = (def: ProcessDef): ProcessDef => upgradeTokens(upgradeSteps(upgradeOutputs(upgradeEnglish(upgradeAssignment(upgradeQuestionPath(def))))));
+export const upgradeProcess = (def: ProcessDef): ProcessDef => upgradeTokens(upgradeSteps(upgradeReadBranch(upgradeOutputs(upgradeEnglish(upgradeAssignment(upgradeQuestionPath(def)))))));
 
 // ---- What changed, and what a process depends on --------------------------------------------
 

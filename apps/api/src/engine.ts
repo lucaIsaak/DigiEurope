@@ -2,6 +2,17 @@ import { randomUUID } from "node:crypto";
 import {
   NODE_CATALOG,
   STEP_OUTPUTS,
+  asList,
+  asNumber,
+  extractPicks,
+  outputsOfNode,
+  parseNumber,
+  parsePicks,
+  type OutputType,
+  randomOfShape,
+  renderText,
+  type Env,
+  type Value,
   buildFacts,
   estimate,
   evaluate,
@@ -28,6 +39,17 @@ export interface TemplateView {
   body: Bilingual;
 }
 
+export interface HttpRequest {
+  method: string;
+  url: string;
+  headers: Record<string, string>;
+  body?: string;
+}
+export interface HttpResponse {
+  status: number;
+  body: string;
+}
+
 export interface EngineCtx {
   now: Date;
   /** Runs the approved rules and the required inputs of the office, or only one of the two. */
@@ -42,8 +64,12 @@ export interface EngineCtx {
   template?: (id: string) => TemplateView | null;
   /** The office's connection to a system: switched on or off, and in which mode. */
   connection?: (system: string) => { enabled: boolean; mode: "sandbox" | "live"; name: string } | null;
+  /** Calls a web API. The server's own client keeps to the safety rules; tests give a fake one. */
+  http?: (req: HttpRequest) => Promise<HttpResponse>;
   /** In a test run a timer does not hold the process back. */
   instantWaits?: boolean;
+  /** Where random values come from (0 to 1). Tests set it; otherwise it is the system's. */
+  random?: () => number;
 }
 
 export type Outcome = "approved" | "rejected" | "info" | "confirmed";
@@ -58,47 +84,76 @@ const textOf = (node: FlowNode, key: string, app: Application): string => {
   return app.language === "en" && typeof en === "string" && en.trim() !== "" ? en : String(node.config[key] ?? "");
 };
 
-/** A list shown as bullets (the default), as a comma-separated line, as a count, or just its first item. */
-function formatValue(value: string, name: string, fmt?: string): string {
-  if (!fmt || OUTPUT_TYPE.get(name) !== "list") return value;
-  const items = value.split("\n").map((l) => l.replace(/^•\s*/, "").trim()).filter(Boolean);
-  if (fmt === "comma") return items.join(", ");
-  if (fmt === "count") return String(items.length);
-  if (fmt === "first") return items[0] ?? "";
-  return value;
+const basics = (app: Application) => ({ name: `${app.student.firstName} ${app.student.lastName}`, reference: app.reference, amount: app.decision ? `${app.decision.monthlyAmount} €` : `${estimate(app).monthly} €` });
+
+/** Where the random values of one text come from: kept per case under the text's place, or new on every run. */
+interface RandomBox {
+  scope: string;
+  randoms: Record<string, string>;
+  rnd: () => number;
+  /** The type of each picked output, "stepId.name", so a number stays a number. */
+  types?: Map<string, OutputType>;
 }
 
-const basics = (text: string, app: Application) =>
-  text
-    .replace(/\{name\}/g, `${app.student.firstName} ${app.student.lastName}`)
-    .replace(/\{reference\}/g, app.reference)
-    .replace(/\{amount\}/g, app.decision ? `${app.decision.monthlyAmount} €` : `${estimate(app).monthly} €`);
+/** What expressions in a text can see: the basics, what earlier steps produced (as lists, numbers or text), and the clock. */
+function envFor(app: Application, vars: Record<string, string>, now: Date, box: RandomBox): Env {
+  const b = basics(app);
+  let n = 0;
+  return {
+    now,
+    lang: app.language,
+    random: (kind, shape) => {
+      if (kind === "run") return randomOfShape(shape, box.rnd);
+      const key = `${box.scope}#${n++}:${shape}`;
+      if (!(key in box.randoms)) box.randoms[key] = randomOfShape(shape, box.rnd);
+      return box.randoms[key]!;
+    },
+    ref: (p) => {
+      if (!p.step) return p.name in b ? b[p.name as keyof typeof b] : undefined;
+      const raw = vars[`${p.step}.${p.name}`];
+      if (raw === undefined) return undefined;
+      const type = box.types?.get(`${p.step}.${p.name}`) ?? OUTPUT_TYPE.get(p.name);
+      if (type === "list") {
+        const items = asList(raw);
+        if (p.format === "comma") return items.join(", ");
+        if (p.format === "count") return items.length;
+        if (p.format === "first") return items[0] ?? "";
+        return p.format === "bullets" ? raw : items;
+      }
+      if (type === "number") {
+        try {
+          return asNumber(raw);
+        } catch {
+          return raw;
+        }
+      }
+      return raw as Value;
+    },
+  };
+}
 
-/** Fills {name}, {reference}, {amount} and what earlier steps produced, written {stepId.output} with an optional :format. Unknown names stay as they are. */
-const fill = (text: string, app: Application, vars: Record<string, string> = {}) =>
-  basics(text, app).replace(/\{([A-Za-z0-9_-]+)\.([a-z_]+)(?::([a-z]+))?\}/g, (whole, step: string, name: string, fmt?: string) => {
-    const key = `${step}.${name}`;
-    return key in vars ? formatValue(vars[key]!, name, fmt) : whole;
-  });
+/** Fills a text: the basics, what earlier steps produced ({step.output}, with an optional :format) and functions ({=name|slot|slot}). Unknown names stay as they are. */
+const fill = (text: string, app: Application, vars: Record<string, string> = {}, now: Date = new Date(), box?: RandomBox) =>
+  renderText(text, envFor(app, vars, now, box ?? { scope: "preview", randoms: { ...(app.randoms ?? {}) }, rnd: Math.random }));
 
 /** The text of a message template with its parameters filled in. */
-const fillTemplate = (text: string, app: Application, params: Record<string, string>) => basics(text, app).replace(/\{([a-z_]+)\}/g, (whole, key: string) => (key in params ? params[key]! : whole));
+const fillTemplate = (text: string, app: Application, params: Record<string, string>) => text.replace(/\{name\}/g, basics(app).name).replace(/\{reference\}/g, basics(app).reference).replace(/\{amount\}/g, basics(app).amount).replace(/\{([a-z_]+)\}/g, (whole, key: string) => (key in params ? params[key]! : whole));
 
-const parseParams = (raw: unknown, app: Application, vars: Record<string, string>): Record<string, string> => {
+const parseParams = (raw: unknown, fillFn: (value: string, key: string) => string): Record<string, string> => {
   try {
     const obj = JSON.parse(String(raw || "{}")) as Record<string, unknown>;
-    return Object.fromEntries(Object.entries(obj).map(([k, v]) => [k, fill(String(v ?? ""), app, vars)]));
+    return Object.fromEntries(Object.entries(obj).map(([k, v]) => [k, fillFn(String(v ?? ""), `params.${k}`)]));
   } catch {
     return {};
   }
 };
 
 /** A text of a step with everything filled in: the applicant's language, the name, the reference and what earlier steps produced. */
-export const nodeText = (node: FlowNode, key: string, app: Application, vars: Record<string, string>): string => fill(textOf(node, key, app), app, vars);
+export const nodeText = (node: FlowNode, key: string, app: Application, vars: Record<string, string>, now: Date = new Date()): string => fill(textOf(node, key, app), app, vars, now, { scope: `${node.id}:${key}`, randoms: { ...(app.randoms ?? {}) }, rnd: Math.random });
 
 /** A message template of a step, filled in: subject and middle part of the message. */
-export const templateText = (tpl: TemplateView, node: FlowNode, app: Application, vars: Record<string, string>): { subject: string; middle: string } => {
-  const params = parseParams(node.config.params, app, vars);
+export const templateText = (tpl: TemplateView, node: FlowNode, app: Application, vars: Record<string, string>, fillFn?: (value: string, key: string) => string): { subject: string; middle: string } => {
+  const params = parseParams(node.config.params, fillFn ?? ((v, k) => fill(v, app, vars, new Date(), { scope: `${node.id}:${k}`, randoms: { ...(app.randoms ?? {}) }, rnd: Math.random })));
   return { subject: fillTemplate(tpl.subject[app.language], app, params), middle: fillTemplate(tpl.body[app.language], app, params) };
 };
 
@@ -139,6 +194,19 @@ export function draftMail(app: Application, report: CheckReport, tone: string, e
 function connectorResponse(system: string, action: string, app: Application) {
   const id = `${system.slice(0, 2).toUpperCase()}-${app.reference.slice(-5)}`;
   return { ok: true, externalId: id, mode: "prototype connector: no real system was called", system, action };
+}
+
+/** The condition compares the value of an earlier step (as text) with the compare-to text. */
+function compareTexts(op: string, left: string, right: string): boolean {
+  const a = left.trim();
+  const b = right.trim();
+  if (op === "eq") return a.toLowerCase() === b.toLowerCase();
+  if (op === "ne") return a.toLowerCase() !== b.toLowerCase();
+  if (op === "contains") return a.toLowerCase().includes(b.toLowerCase());
+  const x = parseNumber(a);
+  const y = parseNumber(b);
+  if (!Number.isFinite(x) || !Number.isFinite(y)) throw new Error(`The condition compares “${a}” with “${b}” as numbers, but at least one of them is not a number.`);
+  return op === "lte" ? x <= y : x >= y;
 }
 
 /** The condition compares one value of the case with the compare-to text. */
@@ -188,6 +256,10 @@ async function execute(def: ProcessDef, start: string, input: Application, ctx: 
   const next = (id: string, handle: string) => def.edges.find((e) => e.source === id && e.sourceHandle === handle)?.target;
   const send = (mail: Omit<Mail, "id" | "at">) => (app = { ...app, outbox: [...(app.outbox ?? []), { ...mail, id: randomUUID(), at: at() }] });
 
+  /** Random values of "per case" functions are kept with the case. */
+  const randoms: Record<string, string> = { ...(app.randoms ?? {}) };
+  const types = new Map<string, OutputType>(def.nodes.flatMap((n) => outputsOfNode(n).map((o) => [`${n.id}.${o.name}`, o.type] as const)));
+  const rnd = ctx.random ?? Math.random;
   let steps = 0;
   while (current) {
     if (++steps > MAX_STEPS) {
@@ -208,6 +280,8 @@ async function execute(def: ProcessDef, start: string, input: Application, ctx: 
       vars[`${node.id}.${k}`] = v;
       pend[k] = v;
     };
+    /** Fills a text of this step: outputs of earlier steps and functions. `key` says which text, so a random ID per case stays put. */
+    const F = (text: string, key: string) => fill(text, app, vars, ctx.now, { scope: `${node.id}:${key}`, randoms, rnd, types });
     const fail = (message: string) => {
       failed = { nodeId: node.id, message, at: at() };
       entry(`Stopped: ${message}`);
@@ -268,8 +342,9 @@ async function execute(def: ProcessDef, start: string, input: Application, ctx: 
           app = { ...app, documents: docs };
           out("documents_read", bullets(docs.filter((d) => inScope(d) && d.extraction.readable).map((d) => `${d.filename} (${d.extraction.engine ?? "builtin"})`)));
           out("unreadable_documents", bullets(docs.filter((d) => inScope(d) && !d.extraction.readable).map((d) => d.filename)));
-          handle = doubtful.length || unreadable ? "review" : "clear";
-          entry(`${docs.filter(inScope).length} document(s) read with ${[...engines].join(", ") || "no reader"}${doubtful.length ? `; low confidence: ${doubtful.join(", ")}` : ""}${unreadable ? `; ${unreadable} unreadable` : ""}`, handle);
+          const invalid = doubtful.length > 0 || unreadable > 0;
+          out("read_result", invalid ? "invalid" : "valid");
+          entry(`${docs.filter(inScope).length} document(s) read with ${[...engines].join(", ") || "no reader"}${doubtful.length ? `; low confidence: ${doubtful.join(", ")}` : ""}${unreadable ? `; ${unreadable} unreadable` : ""} → ${invalid ? "invalid" : "valid"}`);
           break;
         }
         case "review_fields": {
@@ -277,17 +352,76 @@ async function execute(def: ProcessDef, start: string, input: Application, ctx: 
           out("review_list", r?.list ?? "");
           out("review_details", r?.details ?? "");
           waiting = node.id;
-          briefing = fill(textOf(node, "instruction", app), app, vars).trim() || undefined;
+          briefing = F(textOf(node, "instruction", app), "instruction").trim() || undefined;
           entry(`Waiting for a person to check the fields${briefing ? `: ${briefing}` : ""}`);
           current = undefined;
           continue;
         }
         case "condition": {
-          const report = ctx.check(app);
-          const yes = conditionHolds(node, app, report, ctx.now, fill(String(node.config.value ?? ""), app, vars));
+          const compare = F(String(node.config.value ?? ""), "value");
+          const custom = String(node.config.field ?? "custom") === "custom";
+          const left = custom ? F(String(node.config.left ?? ""), "left") : "";
+          const yes = custom ? compareTexts(String(node.config.op), left, compare) : conditionHolds(node, app, ctx.check(app), ctx.now, compare);
           handle = yes ? "yes" : "no";
           out("condition_result", handle);
-          entry(`${node.config.field} ${node.config.op} ${fill(String(node.config.value ?? ""), app, vars)}: ${handle}`, handle);
+          entry(`${custom ? `“${left}”` : node.config.field} ${node.config.op} ${compare}: ${handle}`, handle);
+          break;
+        }
+        case "http_request": {
+          const retries = Math.max(0, Math.min(5, Number(node.config.retries || 0)));
+          const simulate = String(node.config.simulate ?? "none");
+          const method = String(node.config.method ?? "GET");
+          const url = F(String(node.config.url ?? ""), "url").trim();
+          const headers: Record<string, string> = {};
+          for (const line of F(String(node.config.headers ?? ""), "headers").split("\n")) {
+            const i = line.indexOf(":");
+            if (i > 0) headers[line.slice(0, i).trim()] = line.slice(i + 1).trim();
+          }
+          const body = F(String(node.config.body ?? ""), "body");
+          const picks = parsePicks(node.config.picks);
+          let error: string | null = null;
+          let status = 0;
+          let text = "";
+          let attempt = 0;
+          for (; attempt <= retries; attempt++) {
+            error = null;
+            try {
+              if (simulate === "always" || (simulate === "once" && attempt === 0)) throw new Error("The system did not answer (simulated failure).");
+              if (!ctx.http) throw new Error("No HTTP client is set up on this server.");
+              const res = await ctx.http({ method, url, headers, ...(method !== "GET" && body.trim() ? { body } : {}) });
+              status = res.status;
+              text = res.body;
+              if (status >= 400) throw new Error(`The system answered with status ${status}.`);
+              out("http_status", String(status));
+              out("http_body", text.slice(0, 20_000));
+              if (picks.length) {
+                let json: unknown;
+                try {
+                  json = JSON.parse(text);
+                } catch {
+                  throw new Error("The answer is not JSON, so no field could be picked from it.");
+                }
+                for (const [k, v] of Object.entries(extractPicks(json, picks))) out(k, v);
+              }
+            } catch (e) {
+              error = e instanceof Error ? e.message : "The call failed.";
+            }
+            if (!error) break;
+            if (attempt < retries) log.push({ at: at(), nodeId: node.id, kind: node.kind, note: `Attempt ${attempt + 1} failed: ${error}. Trying again.`, outputs: {} });
+          }
+          if (error) {
+            if (status) out("http_status", String(status));
+            out("http_error", error);
+            const errorTarget = next(node.id, "error");
+            if (!errorTarget) {
+              fail(`${error} The “error” output of this step is not connected.`);
+              continue;
+            }
+            entry(`${method} ${url} failed after ${retries + 1} attempt(s): ${error}`, "error");
+            current = errorTarget;
+            continue;
+          }
+          entry(`${method} ${url} → ${status}${picks.length ? `, ${picks.length} field(s) picked` : ""}${attempt > 0 ? ` (after ${attempt} retry)` : ""}`);
           break;
         }
         case "assign_caseworker": {
@@ -341,7 +475,7 @@ async function execute(def: ProcessDef, start: string, input: Application, ctx: 
           }
           const defaultSubject = de() ? `Ihr Antrag ${app.reference}` : `Your application ${app.reference}`;
           if (String(node.config.sending ?? "auto") === "caseworker" && app.officeMessage?.trim()) {
-            const subject = tpl ? templateText(tpl, node, app, vars).subject : de() ? `Rückfrage zu Ihrem Antrag ${app.reference}` : `Question about your application ${app.reference}`;
+            const subject = tpl ? templateText(tpl, node, app, vars, F).subject : de() ? `Rückfrage zu Ihrem Antrag ${app.reference}` : `Question about your application ${app.reference}`;
             const text = frameMail(app, app.officeMessage.trim());
             send({ to: "student", subject, body: text, aiDraft: false, nodeId: node.id });
             out("request_subject", subject);
@@ -354,7 +488,7 @@ async function execute(def: ProcessDef, start: string, input: Application, ctx: 
           let middle: string;
           let aiDraft = false;
           if (tpl) {
-            const t = templateText(tpl, node, app, vars);
+            const t = templateText(tpl, node, app, vars, F);
             subject = t.subject;
             middle = t.middle;
             body = frameMail(app, middle);
@@ -364,8 +498,8 @@ async function execute(def: ProcessDef, start: string, input: Application, ctx: 
             middle = body.split("\n\n").slice(1, -1).join("\n\n") || body;
             aiDraft = true;
           } else {
-            subject = fill(textOf(node, "subject", app), app, vars).trim() || defaultSubject;
-            body = fill(textOf(node, "fallback", app), app, vars);
+            subject = F(textOf(node, "subject", app), "subject").trim() || defaultSubject;
+            body = F(textOf(node, "fallback", app), "fallback");
             middle = body.split("\n\n").slice(1, -1).join("\n\n") || body;
             // The text is the AI draft when it was put in as the draft's tile.
             aiDraft = Boolean(mailDraft && body.trim() === mailDraft.body.trim());
@@ -387,12 +521,12 @@ async function execute(def: ProcessDef, start: string, input: Application, ctx: 
           let subject: string;
           let body: string;
           if (tpl) {
-            const t = templateText(tpl, node, app, vars);
+            const t = templateText(tpl, node, app, vars, F);
             subject = t.subject;
             body = frameMail(app, t.middle);
           } else {
-            subject = fill(textOf(node, "subject", app), app, vars);
-            body = fill(textOf(node, "body", app), app, vars);
+            subject = F(textOf(node, "subject", app), "subject");
+            body = F(textOf(node, "body", app), "body");
           }
           send({ to: node.config.to as Mail["to"], subject, body, aiDraft: false, nodeId: node.id });
           out("message_subject", subject);
@@ -430,13 +564,13 @@ async function execute(def: ProcessDef, start: string, input: Application, ctx: 
           out("connector_id", response.externalId);
           out("connector_system", system);
           out("connector_action", action);
-          app = { ...app, integrations: [...(app.integrations ?? []), { at: at(), nodeId: node.id, system, action, request: { reference: app.reference, amount: app.decision?.monthlyAmount, payload: fill(String(node.config.payload ?? ""), app, vars), connection: conn ? `${conn.name} (${conn.mode})` : undefined }, response }] };
+          app = { ...app, integrations: [...(app.integrations ?? []), { at: at(), nodeId: node.id, system, action, request: { reference: app.reference, amount: app.decision?.monthlyAmount, payload: F(String(node.config.payload ?? ""), "payload"), connection: conn ? `${conn.name} (${conn.mode})` : undefined }, response }] };
           entry(`${system}.${action} → ${response.externalId}${attempt > 0 ? ` (after ${attempt} retry)` : ""}`);
           break;
         }
         case "human_task":
           waiting = node.id;
-          briefing = fill(textOf(node, "instruction", app), app, vars).trim() || undefined;
+          briefing = F(textOf(node, "instruction", app), "instruction").trim() || undefined;
           entry(`Waiting for the caseworker${briefing ? `: ${briefing}` : ""}`);
           current = undefined;
           continue;
@@ -459,6 +593,7 @@ async function execute(def: ProcessDef, start: string, input: Application, ctx: 
     current = target;
   }
   for (const e of log) if (e.outputs && Object.keys(e.outputs).length === 0) delete e.outputs;
+  if (Object.keys(randoms).length !== Object.keys(app.randoms ?? {}).length) app = { ...app, randoms };
   const flow = {
     processId: def.id, version: def.version, startedAt: app.flow?.startedAt ?? at(), log, waiting, finished, vars, briefing,
     ...(failed ? { failed: true, error: failed } : {}),

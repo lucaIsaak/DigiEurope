@@ -10,6 +10,11 @@ import {
   NODE_CATALOG,
   TOKEN_KEYS,
   uniqueStepName,
+  applyMentions,
+  canMerge,
+  decideSuggestion,
+  renameImpact,
+  renameOutputTokens,
   defaultConfig,
   outputsOf,
   validateProcess,
@@ -17,7 +22,9 @@ import {
   type ConfigValue,
   type FlowEdge,
   type FlowNode,
+  type Mention,
   type NodeKind,
+  type SuggestionChoice,
   type ProcessDef,
   type ProcessIssue,
   type ProcessTest,
@@ -77,6 +84,8 @@ import {
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AssignmentTable } from "@/components/AssignmentTable";
+import { ExpressionEditor, FunctionTiles, previewResult } from "@/components/Expressions";
+import { JsonPicker } from "@/components/JsonPicker";
 import { OutputTiles, ProvidesList, useTokenResolver } from "@/components/StepOutputs";
 import { ProcessTestsPanel } from "@/components/ProcessTestsPanel";
 import { PublishDialog } from "@/components/PublishDialog";
@@ -131,7 +140,18 @@ function Builder() {
   const [changeNote, setChangeNote] = useState("");
   /** The tiles with the outputs of earlier steps open beside the panel while a text field is in use. */
   const [tilesOpen, setTilesOpen] = useState(false);
-  useEffect(() => setTilesOpen(false), [selected]);
+  const [paneTab, setPaneTab] = useState<"outputs" | "functions">("outputs");
+  /** The functions being edited, outermost first. Each has the text it stands for and a way to put a new text into its tile. */
+  const [exprStack, setExprStack] = useState<{ raw: string; apply: (next: string) => void }[]>([]);
+  useEffect(() => {
+    setTilesOpen(false);
+    setExprStack([]);
+  }, [selected]);
+  const openExprAt = (depth: number, raw: string, apply: (next: string) => void) => {
+    setExprStack((st) => [...st.slice(0, depth), { raw, apply }]);
+    setTilesOpen(true);
+    setPaneTab("functions");
+  };
   const [templates, setTemplates] = useState<(DocumentTemplate & { check?: unknown })[]>([]);
   const loaded = useRef(false);
   const past = useRef<Snapshot[]>([]);
@@ -151,7 +171,7 @@ function Builder() {
   const rfEdge = useCallback((e: FlowEdge, all: StepNode[]): Edge => ({ id: e.id, source: e.source, sourceHandle: e.sourceHandle, target: e.target, label: edgeLabel(e.source, e.sourceHandle, all), ...edgeBase }), [edgeLabel]);
 
   const snapshot = (): Snapshot => ({
-    nodes: nodesRef.current.map((n) => ({ id: n.id, kind: n.data.kind, name: n.data.name, purpose: n.data.purpose, position: n.position, config: n.data.config })),
+    nodes: nodesRef.current.map((n) => ({ id: n.id, kind: n.data.kind, name: n.data.name, purpose: n.data.purpose, ...(n.data.comment ? { comment: n.data.comment } : {}), ...(n.data.suggestion ? { suggestion: n.data.suggestion } : {}), position: n.position, config: n.data.config })),
     edges: edgesRef.current.map((e) => ({ id: e.id, source: e.source, sourceHandle: e.sourceHandle ?? "out", target: e.target })),
   });
   const checkpoint = () => {
@@ -305,15 +325,86 @@ function Builder() {
   const sel = useMemo(() => nodes.find((n) => n.id === selected) ?? null, [nodes, selected]);
   /** Texts a message template replaces. */
   const TEMPLATE_TEXTS = ["subject", "subject_en", "body", "body_en", "fallback", "fallback_en"];
-  const setMeta = (key: "name" | "purpose", value: string) => {
+  const setMeta = (key: "name" | "purpose" | "comment", value: string) => {
     setNodes((ns) => ns.map((n) => (n.id === selected ? { ...n, data: { ...n.data, [key]: value } } : n)));
     touch();
   };
   /** The fields where outputs of earlier steps can be put in as tiles. */
   const tokenRefs = useRef<Record<string, TokenFieldHandle | null>>({});
   const activeToken = useRef<string | null>(null);
-  const graph = useMemo(() => ({ nodes: nodes.map((n) => ({ id: n.id, kind: n.data.kind, name: n.data.name, x: n.position.x, y: n.position.y })), edges: edges.map((e) => ({ source: e.source, target: e.target })) }), [nodes, edges]);
+  const graph = useMemo(() => ({ nodes: nodes.map((n) => ({ id: n.id, kind: n.data.kind, name: n.data.name, config: n.data.config, x: n.position.x, y: n.position.y })), edges: edges.map((e) => ({ source: e.source, target: e.target })) }), [nodes, edges]);
   const tokens = useTokenResolver(graph, selected ?? "");
+  /** What a rename touches besides the step itself, for a person to accept or leave. */
+  const [notice, setNotice] = useState<{ title: string; lines: string[]; count: number; applyLabel: string; apply: () => void } | null>(null);
+  useEffect(() => setNotice(null), [selected]);
+  const nameAtFocus = useRef("");
+  /** Puts the accepted changes of a rename into the steps they belong to. */
+  const applyDef = (next: ProcessDef, ids: string[]) => {
+    checkpoint();
+    setNodes((ns) => ns.map((n) => {
+      const m = ids.includes(n.id) ? next.nodes.find((x) => x.id === n.id) : undefined;
+      return m ? { ...n, data: { ...n.data, name: m.name, purpose: m.purpose, comment: m.comment, suggestion: m.suggestion, config: m.config } } : n;
+    }));
+    touch();
+    setNotice(null);
+  };
+  const stepList = (ids: string[]) => [...new Set(ids)].map((id) => tokens.names.get(id) ?? id).join(", ");
+  /** The name of a step changed: where is it used? Tiles follow by themselves; names written out as text are proposed. */
+  const checkRename = (id: string, from: string, to: string) => {
+    if (!from.trim() || !to.trim() || from.trim() === to.trim()) return;
+    const def = toDef();
+    const impact = renameImpact(def, id, from, to);
+    if (impact.tiles.length === 0 && impact.mentions.length === 0) return;
+    const mentions: Mention[] = impact.mentions;
+    setNotice({
+      title: t("rn.title", { old: from.trim(), new: to.trim() }),
+      lines: [
+        ...(impact.tiles.length ? [t("rn.tiles", { list: stepList(impact.tiles.map((x) => x.nodeId)) })] : []),
+        ...(mentions.length ? [t("rn.mentions", { list: stepList(mentions.map((x) => x.nodeId)) })] : []),
+      ],
+      count: mentions.length,
+      applyLabel: t("rn.apply", { n: String(mentions.length) }),
+      apply: () => applyDef(applyMentions(toDef(), mentions), mentions.map((x) => x.nodeId)),
+    });
+  };
+  /** A picked field of an HTTP step got a new name: its tiles downstream would break, so they are offered the new name. */
+  const checkOutputRename = (id: string, from: string, to: string) => {
+    const r = renameOutputTokens(toDef(), id, from, to);
+    if (r.changed.length === 0) return;
+    setNotice({
+      title: t("rn.out.title", { old: from, new: to }),
+      lines: [t("rn.out.body", { n: String(r.changed.length), list: stepList(r.changed.map((x) => x.nodeId)) })],
+      count: r.changed.length,
+      applyLabel: t("rn.out.apply"),
+      apply: () => applyDef(r.def, r.changed.map((x) => x.nodeId)),
+    });
+  };
+  const flowOf = (n: StepNode): FlowNode => ({ id: n.id, kind: n.data.kind, name: n.data.name, purpose: n.data.purpose, comment: n.data.comment, suggestion: n.data.suggestion, position: n.position, config: n.data.config });
+  const decide = (choice: SuggestionChoice) => {
+    if (!sel) return;
+    const before = flowOf(sel);
+    const after = decideSuggestion(before, choice);
+    checkpoint();
+    setNodes((ns) => ns.map((n) => (n.id === sel.id ? { ...n, data: { ...n.data, name: after.name, comment: after.comment, suggestion: undefined } } : n)));
+    touch();
+    if (before.name && after.name && before.name !== after.name) checkRename(sel.id, before.name, after.name);
+  };
+  const documentWithAi = async () => {
+    const r = await run(() => api.documentProcess(toDef()));
+    if (!r) return;
+    const n = Object.keys(r.suggestions).length;
+    setNodes((ns) => ns.map((x) => ({ ...x, data: { ...x.data, suggestion: r.suggestions[x.id] } })));
+    touch();
+    setToast({ text: n ? t("doc.done", { n: String(n) }) : t("doc.none"), tone: "ok" });
+  };
+  const pendingSuggestions = nodes.filter((n) => n.data.suggestion).length;
+  /** The request of an HTTP step as the JSON picker sends it for a test: tiles are filled with example values. */
+  const httpRequestOf = (c: Record<string, ConfigValue>) => {
+    const fill = (v: unknown) => { const r = previewResult(String(v ?? ""), lang); return r.ok ? r.text : String(v ?? ""); };
+    const headers: Record<string, string> = {};
+    for (const line of fill(c.headers).split("\n")) { const i = line.indexOf(":"); if (i > 0) headers[line.slice(0, i).trim()] = line.slice(i + 1).trim(); }
+    return { method: String(c.method ?? "GET"), url: fill(c.url).trim(), headers, ...(c.body ? { body: fill(c.body) } : {}) };
+  };
   const hasTokenFields = sel ? NODE_CATALOG[sel.data.kind].fields.some((f) => ((f.type === "text" || f.type === "textarea") && TOKEN_KEYS.includes(f.key)) || f.type === "params") : false;
   const insertToken = (raw: string) => {
     if (!sel) return;
@@ -323,7 +414,8 @@ function Builder() {
     const preferred = base && lang === "en" && keys.includes(`${base}_en`) ? `${base}_en` : base;
     // The field the person is in; otherwise the first value of the chosen template; otherwise the main text.
     const paramKey = Object.keys(tokenRefs.current).find((k) => k.startsWith("params:") && tokenRefs.current[k]);
-    const key = activeToken.current && tokenRefs.current[activeToken.current] ? activeToken.current : withTemplate && paramKey ? paramKey : preferred;
+    const slotActive = exprStack.length > 0 && activeToken.current?.startsWith("expr:") && tokenRefs.current[activeToken.current];
+    const key = slotActive ? activeToken.current! : activeToken.current && !activeToken.current.startsWith("expr:") && tokenRefs.current[activeToken.current] ? activeToken.current : withTemplate && paramKey ? paramKey : preferred;
     if (key) tokenRefs.current[key]?.insert(raw);
   };
   const setConfig = (key: string, value: ConfigValue) => {
@@ -365,7 +457,10 @@ function Builder() {
   const q = query.trim().toLowerCase();
   const items = (cat: Category) =>
     (cat === "connector"
-      ? CONNECTORS.map((c) => ({ key: c.id, kind: "connector" as NodeKind, label: bi(c.name), preset: { system: c.id, action: c.actions[0]!.id } as Record<string, ConfigValue> }))
+      ? [
+          ...CONNECTORS.map((c) => ({ key: c.id, kind: "connector" as NodeKind, label: bi(c.name), preset: { system: c.id, action: c.actions[0]!.id } as Record<string, ConfigValue> })),
+          { key: "http_request", kind: "http_request" as NodeKind, label: bi(NODE_CATALOG.http_request.title), preset: undefined as Record<string, ConfigValue> | undefined },
+        ]
       : Object.values(NODE_CATALOG).filter((s) => s.category === cat).map((s) => ({ key: s.kind, kind: s.kind, label: bi(s.title), preset: undefined as Record<string, ConfigValue> | undefined }))
     ).filter((it) => !q || it.label.toLowerCase().includes(q));
 
@@ -431,6 +526,8 @@ function Builder() {
         )}
         <span className="ws-spacer" />
         <button className={`button button-small ${showInputs ? "" : "button-ghost"}`} type="button" onClick={() => { setShowInputs((v) => !v); setSelected(null); }}><ListChecks size={15} />{t("builder.inputs")} ({inputs.length})</button>
+        <button className="button button-ghost button-small" type="button" disabled={busy} title={t("doc.simulated")} onClick={documentWithAi}><Sparkles size={15} />{t("doc.run")}{pendingSuggestions > 0 ? ` (${pendingSuggestions})` : ""}</button>
+        {pendingSuggestions > 0 && <button className="link-button small" type="button" onClick={() => { checkpoint(); setNodes((ns) => ns.map((x) => ({ ...x, data: { ...x.data, suggestion: undefined } }))); touch(); }}>{t("doc.rejectAll")}</button>}
         <button className="button button-ghost button-small" type="button" onClick={validate}><CheckCircle2 size={15} />{t("builder.validate")}</button>
         <button className={`button button-small ${drawer ? "" : "button-ghost"}`} type="button" onClick={() => { setDrawer((d) => !d); setShowTests(false); }}><Play size={14} />{t("builder.testRun")}</button>
         <button className={`button button-small ${showTests ? "" : "button-ghost"}`} type="button" onClick={() => { setShowTests((d) => !d); setDrawer(false); }}><CheckCircle2 size={14} />{t("builder.testsBtn")} ({tests.length})</button>
@@ -571,8 +668,40 @@ function Builder() {
                 <button className="icon-button" type="button" aria-label={t("builder.close")} onClick={() => { setSelected(null); setNodes((ns) => ns.map((n) => ({ ...n, selected: false }))); }}><X size={16} /></button>
               </header>
               <div className="body">
-                <label className="field">{t("builder.stepName")}<input value={sel.data.name ?? ""} onFocus={checkpoint} onChange={(e) => setMeta("name", e.target.value)} /></label>
+                {sel.data.suggestion && (
+                  <div className="doc-card" role="group" aria-label={t("doc.title")}>
+                    <div className="doc-head"><Sparkles size={14} /><strong>{t("doc.title")}</strong></div>
+                    {sel.data.suggestion.name && (
+                      <div className="doc-row"><span className="small muted">{t("doc.name")}</span><span><del>{sel.data.name || "–"}</del> → <b>{sel.data.suggestion.name}</b></span></div>
+                    )}
+                    {sel.data.suggestion.comment && (
+                      <div className="doc-row stack">
+                        <span className="small muted">{t("doc.comment")}</span>
+                        {sel.data.comment?.trim() && <span className="doc-mine"><span className="small muted">{t("doc.yours")}: </span>{sel.data.comment}</span>}
+                        <span className="doc-ai"><span className="small muted">{t("doc.proposed")}: </span>{sel.data.suggestion.comment}</span>
+                      </div>
+                    )}
+                    <div className="row" style={{ gap: "0.4rem" }}>
+                      <button type="button" className="button button-small" onClick={() => decide("use")}>{t("doc.use")}</button>
+                      <button type="button" className="button button-ghost button-small" disabled={!canMerge(flowOf(sel))} title={canMerge(flowOf(sel)) ? undefined : t("doc.mergeOff")} onClick={() => decide("merge")}>{t("doc.merge")}</button>
+                      <button type="button" className="button button-ghost button-small" onClick={() => decide("reject")}>{t("doc.reject")}</button>
+                    </div>
+                    {!canMerge(flowOf(sel)) && <p className="small muted" style={{ margin: 0 }}>{t("doc.mergeOff")}</p>}
+                  </div>
+                )}
+                <label className="field">{t("builder.stepName")}<input value={sel.data.name ?? ""} onFocus={() => { checkpoint(); nameAtFocus.current = sel.data.name ?? ""; }} onChange={(e) => setMeta("name", e.target.value)} onBlur={() => checkRename(sel.id, nameAtFocus.current, sel.data.name ?? "")} /></label>
+                {notice && (
+                  <div className="banner banner-info small rn-notice" role="status" style={{ display: "grid", gap: "0.45rem" }}>
+                    <strong>{notice.title}</strong>
+                    {notice.lines.map((l) => <span key={l}>{l}</span>)}
+                    <span className="row" style={{ gap: "0.4rem" }}>
+                      {notice.count > 0 && <button type="button" className="button button-small" onClick={notice.apply}>{notice.applyLabel}</button>}
+                      <button type="button" className="button button-ghost button-small" onClick={() => setNotice(null)}>{t("rn.leave")}</button>
+                    </span>
+                  </div>
+                )}
                 <label className="field">{t("builder.purpose")}<input value={sel.data.purpose ?? ""} onFocus={checkpoint} onChange={(e) => setMeta("purpose", e.target.value)} /></label>
+                <label className="field">{t("builder.comment")}<textarea rows={3} value={sel.data.comment ?? ""} placeholder={t("builder.commentPh")} onFocus={checkpoint} onChange={(e) => setMeta("comment", e.target.value)} /></label>
                 <p className="small muted" style={{ margin: 0 }}>{bi(NODE_CATALOG[sel.data.kind].description)}</p>
                 {NODE_CATALOG[sel.data.kind].ai && <p className="banner banner-info small" style={{ margin: 0 }}>{t("builder.aiNote")}</p>}
                 {sel.data.kind === "connector" && <p className="small muted" style={{ margin: 0 }}>{t("builder.connectorNote")}</p>}
@@ -585,10 +714,23 @@ function Builder() {
                     <button className="button button-ghost button-small" type="button" onClick={() => { checkpoint(); setNodes((ns) => ns.map((n) => (n.id === sel.id ? { ...n, data: { ...n.data, config: Object.fromEntries(Object.entries(n.data.config).filter(([k]) => k !== "method")) } } : n))); touch(); }}>{t("builder.readClear")}</button>
                   </div>
                 )}
-                <ProvidesList kind={sel.data.kind} stepId={sel.id} names={tokens.names} />
+                <ProvidesList kind={sel.data.kind} config={sel.data.config} stepId={sel.id} names={tokens.names} />
                 {hasTokenFields && <p className="small muted tiles-hint" style={{ margin: 0 }}>{t("builder.tilesHint")}</p>}
                 {sel.data.kind === "assign_caseworker" && <AssignmentTable embedded />}
-                {NODE_CATALOG[sel.data.kind].fields.filter((f) => !(sel.data.config.template && TEMPLATE_TEXTS.includes(f.key))).map((f) => {
+                {NODE_CATALOG[sel.data.kind].fields.filter((f) => !f.hidden && !(sel.data.config.template && TEMPLATE_TEXTS.includes(f.key)) && (!f.showIf || String(sel.data.config[f.showIf.key] ?? NODE_CATALOG[sel.data.kind].fields.find((x) => x.key === f.showIf!.key)?.default) === f.showIf.value)).map((f) => {
+                  if (f.type === "picks") {
+                    return (
+                      <JsonPicker
+                        key={`${sel.id}:picks`}
+                        value={String(sel.data.config.picks ?? "[]")}
+                        sample={String(sel.data.config.sample ?? "")}
+                        request={() => httpRequestOf(sel.data.config)}
+                        onChange={(v) => { checkpoint(); setConfig("picks", v); }}
+                        onSample={(v) => setConfig("sample", v)}
+                        onRename={(from, to) => checkOutputRename(sel.id, from, to)}
+                      />
+                    );
+                  }
                   if (f.type === "rules") return <RulePicker key={f.key} value={sel.data.config.rules === undefined ? undefined : String(sel.data.config.rules)} onChange={(v) => { checkpoint(); setConfig("rules", v); }} />;
                   if (f.type === "template") {
                     return (
@@ -603,6 +745,7 @@ function Builder() {
                         sig={tokens.sig}
                         register={(key, h) => { tokenRefs.current[key] = h; }}
                         onFocusKey={(key) => { checkpoint(); activeToken.current = key; setTilesOpen(true); }}
+                        onEditFn={(raw, apply) => openExprAt(0, raw, apply)}
                       />
                     );
                   }
@@ -635,6 +778,7 @@ function Builder() {
                           sig={tokens.sig}
                           label={bi(f.label)}
                           onFocus={() => { checkpoint(); activeToken.current = f.key; setTilesOpen(true); }}
+                          onEditFn={(raw, apply) => openExprAt(0, raw, apply)}
                           onChange={(v) => setConfig(f.key, v)}
                         />
                       ) : f.type === "textarea" ? (
@@ -657,7 +801,26 @@ function Builder() {
           {sel && !showInputs && hasTokenFields && tilesOpen && (
             <aside className="ws-tiles" aria-label={t("builder.tilesTitle")}>
               <button className="icon-button ws-tiles-x" type="button" aria-label={t("builder.close")} onClick={() => setTilesOpen(false)}><X size={15} /></button>
-              <OutputTiles upstream={tokens.upstream} names={tokens.names} onInsert={insertToken} />
+              {exprStack.map((e, i) => (
+                <div key={i} hidden={i !== exprStack.length - 1}>
+                  <ExpressionEditor
+                    raw={e.raw}
+                    depth={i}
+                    resolve={tokens.resolve}
+                    sig={tokens.sig}
+                    register={(key, h) => { tokenRefs.current[key] = h; }}
+                    onFocusSlot={(key) => { activeToken.current = key; }}
+                    onEditNested={(raw, apply) => openExprAt(i + 1, raw, apply)}
+                    onClose={() => setExprStack((st) => (i === 0 ? [] : st.slice(0, i)))}
+                    onChange={(next) => { e.apply(next); setExprStack((st) => st.map((x, k) => (k === i ? { ...x, raw: next } : x))); }}
+                  />
+                </div>
+              ))}
+              <div className="pane-tabs" role="tablist">
+                <button type="button" role="tab" aria-selected={paneTab === "outputs"} onClick={() => setPaneTab("outputs")}>{t("builder.pane.outputs")}</button>
+                <button type="button" role="tab" aria-selected={paneTab === "functions"} onClick={() => setPaneTab("functions")}>{t("builder.pane.functions")}</button>
+              </div>
+              {paneTab === "outputs" ? <OutputTiles upstream={tokens.upstream} names={tokens.names} onInsert={insertToken} /> : <FunctionTiles onInsert={insertToken} />}
             </aside>
           )}
         </div>

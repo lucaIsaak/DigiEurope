@@ -1,4 +1,4 @@
-import type { Condition, Application, CaseView, DocumentTemplate, FieldType, TemplateField, TemplateProposal, CatalogNode, CatalogVariant, Harmony, OfficeAssignment, OfficeSettings, ProcessDef, StaffMember, RunLogEntry, Mail, IntegrationEntry, ProcessIssue, DocumentKind, Extraction, LetterFields, Lang, Rule, RuleState, StayInfo, StudentInfo } from "@digieurope/shared";
+import type { Condition, Application, CaseView, DocumentTemplate, FieldType, TemplateField, TemplateProposal, CatalogNode, CatalogVariant, Harmony, OfficeAssignment, OfficeSettings, ProcessDef, NodeSuggestion, StaffMember, RunLogEntry, Mail, IntegrationEntry, ProcessIssue, DocumentKind, Extraction, LetterFields, Lang, Rule, RuleState, StayInfo, StudentInfo } from "@digieurope/shared";
 
 export class ApiError extends Error {
   issues?: ProcessIssue[];
@@ -384,6 +384,8 @@ export const api = {
   validateProcess: (def: ProcessDef) => call<{ issues: ProcessIssue[] }>("/office/processes/validate", { method: "POST", json: { def } }),
   publish: (def: ProcessDef) => call<ProcessDef>("/office/processes/publish", { method: "POST", json: { def } }),
   processTests: (def: ProcessDef) => call<{ results: ProcessTestResult[] }>("/office/processes/tests", { method: "POST", json: { def } }),
+  httpTry: (req: { method: string; url: string; headers: Record<string, string>; body?: string }) => call<{ status: number; body?: string; error?: string }>("/office/http/try", { method: "POST", json: req }),
+  documentProcess: (def: ProcessDef) => call<{ suggestions: Record<string, NodeSuggestion>; simulated: boolean }>("/office/processes/document", { method: "POST", json: { def } }),
   processImpact: (def: ProcessDef) => call<ProcessImpact>("/office/processes/impact", { method: "POST", json: { def } }),
   restartCase: (id: string) => call<CaseView>(`/office/cases/${id}/restart`, { method: "POST", json: {} }),
   messages: () => call<MessageEntry[]>("/office/messages"),

@@ -1,16 +1,16 @@
 "use client";
 
-import { CONNECTORS, NODE_CATALOG, outputsOf, type Category, type ConfigValue, type FlowNode, type NodeKind, type ProcessDef } from "@digieurope/shared";
+import { CONNECTORS, NODE_CATALOG, outputsOf, type Category, type ConfigValue, type FlowNode, type NodeKind, type NodeSuggestion, type ProcessDef } from "@digieurope/shared";
 import dagre from "@dagrejs/dagre";
 import { Background, BackgroundVariant, Controls, Handle, MarkerType, Position, ReactFlow, ReactFlowProvider, useStore, type Edge, type Node, type NodeProps } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import { useMemo } from "react";
 import { useTheme } from "@/lib/theme";
-import { AlertTriangle, Check, ClipboardCheck, Clock, FilePlus2, Flag, GitBranch, ListChecks, Plug, ScanText, Send, ShieldCheck, Sparkles, UserCheck, Users, Zap, type LucideIcon } from "lucide-react";
+import { AlertTriangle, Check, ClipboardCheck, Clock, FilePlus2, Flag, GitBranch, Globe, ListChecks, MessageSquareText, Plug, ScanText, Send, ShieldCheck, Sparkles, UserCheck, Users, Zap, type LucideIcon } from "lucide-react";
 import { useI18n } from "@/lib/i18n";
 import type { MessageKey } from "@/lib/messages";
 
-export type StepData = { kind: NodeKind; name?: string; purpose?: string; config: Record<string, ConfigValue>; state?: "visited" | "issue" | "only"; issue?: string };
+export type StepData = { kind: NodeKind; name?: string; purpose?: string; comment?: string; suggestion?: NodeSuggestion; config: Record<string, ConfigValue>; state?: "visited" | "issue" | "only"; issue?: string };
 export type StepNode = Node<StepData, "step">;
 
 export const ICONS: Record<NodeKind, LucideIcon> = {
@@ -28,6 +28,7 @@ export const ICONS: Record<NodeKind, LucideIcon> = {
   request_documents: FilePlus2,
   send_notification: Send,
   connector: Plug,
+  http_request: Globe,
   end: Flag,
 };
 export const CATEGORIES: Category[] = ["start", "check", "decide", "message", "route", "connector", "finish"];
@@ -39,7 +40,12 @@ export type Bi = { de: string; en: string };
 export function summary(d: StepData, bi: (b: Bi) => string): string {
   const c = d.config;
   switch (d.kind) {
-    case "condition": return `${c.field} ${c.op === "gte" ? "≥" : c.op === "lte" ? "≤" : c.op === "eq" ? "=" : "≠"} ${c.value}`;
+    case "condition": {
+      const sign = c.op === "gte" ? "≥" : c.op === "lte" ? "≤" : c.op === "eq" ? "=" : c.op === "contains" ? "contains" : "≠";
+      const left = !c.field || c.field === "custom" ? String(c.left ?? "").replace(/\{[^.}=]+\.([a-z_]+)(:[a-z]+)?\}/g, "$1") || "…" : String(c.field);
+      return `${left} ${sign} ${c.value}`;
+    }
+    case "http_request": return `${c.method ?? "GET"} ${String(c.url || "no address yet")}`;
     case "read_documents": return `${c.scope === "all" ? "All documents" : c.scope === "parents" ? "Parents' documents" : "Student's documents"} · ${!c.method || c.method === "default" ? "per type" : c.method}`;
     case "review_fields": return bi({ de: String(c.instruction || ""), en: String(c.instruction_en || c.instruction || "") });
     case "assign_team": return String(c.team);
@@ -89,6 +95,8 @@ function StepView({ id, data, selected }: NodeProps<StepNode>) {
         {spec.ai && <span className="nd-ai"><Sparkles size={11} />{t("builder.ai")}</span>}
       </div>
       <div className="nd-sum">{summary(data, bi)}</div>
+      {data.comment?.trim() && <div className="nd-note" title={data.comment}><MessageSquareText size={11} />{data.comment.trim()}</div>}
+      {data.suggestion && <span className="nd-sug" title={t("doc.badge")}><Sparkles size={10} />{t("doc.badgeShort")}</span>}
       {data.state === "visited" && <span className="nd-flag ok"><Check size={13} strokeWidth={3} /></span>}
       {data.state === "issue" && <span className="nd-flag bad"><AlertTriangle size={12} /></span>}
       {data.state === "only" && <span className="nd-flag diff"><GitBranch size={12} /></span>}
@@ -108,7 +116,7 @@ function StepView({ id, data, selected }: NodeProps<StepNode>) {
 }
 export const nodeTypes = { step: StepView };
 
-export const toRfNode = (n: FlowNode): StepNode => ({ id: n.id, type: "step", position: n.position, data: { kind: n.kind, name: n.name, purpose: n.purpose, config: n.config } });
+export const toRfNode = (n: FlowNode): StepNode => ({ id: n.id, type: "step", position: n.position, data: { kind: n.kind, name: n.name, purpose: n.purpose, comment: n.comment, suggestion: n.suggestion, config: n.config } });
 export const ARROW = { type: MarkerType.ArrowClosed, width: 16, height: 16, color: "#8892a6" } as const;
 export const edgeBase = { type: "smoothstep" as const, pathOptions: { borderRadius: 14 }, markerEnd: ARROW, labelBgPadding: [8, 4] as [number, number], labelBgBorderRadius: 10 };
 
@@ -136,7 +144,7 @@ export function ProcessViewer({ def, only = [], height = 680 }: { def: Pick<Proc
   const { bi } = useI18n();
   const { theme } = useTheme();
   const { nodes, edges } = useMemo(() => {
-    const base = def.nodes.map((n) => ({ ...toRfNode(n), data: { kind: n.kind, name: n.name, purpose: n.purpose, config: n.config, state: only.includes(n.id) ? ("only" as const) : undefined } }));
+    const base = def.nodes.map((n) => ({ ...toRfNode(n), data: { kind: n.kind, name: n.name, purpose: n.purpose, comment: n.comment, config: n.config, state: only.includes(n.id) ? ("only" as const) : undefined } }));
     const label = (source: string, handle: string) => {
       const kind = def.nodes.find((n) => n.id === source)?.kind;
       const outs = kind ? outputsOf(kind) : [];

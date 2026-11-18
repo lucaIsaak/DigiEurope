@@ -74,7 +74,7 @@ function bergland(): ProcessDef {
     n("ok", "send_notification", notify("student", "Bewilligung", "Ihr Antrag {reference} wurde bewilligt: {amount}.")), n("end-ok", "end"),
     n("no", "send_notification", notify("student", "Ablehnung", "Ihr Antrag {reference} wurde abgelehnt.")), n("end-no", "end"), n("end-info", "end"),
   ], [
-    e("start", "out", "read"), e("read", "clear", "rules"), e("read", "review", "rules"),
+    e("start", "out", "read"), e("read", "out", "rules"),
     e("rules", "incomplete", "ask"), e("ask", "out", "end-i"), e("rules", "complete", "team"), e("team", "out", "cond"),
     e("cond", "yes", "team2"), e("cond", "no", "human"), e("team2", "out", "human"),
     e("human", "approved", "case"), e("case", "out", "pay"), e("pay", "out", "ok"), e("ok", "out", "end-ok"),
@@ -85,7 +85,7 @@ function bergland(): ProcessDef {
 /** The most complete one: AI reading, review of doubtful fields, AI mail with a reminder, four systems connected. */
 function rheinau(): ProcessDef {
   return def("rheinau-abroad", "BAföG abroad application (Rheinau)", "Fr. Çelik", [
-    n("start", "trigger"), n("assign", "assign_caseworker"), n("read", "read_documents"), n("review", "review_fields"), n("askq", "request_documents", { sending: "caseworker" }), n("waitq", "wait", { days: 7 }), n("remind", "send_notification", { to: "student" }), n("end-r", "end"), n("inputs", "check_inputs"), n("rules", "run_rules", { rules: ALL_RULE_IDS.join(","), withInputs: "no" }),
+    n("start", "trigger"), n("assign", "assign_caseworker"), n("read", "read_documents"), n("read-ok", "condition", { field: "custom", left: "{read.read_result}", op: "eq", value: "valid" }), n("review", "review_fields"), n("askq", "request_documents", { sending: "caseworker" }), n("waitq", "wait", { days: 7 }), n("remind", "send_notification", { to: "student" }), n("end-r", "end"), n("inputs", "check_inputs"), n("rules", "run_rules", { rules: ALL_RULE_IDS.join(","), withInputs: "no" }),
     n("draft", "ai_draft_mail"), n("ask", "request_documents"), n("wait", "wait", { days: 7 }), n("end-i", "end"),
     n("human", "human_task"),
     n("case", "connector", { system: "case_software", action: "create_case" }), n("pay", "connector", { system: "payment", action: "create_payment_order" }),
@@ -93,7 +93,7 @@ function rheinau(): ProcessDef {
     n("ok", "send_notification", notify("student", "Bewilligung", "Ihr Antrag {reference} wurde bewilligt: {amount}.")), n("end-ok", "end"),
     n("no", "send_notification", notify("student", "Ablehnung", "Ihr Antrag {reference} wurde abgelehnt.")), n("end-no", "end"), n("end-info", "end"),
   ], [
-    e("start", "out", "assign"), e("assign", "out", "read"), e("read", "clear", "inputs"), e("read", "review", "review"), e("review", "confirmed", "inputs"), e("review", "info", "askq"), e("askq", "out", "waitq"), e("waitq", "out", "remind"), e("remind", "out", "end-r"), e("inputs", "complete", "rules"), e("inputs", "incomplete", "draft"),
+    e("start", "out", "assign"), e("assign", "out", "read"), e("read", "out", "read-ok"), e("read-ok", "yes", "inputs"), e("read-ok", "no", "review"), e("review", "confirmed", "inputs"), e("review", "info", "askq"), e("askq", "out", "waitq"), e("waitq", "out", "remind"), e("remind", "out", "end-r"), e("inputs", "complete", "rules"), e("inputs", "incomplete", "draft"),
     e("rules", "incomplete", "draft"), e("draft", "out", "ask"), e("ask", "out", "wait"), e("wait", "out", "end-i"),
     e("rules", "complete", "human"),
     e("human", "approved", "case"), e("case", "out", "pay"), e("pay", "out", "ok"), e("ok", "out", "portal"), e("portal", "out", "archive"), e("archive", "out", "end-ok"),

@@ -1,12 +1,17 @@
 "use client";
 
-import { GLOBAL_PLACEHOLDERS, NODE_CATALOG, OUTPUT_FORMATS, STEP_OUTPUTS, tokensIn, upstreamOutputs, type NodeKind, type StepOutput } from "@digieurope/shared";
+import {
+  FN_CATEGORIES, FUNCTIONS, GLOBAL_PLACEHOLDERS, NODE_CATALOG, OUTPUT_FORMATS, STEP_OUTPUTS, outputsOfNode, asList, asNumber, callOf, describeCall, fnByName, previewRandom, refsInText, renderText, tokensIn, upstreamOutputs,
+  type ConfigValue, type Env, type NodeKind, type StepOutput,
+} from "@digieurope/shared";
 import { useCallback, useMemo } from "react";
 import { ICONS } from "@/components/FlowKit";
 import type { TokenInfo } from "@/components/TokenField";
 import { useI18n } from "@/lib/i18n";
 
 const HUES = [212, 152, 28, 282, 340, 176, 48, 242];
+/** Functions are all drawn in one colour, so they never look like the output of a step. */
+const FN_HUE = 262;
 /** Every step keeps its colour wherever its outputs are shown. */
 export const hueOf = (stepId: string): number => {
   let h = 0;
@@ -20,7 +25,8 @@ const SHORT: Record<string, { de: string; en: string }> = {
   documents_read: { de: "Gelesene Dokumente", en: "Documents read" }, unreadable_documents: { de: "Nicht lesbare Dokumente", en: "Unreadable documents" },
   review_list: { de: "Unklare Felder", en: "Unclear fields" }, review_details: { de: "Gründe", en: "Reasons" },
   open_items: { de: "Offene Punkte", en: "Open items" }, missing_documents: { de: "Fehlende Dokumente", en: "Missing documents" }, warnings: { de: "Hinweise", en: "Notes" }, open_count: { de: "Anzahl offen", en: "Open count" },
-  condition_result: { de: "Ergebnis", en: "Result" },
+  condition_result: { de: "Ergebnis", en: "Result" }, read_result: { de: "Leseergebnis", en: "Read result" },
+  http_status: { de: "Status", en: "Status" }, http_body: { de: "Ganze Antwort", en: "Whole answer" }, http_error: { de: "Fehler", en: "Error" },
   decision: { de: "Entscheidung", en: "Decision" }, decision_note: { de: "Begründung", en: "Explanation" }, decision_amount: { de: "Betrag", en: "Amount" },
   reminder_date: { de: "Datum", en: "Date" },
   draft_subject: { de: "Betreff Entwurf", en: "Draft subject" }, draft_body: { de: "Text Entwurf", en: "Draft text" },
@@ -31,7 +37,7 @@ const SHORT: Record<string, { de: string; en: string }> = {
 };
 const short = (name: string, lang: "de" | "en") => SHORT[name]?.[lang] ?? name.replace(/_/g, " ");
 
-type Graph = { nodes: { id: string; kind: NodeKind; name?: string; y?: number; x?: number }[]; edges: { source: string; target: string }[] };
+type Graph = { nodes: { id: string; kind: NodeKind; name?: string; config?: Record<string, ConfigValue>; y?: number; x?: number }[]; edges: { source: string; target: string }[] };
 
 /** Names of the steps as shown on the tiles: the name the person gave it, or the kind of step if it has none (numbered if the kind appears twice). */
 export function useStepNames(graph: Graph): Map<string, string> {
@@ -56,6 +62,13 @@ export function useTokenResolver(graph: Graph, selId: string) {
   const upstream = useMemo(() => upstreamOutputs(graph, selId), [graph, selId]);
   const resolve = useCallback(
     (raw: string): TokenInfo | null => {
+      if (raw.startsWith("{=")) {
+        const call = callOf(raw);
+        const spec = call ? fnByName(call.name) : undefined;
+        if (!spec) return { text: call?.name || "?", step: "", hue: 0, valid: false, title: "Unknown function", fn: true };
+        const refsOk = refsInText(raw).every((r) => resolve(r.raw)?.valid !== false);
+        return { text: spec.label[lang], step: "", hue: FN_HUE, valid: refsOk, title: describeCall(raw, (r) => short(r.name, lang)), fn: true };
+      }
       const tk = tokensIn(raw)[0];
       if (!tk) return null;
       const glob = GLOBAL_PLACEHOLDERS.find((g) => g.name === tk.name);
@@ -63,12 +76,12 @@ export function useTokenResolver(graph: Graph, selId: string) {
       if (!tk.step && glob) return { text: short(tk.name, lang), step: "", hue: -1, valid: true, title: bi(glob.label) };
       if (tk.step) {
         const node = graph.nodes.find((n) => n.id === tk.step);
-        const out = node ? STEP_OUTPUTS[node.kind].find((o) => o.name === tk.name) : undefined;
+        const out = node ? outputsOfNode(node).find((o) => o.name === tk.name) : undefined;
         if (!node || !out) return null;
         return { text: `${short(tk.name, lang)}${suffix}`, step: names.get(node.id) ?? node.id, hue: hueOf(node.id), valid: upstream.some((u) => u.nodeId === node.id && u.output.name === tk.name), title: `${names.get(node.id)} · ${bi(out.label)}` };
       }
       // An older text with just the name: the nearest step before this one that provides it.
-      const known = Object.values(STEP_OUTPUTS).some((l) => l.some((o) => o.name === tk.name));
+      const known = Object.values(STEP_OUTPUTS).some((l) => l.some((o) => o.name === tk.name)) || graph.nodes.some((n) => outputsOfNode(n).some((o) => o.name === tk.name));
       if (!known) return null;
       const near = upstream.find((u) => u.output.name === tk.name);
       return near
@@ -77,13 +90,13 @@ export function useTokenResolver(graph: Graph, selId: string) {
     },
     [graph, names, upstream, lang, bi],
   );
-  return { resolve, names, upstream, sig: `${[...names.entries()].join("|")}|${upstream.length}|${lang}` };
+  return { resolve, names, upstream, sig: `${[...names.entries()].join("|")}|${upstream.map((u) => `${u.nodeId}.${u.output.name}`).join(",")}|${lang}` };
 }
 
 /** What a step hands on, as tiles in the colour of the step. */
-export function ProvidesList({ kind, stepId, names }: { kind: NodeKind; stepId: string; names: Map<string, string> }) {
+export function ProvidesList({ kind, config, stepId, names }: { kind: NodeKind; config?: Record<string, ConfigValue>; stepId: string; names: Map<string, string> }) {
   const { t, bi } = useI18n();
-  const outs = STEP_OUTPUTS[kind];
+  const outs = outputsOfNode({ kind, config });
   if (outs.length === 0) return null;
   return (
     <div className="outs" style={{ ["--h" as string]: hueOf(stepId) }}>

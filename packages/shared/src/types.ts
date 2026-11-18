@@ -174,6 +174,8 @@ export interface Application {
   /** Calls to connected systems made by the process. */
   integrations?: IntegrationEntry[];
   assignedTeam?: string;
+  /** Random values created once for this case by "per case" functions (a random ID, a GUID), so a rerun shows the same. */
+  randoms?: Record<string, string>;
   /** The caseworker responsible for this case. */
   assignedTo?: { id: string; name: string; via: "range" | "substitute" | "fallback" | "manual"; at: string };
   /** State of the process that handles this case. */

@@ -1780,3 +1780,68 @@ html:has(.ws), body:has(.ws) { overflow: hidden; height: 100%; }
 .conn-head .chip { margin-left: auto; }
 .ws-toolbar .button { white-space: nowrap; }
 .ws-toolbar { overflow-x: auto; }
+/* Functions: tiles to choose from, the editor with a slot for each value */
+.tok.fn { background: hsl(262 80% 94%); border-color: hsl(262 55% 62%); color: hsl(262 55% 26%); cursor: pointer; }
+.tok.fn small { font-size: 0.85rem; font-weight: 700; opacity: 0.9; text-transform: none; font-style: italic; }
+:root[data-theme="dark"] .tok.fn { background: hsl(262 35% 22%); border-color: hsl(262 45% 50%); color: hsl(262 80% 88%); }
+.pane-tabs { display: flex; gap: 0.3rem; padding: 0.3rem 0.4rem 0; }
+.pane-tabs button { border: 0; background: transparent; padding: 0.45rem 0.8rem; font: inherit; font-weight: 600; color: var(--muted); border-bottom: 2px solid transparent; cursor: pointer; }
+.pane-tabs button[aria-selected="true"] { color: var(--ink); border-bottom-color: var(--primary); }
+.fn-list { display: grid; gap: 0.7rem; padding: 0.5rem; }
+.fn-cat { display: grid; gap: 0.35rem; }
+.fn-cat-h { font-size: 0.74rem; letter-spacing: 0.04em; text-transform: uppercase; color: var(--muted); font-weight: 700; padding-top: 0.2rem; }
+.fn-tile { display: grid; gap: 0.15rem; text-align: left; padding: 0.45rem 0.6rem; border-radius: 9px; border: 1px solid hsl(262 55% 70%); border-left-width: 5px; background: hsl(262 80% 96%); color: hsl(262 55% 22%); font: inherit; font-size: 0.82rem; cursor: pointer; }
+.fn-tile:hover { background: hsl(262 80% 91%); }
+.fn-tile-top { display: flex; align-items: baseline; gap: 0.4rem; }
+.fn-tile-top small { font-style: italic; font-weight: 700; }
+.fn-tile-top .otype { margin-left: auto; }
+.fn-help { font-size: 0.76rem; opacity: 0.8; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.fn-ex { font-size: 0.7rem; opacity: 0.75; white-space: pre-wrap; }
+:root[data-theme="dark"] .fn-tile { background: hsl(262 30% 18%); border-color: hsl(262 40% 45%); color: hsl(262 80% 90%); }
+.fn-edit { display: grid; gap: 0.6rem; padding: 0.7rem; margin: 0.4rem; border-radius: 12px; border: 1px solid hsl(262 55% 70%); background: hsl(262 80% 97%); }
+:root[data-theme="dark"] .fn-edit { background: hsl(262 30% 14%); border-color: hsl(262 40% 40%); }
+.fn-edit-head { display: flex; align-items: center; gap: 0.5rem; }
+.fn-edit-title { display: flex; align-items: baseline; gap: 0.4rem; margin-right: auto; font-size: 1rem; }
+.fn-edit-title small { font-style: italic; font-weight: 700; color: hsl(262 55% 45%); }
+.fn-hint { font-style: normal; color: var(--muted); font-size: 0.78rem; }
+.fn-result { padding: 0.5rem 0.65rem; border-radius: 9px; background: var(--surface); border: 1px solid var(--line); }
+.fn-result pre { margin: 0.2rem 0 0; white-space: pre-wrap; font: inherit; font-size: 0.85rem; max-height: 8em; overflow: auto; }
+.fn-result.bad { border-color: var(--bad); }
+.fn-result.bad pre { color: var(--bad); }
+
+/* Comments, AI documentation, rename notice, JSON picker */
+.nd-note { display: flex; gap: 0.3rem; align-items: flex-start; margin: -0.35rem 0.85rem 0.6rem 3.05rem; font-size: 0.72rem; line-height: 1.3; color: var(--muted); }
+.nd-note svg { flex: none; margin-top: 0.1rem; }
+.nd-note { display: -webkit-box; -webkit-line-clamp: 1; -webkit-box-orient: vertical; overflow: hidden; }
+.nd-sug { position: absolute; top: -9px; right: 10px; display: inline-flex; align-items: center; gap: 0.25rem; padding: 0.1rem 0.45rem; border-radius: 999px; font-size: 0.66rem; font-weight: 650; background: hsl(262 80% 94%); color: hsl(262 55% 32%); border: 1px solid hsl(262 55% 72%); }
+:root[data-theme="dark"] .nd-sug { background: hsl(262 30% 20%); color: hsl(262 80% 88%); border-color: hsl(262 40% 45%); }
+.doc-card { display: grid; gap: 0.55rem; padding: 0.7rem 0.8rem; border-radius: 12px; border: 1px solid hsl(262 55% 72%); background: hsl(262 80% 97%); font-size: 0.86rem; }
+:root[data-theme="dark"] .doc-card { background: hsl(262 30% 14%); border-color: hsl(262 40% 42%); }
+.doc-head { display: flex; align-items: center; gap: 0.4rem; color: hsl(262 55% 38%); }
+:root[data-theme="dark"] .doc-head { color: hsl(262 80% 85%); }
+.doc-row { display: grid; grid-template-columns: 5.2rem 1fr; gap: 0.4rem; align-items: baseline; }
+.doc-row.stack { grid-template-columns: 1fr; gap: 0.2rem; }
+.doc-row del { color: var(--muted); }
+.doc-ai { padding: 0.4rem 0.55rem; border-radius: 8px; background: var(--surface); border: 1px dashed hsl(262 45% 65%); }
+.doc-mine { color: var(--muted); }
+.rn-notice strong { font-weight: 650; }
+.json-picker { display: grid; gap: 0.6rem; padding: 0.75rem; border-radius: 12px; border: 1px solid var(--line-strong); background: var(--surface-2); }
+.json-head { display: flex; align-items: center; gap: 0.4rem; }
+.json-tree { max-height: 18rem; overflow: auto; padding: 0.3rem 0; border-radius: 9px; background: var(--surface); border: 1px solid var(--line); font-size: 0.8rem; }
+.json-row { display: flex; align-items: baseline; gap: 0.45rem; padding: 0.18rem 0.5rem 0.18rem 0.4rem; cursor: pointer; }
+.json-row:hover { background: var(--primary-soft); }
+.json-row.on { background: var(--primary-soft); }
+.json-row.group { cursor: default; color: var(--muted); }
+.json-row input { margin: 0; flex: none; }
+.json-dot { width: 13px; flex: none; }
+.json-key { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-weight: 600; }
+.json-val { margin-left: auto; max-width: 55%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); }
+.json-val.kind-number { color: hsl(212 60% 40%); }
+.json-val.kind-string { color: hsl(152 45% 30%); }
+:root[data-theme="dark"] .json-val.kind-number { color: hsl(212 80% 75%); }
+:root[data-theme="dark"] .json-val.kind-string { color: hsl(152 50% 70%); }
+.json-picked { display: grid; gap: 0.5rem; }
+.json-pick { display: grid; gap: 0.25rem; padding: 0.5rem 0.6rem; border-radius: 9px; background: var(--surface); border: 1px solid var(--line); }
+.json-name { flex: 1; min-width: 0; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.85rem; }
+.json-code { font-size: 0.76rem; padding: 0.2rem 0.4rem; border-radius: 6px; background: var(--surface-2); word-break: break-all; }
+.ws-toolbar .link-button { white-space: nowrap; }

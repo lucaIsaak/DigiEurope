@@ -1,6 +1,8 @@
 import { randomUUID } from "node:crypto";
 import { randomBytes } from "node:crypto";
 import Fastify, { type FastifyReply } from "fastify";
+import { documentProcess } from "@digieurope/shared";
+import { DEMO_EXCHANGE, makeHttpClient } from "./http.js";
 import {
   RULES,
   CONNECTORS,
@@ -46,7 +48,7 @@ import {
   type StudentInfo,
   validateProcess,
 } from "@digieurope/shared";
-import { resumeRun, resumeTimer, retryRun, startRun, timerDue, type EngineCtx } from "./engine.js";
+import { resumeRun, resumeTimer, retryRun, startRun, timerDue, type EngineCtx, type HttpRequest, type HttpResponse } from "./engine.js";
 import { PEER_OFFICES, REFERENCE_SETTINGS, type OfficeProcess } from "./offices.js";
 import { DEFAULT_MIN_CONFIDENCE, aiAvailable, methodsInfo } from "./extraction.js";
 import { Store as ScratchStore } from "./store.js";
@@ -70,6 +72,8 @@ export interface AppOptions {
   logger?: boolean;
   webUrl?: string;
   now?: () => Date;
+  /** Replaces the HTTP client of the "HTTP request" step (tests). */
+  http?: (req: HttpRequest) => Promise<HttpResponse>;
 }
 
 const MAX_UPLOAD_BYTES = 5 * 1024 * 1024;
@@ -80,10 +84,12 @@ export function buildApp(opts: AppOptions) {
   /** The demo clock can run ahead of the real one (see /admin/clock), so timers can be shown without waiting. */
   const now = opts.now ?? (() => new Date(Date.now() + store.clockOffsetMs()));
   const webUrl = opts.webUrl ?? "http://localhost:3000";
+  const demoApi = `${process.env.API_PUBLIC_URL ?? "http://localhost:4000"}/demo-api/`;
+  const httpClient = opts.http ?? makeHttpClient(demoApi);
   const app = Fastify({ logger: opts.logger ?? false, bodyLimit: 12 * 1024 * 1024 });
   app.decorateRequest("staff", null);
   const needsBuild = (method: string, url: string) =>
-    url.startsWith("/office/processes") || (method !== "GET" && (url.startsWith("/office/messages") || url === "/office/rules" || /^\/office\/rules\/[^/]+\/(approve|revoke|draft|discard)/.test(url)));
+    url.startsWith("/office/processes") || url.startsWith("/office/http") || (method !== "GET" && (url.startsWith("/office/messages") || url === "/office/rules" || /^\/office\/rules\/[^/]+\/(approve|revoke|draft|discard)/.test(url)));
   /** Setting up how documents are read: process designers and the extractor owner. */
   const needsExtractorAccess = (method: string, url: string) => method !== "GET" && (url.startsWith("/office/inputs") || url.startsWith("/office/config"));
   /** How a template is read is decided by the extractor owner (or an administrator). */
@@ -111,6 +117,7 @@ export function buildApp(opts: AppOptions) {
   /** Hands a submitted application to the live process of the office. */
   const engineCtx = (from: Store = store, opts2: { instantWaits?: boolean } = {}): EngineCtx => ({
     now: now(),
+    http: httpClient,
     instantWaits: opts2.instantWaits,
     check: (a, ids, scope) => checksFor(store, a, now(), ids, scope),
     template: (id) => {
@@ -986,6 +993,10 @@ export function buildApp(opts: AppOptions) {
         kind: n.kind,
         ...(typeof n.name === "string" ? { name: n.name.slice(0, 80) } : {}),
         ...(typeof n.purpose === "string" && n.purpose ? { purpose: n.purpose.slice(0, 200) } : {}),
+        ...(typeof n.comment === "string" && n.comment.trim() ? { comment: n.comment.slice(0, 1200) } : {}),
+        ...(n.suggestion && (typeof n.suggestion.name === "string" || typeof n.suggestion.comment === "string")
+          ? { suggestion: { ...(typeof n.suggestion.name === "string" ? { name: n.suggestion.name.slice(0, 80) } : {}), ...(typeof n.suggestion.comment === "string" ? { comment: n.suggestion.comment.slice(0, 1200) } : {}), at: String(n.suggestion.at ?? now().toISOString()) } }
+          : {}),
         position: { x: Number(n.position?.x) || 0, y: Number(n.position?.y) || 0 },
         config: Object.fromEntries(Object.entries(n.config ?? {}).filter(([, v]) => typeof v === "string" || typeof v === "number")),
       })),
@@ -1052,6 +1063,26 @@ export function buildApp(opts: AppOptions) {
     return def;
   });
 
+  /** Sends a test request for the JSON picker, so a person sees a real answer before choosing fields. */
+  app.post<{ Body: { method?: string; url?: string; headers?: Record<string, string>; body?: string } }>("/office/http/try", async (req, reply) => {
+    const b = req.body ?? {};
+    const method = String(b.method ?? "GET").toUpperCase();
+    if (!["GET", "POST", "PUT", "PATCH", "DELETE"].includes(method)) return bad(reply, "Unknown method.");
+    try {
+      const res = await httpClient({ method, url: String(b.url ?? ""), headers: b.headers ?? {}, ...(method !== "GET" && b.body ? { body: b.body } : {}) });
+      return { status: res.status, body: res.body.slice(0, 200_000) };
+    } catch (e) {
+      return { status: 0, error: e instanceof Error ? e.message : "The call failed." };
+    }
+  });
+  /** AI documentation (simulated): reads names, comments and connections and proposes a name and a comment per step. */
+  app.post<{ Body: { def?: ProcessDef } }>("/office/processes/document", async (req, reply) => {
+    const def = req.body?.def;
+    if (!def || !Array.isArray(def.nodes) || !Array.isArray(def.edges) || def.nodes.length > 80) return bad(reply, "No process.");
+    return { suggestions: documentProcess(def, now().toISOString()), simulated: true };
+  });
+  app.get("/demo-api/exchange", async () => DEMO_EXCHANGE);
+  app.post<{ Body: unknown }>("/demo-api/echo", async (req) => ({ received: req.body ?? null, at: now().toISOString() }));
   app.post<{ Body: { def?: ProcessDef } }>("/office/processes/validate", async (req, reply) => {
     const def = cleanDef(req.body?.def, req.staff!.name, 0);
     return def ? { issues: inputIssues(def) } : bad(reply, "Invalid process.");

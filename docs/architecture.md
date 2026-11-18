@@ -133,3 +133,22 @@ The builder borrows from tools like Power Automate and Make, and deliberately fi
 - **Impact.** Before publishing, the dialog shows the changes against the live version, the rules, templates, forms and systems the process depends on, the owner and a required reason.
 - **Typed settings.** Each kind of step declares its settings (`NODE_CATALOG`); the validation rejects unknown settings and values that do not fit.
 - **Connections belong to the office.** Each system has one connection that administrators manage (on or off, sandbox or live, last test), independent of who built the process.
+
+## Functions in texts (expressions)
+
+Every free-text field of a step can hold functions next to the output tiles. The pane beside the inspector has two tabs: **Outputs** and **Functions**. A function is a purple "ƒ" tile; clicking it opens its slots, and each slot can hold text, output tiles or other functions (nested).
+
+- Stored as `{=name|slot|slot}`; `\| \{ \} \\` escape special characters inside a slot. Code: `packages/shared/src/expressions.ts` (parser, ~80 functions, evaluator, validation); tests in `expressions.test.ts`.
+- Families: text (split, pieces, left/right/mid, before/after/between, replace, upper/lower, pad, mask, slug …), maths (calc, add … round, min/max/sum/average, percent, euro), converters (toText, toNumber, toInteger, toBoolean, toList, toDate), dates (now, addDays, formatDate, daysBetween …), logic (if, coalesce, equals, and/or/not, lookup), lists (count, first, join, sort, unique …), random and ids.
+- Results are typed: a single output or function keeps its type (a list stays a list), so a condition can compare a number.
+- Random: `randomId`, `randomNumber`, `guid` generate **once per case** and are stored in `Application.randoms`, so re-running the same case keeps the value. The `…Run` variants (`randomIdRun` …) generate a new value for every run, still per case.
+- A function that cannot be calculated stops the step with a message (same failure/retry path as other step errors). Validation in `validateProcess` flags unknown functions, missing slots and non-numeric condition values before publishing.
+- The editor shows a live result using the example values of the outputs.
+
+## Condition steps, HTTP requests, comments and AI documentation
+
+- **Condition is a step of its own.** "Read documents" has one output and hands on `read_result` (`valid` / `invalid`). A "Condition" step compares any tile (for example `read_result` equals `valid`) and branches yes/no. Older processes that branched inside "Read documents" (clear / review) are rewritten on load by `upgradeReadBranch`, which inserts the condition step. Conditions on values of the application still work (`field` other than `custom`).
+- **HTTP request (API).** Method, URL, headers and body can hold tiles and functions. The server's client (`apps/api/src/http.ts`) allows http/https only, no redirects, 10 s, 1 MB, and refuses addresses inside a network (except the prototype's own `/demo-api/exchange`, a fake nested answer). Status 400+ or a timeout follow the "error" output like a system connector (retries, simulate).
+- **JSON picker** (`packages/shared/src/json.ts`, `JsonPicker.tsx`). Get a sample answer (or paste one), tick fields; each pick is `{name, path, type}` with a path such as `data.rates[0].value` or `data.rates[*].currency` (all items, a list). The paths are what the process runs, so nobody writes extraction code; a missing field stops the step and names the path. Each pick is an output of the step (`{stepId.name}`), typed so numbers stay numbers.
+- **Comment and rename.** Every step has a name and a comment. Texts refer to steps by an invisible id, so a rename never breaks a tile. After a rename the builder lists where the step's tiles are used and where the old name is written out as plain text (names, purposes, comments, texts) and offers to update those; renaming a picked field offers to update its tiles downstream (`renameImpact`, `renameOutputTokens`).
+- **AI documentation** (simulated; `documentation.ts`, `POST /office/processes/document`). It reads names, comments and connections and proposes a name (only for steps nobody renamed) and a comment (mentioning neighbours by their names). Per step the person chooses: use the AI version, merge (only when the step has its own name and a comment; keeps the person's text and adds what the AI says beyond it) or reject. Nothing changes without that decision.

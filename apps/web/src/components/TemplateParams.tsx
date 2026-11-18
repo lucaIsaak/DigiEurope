@@ -8,7 +8,7 @@ import { useI18n } from "@/lib/i18n";
 
 /** Pick an approved message template for a step, and put outputs of earlier steps (as tiles) into its parameters. */
 export function TemplateParams({
-  templates, template, params, onTemplate, onParams, resolve, sig, register, onFocusKey,
+  templates, template, params, onTemplate, onParams, resolve, sig, register, onFocusKey, onEditFn,
 }: {
   templates: MessageEntry[];
   template: string;
@@ -19,6 +19,7 @@ export function TemplateParams({
   sig: string;
   register: (key: string, h: TokenFieldHandle | null) => void;
   onFocusKey: (key: string) => void;
+  onEditFn?: (raw: string, apply: (next: string) => void) => void;
 }) {
   const { t, lang } = useI18n();
   const live = useMemo(() => templates.filter((x) => x.live), [templates]);
@@ -62,6 +63,7 @@ export function TemplateParams({
             sig={sig}
             label={p}
             onFocus={() => onFocusKey(`params:${p}`)}
+            onEditFn={onEditFn}
             onChange={(v) => onParams(JSON.stringify({ ...bound, [p]: v }))}
           />
         </label>

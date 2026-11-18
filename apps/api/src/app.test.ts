@@ -4,7 +4,7 @@ import { PROPOSAL_SAMPLE_TITLE, SAMPLE_SETS, fixDocuments, formblatt8, getPerson
 import { extractDocument } from "./documents.js";
 import { seedDemoData } from "./seed.js";
 import { startRun } from "./engine.js";
-import type { Application, ProcessDef } from "@digieurope/shared";
+import { defaultProcess, upgradeProcess, validateProcess, type Application, type ProcessDef } from "@digieurope/shared";
 import { checksFor, reviewReport } from "./cases.js";
 import { Store } from "./store.js";
 
@@ -1083,5 +1083,158 @@ describe("connections belong to the office", () => {
     expect(off.enabled).toBe(false);
     store.login("s-lindner", "pd");
     expect((await app.inject({ method: "PUT", url: "/office/connections/payment", payload: { enabled: true }, headers: { "x-staff-token": "pd" } })).statusCode).toBe(403);
+  });
+});
+
+describe("expressions in the texts of a process", () => {
+  const notify = (body: string) => defOf(
+    [{ id: "s", kind: "trigger", config: { source: "any" } }, { id: "in", kind: "check_inputs" }, { id: "m", kind: "send_notification", config: { to: "office", subject: "Case {=randomId|6}", subject_en: "Case {=randomId|6}", body: "x", body_en: body } }, { id: "e", kind: "end" }],
+    [["s", "out", "in"], ["in", "incomplete", "m"], ["in", "complete", "m"], ["m", "out", "e"]],
+  );
+
+  it("split, calculate and convert with outputs of earlier steps, and keep a random ID per case on a rerun but not a random ID per run", async () => {
+    const { a, ctx } = await sampleApp("mira");
+    const body = "Missing: {=count|{in.missing_inputs}} · first: {=item|{in.missing_inputs}|first} · double: {=calc|{in.missing_inputs_count} * 2} · ref: {=pieces|{reference}|-|2|3} · per case {=randomId|10} · per run {=randomIdRun|10} · today {=now} · text {=toText|{=add|1|2}}";
+    const def = notify(body);
+    const first = await startRun(def, a, ctx());
+    const text = first.outbox![0]!.body;
+    expect(text).toMatch(/Missing: 1 /);
+    expect(text).toContain("first: Host university confirmation");
+    expect(text).toContain("double: 2");
+    expect(text).toContain(`ref: ${a.reference.split("-").slice(1, 3).join("-")}`);
+    expect(text).toContain("today 2026-11-16");
+    expect(text).toContain("text 3");
+    const perCase = /per case (\w{10})/.exec(text)![1];
+    const perRun = /per run (\w{10})/.exec(text)![1];
+    // The same case runs again: its ID stays, the per-run value is new.
+    const again = await startRun(def, first, ctx());
+    const text2 = again.outbox![1]!.body;
+    expect(/per case (\w{10})/.exec(text2)![1]).toBe(perCase);
+    expect(/per run (\w{10})/.exec(text2)![1]).not.toBe(perRun);
+    expect(again.outbox![1]!.subject).toBe(first.outbox![0]!.subject);
+    // Another case gets its own ID.
+    const other = await sampleApp("jonas");
+    const run3 = await startRun(def, other.a, other.ctx());
+    expect(/per case (\w{10})/.exec(run3.outbox![0]!.body)![1]).not.toBe(perCase);
+  });
+
+  it("a function that cannot work stops the process with the reason", async () => {
+    const { a, ctx } = await sampleApp("mira");
+    const run = await startRun(notify("{=toNumber|abc}"), a, ctx());
+    expect(run.flow!.failed).toBe(true);
+    expect(run.flow!.error!.message).toContain("not a number");
+  });
+
+  it("a condition can compare with a calculation, and a caseworker's note can use functions", async () => {
+    const { a, ctx } = await sampleApp("mira");
+    const def = defOf(
+      [{ id: "s", kind: "trigger", config: { source: "any" } }, { id: "in", kind: "check_inputs" }, { id: "c", kind: "condition", config: { field: "blockers", op: "lte", value: "{=calc|{in.missing_inputs_count} + 5}" } }, { id: "h", kind: "human_task", config: { instruction: "x", instruction_en: "{=pluralize|{in.missing_inputs_count}|One item|{in.missing_inputs_count} items} open for {=upper|{name}}" } }, { id: "e", kind: "end" }],
+      [["s", "out", "in"], ["in", "incomplete", "c"], ["in", "complete", "c"], ["c", "yes", "h"], ["c", "no", "e"], ["h", "approved", "e"], ["h", "rejected", "e"], ["h", "info", "e"]],
+    );
+    const run = await startRun(def, a, ctx());
+    expect(run.flow!.waiting).toBe("h");
+    expect(run.flow!.briefing).toBe("One item open for MIRA SOMMER");
+  });
+
+  it("validation reports an unknown function, missing values and a condition that would compare a list", async () => {
+    const { app } = setup();
+    const live = (await app.inject({ method: "GET", url: "/office/processes" })).json().live;
+    const bad = { ...live, nodes: live.nodes.map((n: { id: string; config: Record<string, string> }) => (n.id === "notify-ok" ? { ...n, template: undefined, config: { to: "student", subject: "x", subject_en: "{=shout|a}", body: "x", body_en: "{=left|only one}" } } : n)) };
+    const issues = JSON.stringify((await app.inject({ method: "POST", url: "/office/processes/validate", payload: { def: bad } })).json().issues);
+    expect(issues).toContain("There is no function “shout”");
+    expect(issues).toContain("needs 2 values");
+    const cond = { ...live, nodes: [...live.nodes, { id: "c1", kind: "condition", name: "Compare", position: { x: 0, y: 0 }, config: { field: "blockers", op: "lte", value: "{rules.open_items}" } }] };
+    expect(JSON.stringify((await app.inject({ method: "POST", url: "/office/processes/validate", payload: { def: cond } })).json().issues)).toContain("is a list");
+  });
+});
+
+describe("condition steps, HTTP requests and the JSON picker", () => {
+  const answer = JSON.stringify({ data: { rates: [{ currency: "CAD", value: 1.52 }, { currency: "USD", value: 1.08 }], country: { code: "CA" } } });
+  const picks = JSON.stringify([{ name: "cad_rate", path: "data.rates[0].value", type: "number" }, { name: "currencies", path: "data.rates[*].currency", type: "list" }, { name: "country", path: "data.country.code", type: "text" }]);
+  const http = (status = 200, body = answer) => async () => ({ status, body });
+
+  it("'Read documents' hands on valid or invalid and a condition step branches on it", async () => {
+    const { a, ctx } = await sampleApp("mira");
+    const def = defOf(
+      [{ id: "s", kind: "trigger", config: { source: "any" } }, { id: "r", kind: "read_documents", config: { scope: "all" } }, { id: "c", kind: "condition", config: { field: "custom", left: "{r.read_result}", op: "eq", value: "valid" } }, { id: "ok", kind: "end" }, { id: "bad", kind: "end" }],
+      [["s", "out", "r"], ["r", "out", "c"], ["c", "yes", "ok"], ["c", "no", "bad"]],
+    );
+    const run = await startRun(def, a, ctx());
+    const step = run.flow!.log.find((l) => l.nodeId === "c")!;
+    expect(["yes", "no"]).toContain(step.handle);
+    expect(run.flow!.vars!["r.read_result"]).toMatch(/^(valid|invalid)$/);
+    expect(step.handle).toBe(run.flow!.vars!["r.read_result"] === "valid" ? "yes" : "no");
+  });
+
+  it("an older process that branched inside 'Read documents' gets a condition step instead", () => {
+    const old = defaultProcess();
+    const nodes = old.nodes.filter((n) => n.id !== "read-ok");
+    const edges = old.edges.filter((e) => e.source !== "read-ok" && e.id !== "read:out").concat({ id: "read:clear", source: "read", sourceHandle: "clear", target: "inputs" }, { id: "read:review", source: "read", sourceHandle: "review", target: "review" });
+    const up = upgradeProcess({ ...old, nodes, edges });
+    const cond = up.nodes.find((n) => n.kind === "condition" && n.id === "read-ok")!;
+    expect(cond.config.left).toBe("{read.read_result}");
+    expect(up.edges.find((e) => e.source === "read-ok" && e.sourceHandle === "yes")!.target).toBe("inputs");
+    expect(up.edges.find((e) => e.source === "read-ok" && e.sourceHandle === "no")!.target).toBe("review");
+    expect(validateProcess(up).filter((i) => i.nodeId === "read")).toEqual([]);
+  });
+
+  it("an HTTP request takes the picked fields out of nested JSON and hands them on as tiles", async () => {
+    const { a, ctx } = await sampleApp("mira");
+    const def = defOf(
+      [{ id: "s", kind: "trigger", config: { source: "any" } }, { id: "h", kind: "http_request", config: { method: "GET", url: "https://api.example.org/rates/{reference}", picks } }, { id: "m", kind: "send_notification", config: { to: "office", subject: "x", subject_en: "x", body: "x", body_en: "Rate {h.cad_rate} for {h.country}: {h.currencies:comma} ({=calc|{h.cad_rate} * 100})" } }, { id: "e", kind: "end" }],
+      [["s", "out", "h"], ["h", "out", "m"], ["m", "out", "e"]],
+    );
+    const seen: string[] = [];
+    const run = await startRun(def, a, { ...ctx(), http: async (r) => (seen.push(r.url), { status: 200, body: answer }) });
+    expect(seen[0]).toBe(`https://api.example.org/rates/${a.reference}`);
+    expect(run.flow!.vars!["h.cad_rate"]).toBe("1.52");
+    expect(run.flow!.vars!["h.http_status"]).toBe("200");
+    expect(run.outbox![0]!.body).toContain("Rate 1.52 for CA: CAD, USD (152)");
+  });
+
+  it("a failing call follows the error output, or stops with the reason when it is not connected; a field that is gone is named", async () => {
+    const { a, ctx } = await sampleApp("mira");
+    const mk = (withError: boolean) => defOf(
+      [{ id: "s", kind: "trigger", config: { source: "any" } }, { id: "h", kind: "http_request", config: { url: "https://api.example.org/x", picks } }, { id: "ok", kind: "end" }, { id: "err", kind: "end" }],
+      [["s", "out", "h"], ["h", "out", "ok"], ...(withError ? [["h", "error", "err"] as [string, string, string]] : [])],
+    );
+    const routed = await startRun(mk(true), a, { ...ctx(), http: http(500, "oops") });
+    expect(routed.flow!.log.some((l) => l.handle === "error")).toBe(true);
+    expect(routed.flow!.vars!["h.http_error"]).toContain("status 500");
+    const stuck = await startRun(mk(false), a, { ...ctx(), http: http(503, "") });
+    expect(stuck.flow!.failed).toBe(true);
+    const moved = await startRun(mk(true), a, { ...ctx(), http: http(200, JSON.stringify({ data: {} })) });
+    expect(moved.flow!.vars!["h.http_error"]).toContain("data.rates[0].value");
+  });
+
+  it("the server's own client refuses addresses inside a network", async () => {
+    const { app } = setup();
+    const res = (await app.inject({ method: "POST", url: "/office/http/try", payload: { url: "http://192.168.1.10/admin" } })).json();
+    expect(res.error).toContain("inside a network");
+    const bad = (await app.inject({ method: "POST", url: "/office/http/try", payload: { url: "ftp://example.org/x" } })).json();
+    expect(bad.error).toContain("http and https");
+  });
+
+  it("validation checks the address, the picked names and the paths; the demo answer is nested", async () => {
+    const { app } = setup();
+    const live = (await app.inject({ method: "GET", url: "/office/processes" })).json().live;
+    const node = { id: "h1", kind: "http_request", name: "Rates", position: { x: 0, y: 0 }, config: { method: "GET", url: "ftp://x", picks: JSON.stringify([{ name: "Bad Name", path: "a[", type: "text" }]) } };
+    const issues = JSON.stringify((await app.inject({ method: "POST", url: "/office/processes/validate", payload: { def: { ...live, nodes: [...live.nodes, node] } } })).json().issues);
+    expect(issues).toContain("http:// or https://");
+    expect(issues).toContain("is not possible");
+    expect(issues).toContain("“[”");
+    const demo = (await app.inject({ method: "GET", url: "/demo-api/exchange" })).json();
+    expect(demo.data.rates[0].currency).toBe("CAD");
+  });
+
+  it("AI documentation proposes names and comments from the flow; nothing changes until a person decides", async () => {
+    const { app } = setup();
+    const live = (await app.inject({ method: "GET", url: "/office/processes" })).json().live;
+    const renamed = { ...live, nodes: live.nodes.map((n: { id: string }) => (n.id === "rules" ? { ...n, name: "Rule check", comment: "Our rules for the application." } : n)) };
+    const res = (await app.inject({ method: "POST", url: "/office/processes/document", payload: { def: renamed } })).json();
+    expect(res.simulated).toBe(true);
+    expect(res.suggestions["read-ok"].comment).toContain("Result of reading");
+    expect(res.suggestions.rules.name).toBeUndefined();
+    expect(res.suggestions.rules.comment).toContain("approved rules");
   });
 });
