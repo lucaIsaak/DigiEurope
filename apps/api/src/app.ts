@@ -5,6 +5,10 @@ import {
   baselineFacts,
   describeCheck,
   estimate,
+  assignCaseworker,
+  checkAssignment,
+  type OfficeAssignment,
+  processRuleIds,
   runRuleTests,
   type Rule,
   type Application,
@@ -40,7 +44,7 @@ import { PEER_OFFICES, REFERENCE_SETTINGS, type OfficeProcess } from "./offices.
 import { DEFAULT_MIN_CONFIDENCE, aiAvailable, methodsInfo } from "./extraction.js";
 import { Store as ScratchStore } from "./store.js";
 import { askLive, liveAvailable, retrieve } from "./assistant.js";
-import { PARENT_KINDS, addDocument, allSpecs, allTemplates, checksFor, readFor, checkNow, invite, newApplication, officeAct, open, removeDocument, submit, view, withAudit, draftFor, type OfficeAction } from "./cases.js";
+import { PARENT_KINDS, addDocument, allSpecs, allTemplates, checksFor, readFor, checkNow, invite, newApplication, officeAct, open, removeDocument, submit, view, withAudit, draftFor, questionDraft, type OfficeAction } from "./cases.js";
 import { extractDocument } from "./documents.js";
 import { readPdfLines } from "./pdf.js";
 import { computeInsights } from "./metrics.js";
@@ -86,6 +90,7 @@ export function buildApp(opts: AppOptions) {
     if (!req.staff) return reply.code(401).send({ error: "Please sign in as staff." });
     if (oversightArea && !req.staff.isOversight) return reply.code(403).send({ error: "Only the oversight body can compare offices." });
     if (req.staff.isOversight && url.startsWith("/office")) return reply.code(403).send({ error: "Oversight accounts do not work in an office." });
+    if (url.startsWith("/office/assignment") && req.method !== "GET" && !req.staff.isAdmin) return reply.code(403).send({ error: "Only administrators can change who gets which cases." });
     if (url.startsWith("/office/staff") && !req.staff.isAdmin) return reply.code(403).send({ error: "Only administrators can do this." });
     if (needsBuild(req.method, url) && !req.staff.canBuild && !req.staff.isAdmin) return reply.code(403).send({ error: "You do not have access to the process builder." });
     if (needsOwner(req.method, url) && !req.staff.canApproveTemplates && !req.staff.isAdmin) return reply.code(403).send({ error: "Only the extractor owner can change how documents are read." });
@@ -97,7 +102,13 @@ export function buildApp(opts: AppOptions) {
   /** Hands a submitted application to the live process of the office. */
   const engineCtx = (from: Store = store): EngineCtx => ({
     now: now(),
-    check: (a) => checksFor(store, a, now()),
+    check: (a, ids) => checksFor(store, a, now(), ids),
+    assign: (a) => {
+      const table = store.assignment();
+      const r = assignCaseworker(a.student.lastName, table);
+      const m = store.staff().find((x) => x.id === r.staffId);
+      return m ? { id: m.id, name: m.name, via: r.via, letter: r.letter, covering: r.covering } : null;
+    },
     reread: async (doc, override) => {
       const f = from.readDocument(doc.id);
       return f ? readFor(store, f.content, doc.mimeType, override) : null;
@@ -248,7 +259,7 @@ export function buildApp(opts: AppOptions) {
       docsDone: docs.filter((x) => x.state === "ok").length, docsTotal: docs.length,
       id: a.id, reference: a.reference, name: `${a.student.lastName}, ${a.student.firstName}`, country: a.stay.country, stayType: a.stay.type, status: a.status,
       source: a.source, submittedAt: a.submittedAt ?? null, updatedAt: a.updatedAt, blockers: r.blockers, warnings: r.warnings, estimateMonthly: estimate(a, now()).monthly,
-      team: a.assignedTeam ?? null, waitingAt: liveDef()?.nodes.find((n) => n.id === a.flow?.waiting)?.kind ?? null,
+      assignedTo: a.assignedTo ? { id: a.assignedTo.id, name: a.assignedTo.name } : null, team: a.assignedTeam ?? null, waitingAt: liveDef()?.nodes.find((n) => n.id === a.flow?.waiting)?.kind ?? null,
     };
   };
 
@@ -297,6 +308,12 @@ export function buildApp(opts: AppOptions) {
     return { text: draftFor(a, outcome, Number(req.query.amount ?? 0) || 0, lang, now()) };
   });
 
+  app.get<{ Params: { id: string } }>("/office/cases/:id/question-draft", async (req, reply) => {
+    const a = store.get(req.params.id);
+    if (!a) return notFound(reply);
+    return questionDraft(store, a, now());
+  });
+
   app.get<{ Params: { id: string } }>("/office/cases/:id/audit", async (req, reply) => {
     const a = store.get(req.params.id);
     if (!a) return notFound(reply);
@@ -326,6 +343,12 @@ export function buildApp(opts: AppOptions) {
       live: r.live ? { ...r.live, tests: runRuleTests(r.live.rule, BASE()) } : null,
       draft: r.draft ? { ...r.draft, tests: runRuleTests(r.draft.rule, BASE()) } : null,
       history: r.history,
+      usedIn: !r.live ? [] : Object.values(store.processes()).flatMap((p) => {
+        const d = p.live;
+        if (!d) return [];
+        const ids = processRuleIds(d);
+        return ids === null || ids.includes(id) ? [{ catalogId: d.catalogId, name: d.name }] : [];
+      }),
     };
   };
 
@@ -737,11 +760,57 @@ export function buildApp(opts: AppOptions) {
     return { ok: true };
   });
   app.get("/office/staff", async () => store.staff());
-  app.put<{ Params: { id: string }; Body: { canBuild?: boolean; canApproveTemplates?: boolean } }>("/office/staff/:id", async (req, reply) => {
+
+  // ---- Who handles which case: the office-wide letter table ----
+  app.get("/office/assignment", async () => {
+    const assignment = store.assignment();
+    return { assignment, caseworkers: store.staff().filter((m) => m.isCaseworker).map((m) => ({ id: m.id, name: m.name, title: m.title })), staff: store.staff().filter((m) => !m.isOversight).map((m) => ({ id: m.id, name: m.name })), problems: checkAssignment(assignment) };
+  });
+  app.put<{ Body: { assignment?: OfficeAssignment } }>("/office/assignment", async (req, reply) => {
+    const a = req.body?.assignment;
+    if (!a || !Array.isArray(a.ranges)) return bad(reply, "Missing table.");
+    const people = new Set(store.staff().filter((m) => m.isCaseworker).map((m) => m.id));
+    const all = new Set(store.staff().filter((m) => !m.isOversight).map((m) => m.id));
+    const ranges = a.ranges.map((r) => ({ from: String(r.from ?? "").toUpperCase().slice(0, 1), to: String(r.to ?? "").toUpperCase().slice(0, 1), staffId: String(r.staffId ?? "") }));
+    if (ranges.some((r) => !people.has(r.staffId))) return bad(reply, "Only caseworkers can take cases.");
+    const away: Record<string, string> = {};
+    for (const [id, sub] of Object.entries(a.away ?? {})) if (people.has(id) && all.has(sub) && sub !== id) away[id] = sub;
+    if (!all.has(a.fallbackId)) return bad(reply, "Pick who takes cases that match no letter.");
+    const next: OfficeAssignment = { ranges, away, fallbackId: a.fallbackId };
+    const problems = checkAssignment(next);
+    if (problems.invalid.length) return bad(reply, `Check these letters: ${problems.invalid.join(", ")}.`);
+    if (problems.overlaps.length) return bad(reply, `These letters are given to two people: ${problems.overlaps.join(", ")}.`);
+    store.setAssignment(next);
+    return { assignment: next, problems };
+  });
+  app.post<{ Params: { id: string }; Body: { staffId?: string } }>("/office/cases/:id/assign", async (req, reply) => {
+    const a = store.get(req.params.id);
+    if (!a) return notFound(reply);
+    const me = req.staff!;
+    if (!me.isAdmin && !me.isCaseworker) return bad(reply, "Only caseworkers and administrators can reassign cases.", 403);
+    const to = store.staff().find((m) => m.id === req.body?.staffId && m.isCaseworker);
+    if (!to) return bad(reply, "Pick a caseworker.");
+    const at = now().toISOString();
+    return v(store.put({ ...a, assignedTo: { id: to.id, name: to.name, via: "manual", at }, updatedAt: at, history: [...a.history, { at, kind: "assigned", text: `${to.name} (by ${me.name})` }] }));
+  });
+  app.post<{ Body: { name?: string; title?: string; isCaseworker?: boolean; canBuild?: boolean; canApproveTemplates?: boolean } }>("/office/staff", async (req, reply) => {
+    const name = (req.body?.name ?? "").trim().slice(0, 60);
+    const title = (req.body?.title ?? "").trim().slice(0, 80);
+    if (!name) return bad(reply, "Please enter a name.");
+    const base = `s-${name.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "person"}`;
+    let id = base;
+    for (let i = 2; store.staff().some((m) => m.id === id); i++) id = `${base}-${i}`;
+    const member: StaffMember = { id, name, title: title || "Sachbearbeitung", isAdmin: false, canBuild: Boolean(req.body?.canBuild), isCaseworker: Boolean(req.body?.isCaseworker), ...(req.body?.canApproveTemplates ? { canApproveTemplates: true } : {}) };
+    store.addStaff(member);
+    return reply.code(201).send(store.staff());
+  });
+  app.put<{ Params: { id: string }; Body: { canBuild?: boolean; canApproveTemplates?: boolean; isCaseworker?: boolean } }>("/office/staff/:id", async (req, reply) => {
     const m = store.staff().find((x) => x.id === req.params.id);
     if (!m) return notFound(reply);
+    if (req.body?.isCaseworker === false && store.assignment().ranges.some((r) => r.staffId === m.id)) return bad(reply, `${m.name} is still in the table of who gets which case. Remove them there first.`, 409);
     if (m.isAdmin) return bad(reply, "Administrators always have access.", 409);
     store.setStaff(m.id, {
+      ...(req.body?.isCaseworker !== undefined ? { isCaseworker: Boolean(req.body.isCaseworker) } : {}),
       ...(req.body?.canBuild !== undefined ? { canBuild: Boolean(req.body.canBuild) } : {}),
       ...(req.body?.canApproveTemplates !== undefined ? { canApproveTemplates: Boolean(req.body.canApproveTemplates) } : {}),
     });

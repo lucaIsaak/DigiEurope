@@ -229,7 +229,7 @@ describe("process builder and engine", () => {
     const { id, person } = await create(app, "lea");
     for (const d of sampleDocuments(person)) await upload(app, `/applications/${id}/documents`, d.filename, d.content);
     const submitted = (await app.inject({ method: "POST", url: `/applications/${id}/submit` })).json();
-    expect(submitted.assignedTeam).toBe("Team Ausland");
+    expect(submitted.assignedTo.name).toBeTruthy();
     expect(submitted.flow.waiting).toBe("human");
     const done = (await app.inject({ method: "POST", url: `/office/cases/${id}/actions`, payload: { action: "approve", amount: 900 } })).json();
     expect(done.integrations[0].system).toBe("payment");
@@ -333,9 +333,29 @@ describe("document reading", () => {
     const doc = submitted.documents.find((d: { kind: string }) => d.kind === "parent_tax");
     const done = (await app.inject({ method: "POST", url: `/office/cases/${id}/review`, payload: { docId: doc.id, fields: { sum_of_income: "54000" } } })).json();
     expect(done.flow.waiting).toBe("human");
-    expect(done.assignedTeam).toBe("Team Ausland");
+    expect(done.assignedTo.name).toBeTruthy();
     expect(done.estimate.provisional).toBe(false);
     expect(done.documents.find((d: { kind: string }) => d.kind === "parent_tax").extraction.needsReview).toBe(false);
+  });
+
+  it("a question from review is prefilled from the unclear documents, sent by the caseworker, and the process waits", async () => {
+    const { app } = setup();
+    const { id, person } = await create(app, "paul");
+    for (const d of sampleDocuments(person, ["unclear_income"])) await upload(app, `/applications/${id}/documents`, d.filename, d.content);
+    const submitted = (await app.inject({ method: "POST", url: `/applications/${id}/submit` })).json();
+    expect(submitted.flow.waiting).toBe("review");
+    const draft = (await app.inject({ method: "GET", url: `/office/cases/${id}/question-draft` })).json();
+    expect(draft.items).toBeGreaterThan(0);
+    expect(draft.message).toContain("•");
+    const sent = (await app.inject({ method: "POST", url: `/office/cases/${id}/actions`, payload: { action: "request_info", message: draft.message } })).json();
+    expect(sent.status).toBe("info_requested");
+    expect(sent.flow.finished).toBe(true);
+    const steps = sent.flow.log.map((l: { kind: string }) => l.kind);
+    expect(steps).toContain("request_documents");
+    expect(steps).toContain("wait");
+    const mail = sent.outbox.find((m: { nodeId?: string }) => m.nodeId === "ask-q");
+    expect(mail.body).toContain(draft.message);
+    expect(mail.body).toContain("Kind regards");
   });
 
   it("the builder test run shows the review path", async () => {
@@ -603,5 +623,85 @@ describe("rule changes", () => {
     expect((await app.inject({ method: "PUT", url: "/office/rules/R-HEALTH/draft", payload: conds, headers: { "x-staff-token": "cw" } })).statusCode).toBe(403);
     const todo = (await app.inject({ method: "GET", url: "/office/todo" })).json();
     expect(todo.rulesToApprove).toBe(1); // the AI-drafted rule
+  });
+});
+
+describe("rule selection per process", () => {
+  it("only the ticked rules run, and each rule says where it is used", async () => {
+    const { app, store } = setup();
+    const before = (await app.inject({ method: "GET", url: "/office/rules" })).json();
+    expect(before.find((r: { id: string }) => r.id === "R-HEALTH").usedIn).toHaveLength(1);
+    // Untick one rule in the live process.
+    const p = store.process("bafoeg.abroad")!;
+    const live = p.live!;
+    const ids = (live.nodes.find((n) => n.kind === "run_rules")!.config.rules as string).split(",").filter((x) => x !== "R-HEALTH");
+    live.nodes = live.nodes.map((n) => (n.kind === "run_rules" ? { ...n, config: { ...n.config, rules: ids.join(",") } } : n));
+    const after = (await app.inject({ method: "GET", url: "/office/rules" })).json();
+    expect(after.find((r: { id: string }) => r.id === "R-HEALTH").usedIn).toHaveLength(0);
+    expect(after.find((r: { id: string }) => r.id === "R-FORM-SIGNED").usedIn).toHaveLength(1);
+  });
+
+  it("validation asks for at least one rule", async () => {
+    const { app, store } = setup();
+    const def = JSON.parse(JSON.stringify(store.process("bafoeg.abroad")!.live));
+    def.nodes = def.nodes.map((n: { kind: string; config: Record<string, unknown> }) => (n.kind === "run_rules" ? { ...n, config: { rules: "" } } : n));
+    const res = (await app.inject({ method: "POST", url: "/office/processes/validate", payload: { def } })).json();
+    expect(JSON.stringify(res)).toContain("no rule is ticked");
+  });
+});
+
+describe("case assignment by family name", () => {
+  it("a submitted case goes to the caseworker for the first letter of the family name", async () => {
+    const { app } = setup();
+    const { id, person } = await create(app, "paul");
+    for (const d of sampleDocuments(person, [])) await upload(app, `/applications/${id}/documents`, d.filename, d.content);
+    const submitted = (await app.inject({ method: "POST", url: `/applications/${id}/submit` })).json();
+    expect(submitted.assignedTo.via).toBe("range");
+    const letter = person.student.lastName.trim()[0]!.toUpperCase();
+    const table = (await app.inject({ method: "GET", url: "/office/assignment" })).json();
+    const range = table.assignment.ranges.find((r: { from: string; to: string }) => letter >= r.from && letter <= r.to);
+    expect(submitted.assignedTo.id).toBe(range.staffId);
+    expect(submitted.flow.log.some((l: { kind: string }) => l.kind === "assign_caseworker")).toBe(true);
+  });
+
+  it("only an administrator changes the table, and overlapping letters are refused", async () => {
+    const { app, store } = setup();
+    const table = (await app.inject({ method: "GET", url: "/office/assignment" })).json().assignment;
+    const overlap = { ...table, ranges: [{ from: "A", to: "M", staffId: "s-beispiel" }, { from: "K", to: "Z", staffId: "s-kaya" }] };
+    expect((await app.inject({ method: "PUT", url: "/office/assignment", payload: { assignment: overlap } })).statusCode).toBe(400);
+    const ok = { ...table, ranges: [{ from: "A", to: "M", staffId: "s-beispiel" }, { from: "N", to: "Z", staffId: "s-kaya" }] };
+    expect((await app.inject({ method: "PUT", url: "/office/assignment", payload: { assignment: ok } })).statusCode).toBe(200);
+    expect(store.assignment().ranges).toHaveLength(2);
+    store.login("s-kaya", "cw");
+    expect((await app.inject({ method: "PUT", url: "/office/assignment", payload: { assignment: ok }, headers: { "x-staff-token": "cw" } })).statusCode).toBe(403);
+  });
+
+  it("a caseworker can reassign a case to a colleague", async () => {
+    const { app, store } = setup();
+    const { id, person } = await create(app, "paul");
+    for (const d of sampleDocuments(person, [])) await upload(app, `/applications/${id}/documents`, d.filename, d.content);
+    await app.inject({ method: "POST", url: `/applications/${id}/submit` });
+    store.login("s-kaya", "cw");
+    const moved = (await app.inject({ method: "POST", url: `/office/cases/${id}/assign`, payload: { staffId: "s-vogel" }, headers: { "x-staff-token": "cw" } })).json();
+    expect(moved.assignedTo).toMatchObject({ id: "s-vogel", via: "manual" });
+    const bad = await app.inject({ method: "POST", url: `/office/cases/${id}/assign`, payload: { staffId: "s-lindner" }, headers: { "x-staff-token": "cw" } });
+    expect(bad.statusCode).toBe(400);
+  });
+});
+
+describe("adding people", () => {
+  it("an administrator adds a caseworker, who can then be picked in the table; someone in the table cannot lose the flag", async () => {
+    const { app, store } = setup();
+    const list = (await app.inject({ method: "POST", url: "/office/staff", payload: { name: "Frau Çelik", title: "Sachbearbeitung Ausland", isCaseworker: true } })).json();
+    const added = list.find((m: { name: string }) => m.name === "Frau Çelik");
+    expect(added.isCaseworker).toBe(true);
+    expect(added.id).toBe("s-frau-celik");
+    const table = (await app.inject({ method: "GET", url: "/office/assignment" })).json();
+    expect(table.caseworkers.some((m: { id: string }) => m.id === added.id)).toBe(true);
+    const next = { ...table.assignment, ranges: [{ from: "A", to: "Z", staffId: added.id }] };
+    expect((await app.inject({ method: "PUT", url: "/office/assignment", payload: { assignment: next } })).statusCode).toBe(200);
+    expect((await app.inject({ method: "PUT", url: `/office/staff/${added.id}`, payload: { isCaseworker: false } })).statusCode).toBe(409);
+    store.login("s-kaya", "cw");
+    expect((await app.inject({ method: "POST", url: "/office/staff", payload: { name: "X" }, headers: { "x-staff-token": "cw" } })).statusCode).toBe(403);
   });
 });

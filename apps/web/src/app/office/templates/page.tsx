@@ -45,20 +45,14 @@ const slug = (s: string) => s.toLowerCase().replace(/ä/g, "ae").replace(/ö/g, 
 const TYPES = ["text", "number", "date", "yesno"] as const;
 const EMPTY: ProposalBody = { name: "", formblatt: "", title: "", purpose: "", providedBy: "student", category: "official_form", fields: [], signatures: [] };
 
-/** A small picture of the form: header, title, a few fields and signature lines, drawn from the template itself. */
-function Paper({ tpl }: { tpl: LibraryTemplate }) {
-  const fields = tpl.fields.slice(0, 6);
+/** What the template actually contains: its real field names and signatures (no made-up form picture). */
+function Contents({ tpl }: { tpl: LibraryTemplate }) {
+  const shown = tpl.fields.slice(0, 5);
+  const more = tpl.fields.length - shown.length;
   return (
-    <span className="paper" aria-hidden>
-      <span className="paper-head"><b>{tpl.formblatt ?? ""}</b></span>
-      <i className="paper-title" style={{ width: `${52 + (tpl.title.length % 5) * 8}%` }} />
-      {fields.map((f, i) => (
-        <span className="paper-field" key={f.key}>
-          <i style={{ width: `${26 + ((i * 17 + f.label.length * 3) % 32)}%` }} />
-          <u />
-        </span>
-      ))}
-      {tpl.signatures.length > 0 && <span className="paper-sigs">{tpl.signatures.slice(0, 2).map((sg) => <span key={sg.key} />)}</span>}
+    <span className="contents">
+      <span className="contents-n"><b>{tpl.fields.length}</b> fields{tpl.signatures.length > 0 ? ` · ${tpl.signatures.length} signature${tpl.signatures.length > 1 ? "s" : ""}` : ""}</span>
+      <span className="contents-l">{shown.map((f) => <span key={f.key}>{f.label}</span>)}{more > 0 && <span className="more">+{more} more</span>}</span>
     </span>
   );
 }
@@ -155,18 +149,17 @@ export default function Templates() {
                   </div>
                   <span className="shelf-n">{t("t2.sectionCount", { n: items.length, r: ready })}</span>
                 </header>
-                <div className="docs-grid" role="listbox">
+                <div className="tl" role="listbox">
                   {items.map((x) => {
                     const P = PROVIDER_ICON[x.providedBy] ?? User;
                     return (
-                      <button key={x.id} type="button" role="option" className="doc" aria-selected={open === x.id} onClick={() => setOpen(x.id)}>
-                        <Paper tpl={x} />
-                        <span className="doc-name">{bi(x.name).replace(/\s*\(Formblatt \d+\)/, "")}</span>
-                        <span className="doc-sub"><P size={12} />{t(`tpl.by.${x.providedBy}` as MessageKey)}{x.formblatt ? ` · ${x.formblatt}` : ""}</span>
-                        <span className="doc-foot">
-                          <span className={`chip ${x.check ? "ok" : "warn"}`}>{x.check ? t("t2.status.ready") : t("t2.status.check")}</span>
-                          <span className="muted small">{x.usedIn.length === 0 ? t("t2.unused") : x.usedIn.length === 1 ? t("t2.usedIn1") : t("t2.usedIn", { n: x.usedIn.length })}</span>
-                        </span>
+                      <button key={x.id} type="button" role="option" className="tl-row" aria-selected={open === x.id} onClick={() => setOpen(x.id)}>
+                        <span className="tl-ico"><CIcon size={15} /></span>
+                        <span className="tl-name">{bi(x.name).replace(/\s*\(Formblatt \d+\)/, "")}</span>
+                        <span className="tl-meta"><P size={13} />{t(`tpl.by.${x.providedBy}` as MessageKey)}{x.formblatt ? ` · ${x.formblatt}` : ""}</span>
+                        <span className="tl-n">{x.fields.length} fields</span>
+                        <span className="tl-use">{x.usedIn.length === 0 ? t("t2.unused") : x.usedIn.length === 1 ? t("t2.usedIn1") : t("t2.usedIn", { n: x.usedIn.length })}</span>
+                        <span className={`chip ${x.check ? "ok" : "warn"}`}>{x.check ? t("t2.status.ready") : t("t2.status.check")}</span>
                       </button>
                     );
                   })}
@@ -272,12 +265,16 @@ function TemplateDrawer(props: {
               <p className="small muted" style={{ margin: 0 }}>{t("tpl.printedTitle")}: <em>{tpl.title}</em> · {t("t2.from")}: {t(`tpl.by.${tpl.providedBy}` as MessageKey)}</p>
               <div>
                 <h3>{t("t2.fields")} · {tpl.fields.length}</h3>
-                <table className="ftable">
-                  <tbody>
-                    {tpl.fields.map((f) => <tr key={f.key}><td>{f.label}</td><td>{t(`prop.type.${f.type}` as MessageKey)}{f.required ? ` · ${t("t2.required")}` : ""}</td></tr>)}
-                    {tpl.signatures.map((s) => <tr key={s.key}><td>{s.label}</td><td>✍</td></tr>)}
-                  </tbody>
-                </table>
+                <div className="formview">
+                  <div className="formview-title">{tpl.title}</div>
+                  {tpl.fields.map((f) => (
+                    <div className="fv-field" key={f.key}>
+                      <span className="fv-label">{f.label}{f.required && <b title={t("t2.required")}> *</b>}</span>
+                      <span className="fv-input">{t(`prop.type.${f.type}` as MessageKey)}</span>
+                    </div>
+                  ))}
+                  {tpl.signatures.map((sg) => <div className="fv-sig" key={sg.key}><span>{sg.label}</span></div>)}
+                </div>
               </div>
             </>
           )}

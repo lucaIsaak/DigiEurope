@@ -4,6 +4,11 @@ import {
   BUILTIN_TEMPLATES,
   DEFAULT_CATEGORY,
   defaultInputs,
+  upgradeQuestionPath,
+  upgradeAssignment,
+  defaultAssignment,
+  assignCaseworker,
+  type OfficeAssignment,
   defaultProcess,
   defaultRuleStates,
   type Application,
@@ -21,8 +26,10 @@ import {
 } from "@digieurope/shared";
 
 export const DEFAULT_STAFF: StaffMember[] = [
-  { id: "s-beispiel", name: "Frau Beispiel", title: "Sachbearbeitung Ausland", isAdmin: false, canBuild: false },
-  { id: "s-kaya", name: "Herr Kaya", title: "Sachbearbeitung Ausland", isAdmin: false, canBuild: false },
+  { id: "s-beispiel", name: "Frau Beispiel", title: "Sachbearbeitung Ausland", isAdmin: false, canBuild: false, isCaseworker: true },
+  { id: "s-kaya", name: "Herr Kaya", title: "Sachbearbeitung Ausland", isAdmin: false, canBuild: false, isCaseworker: true },
+  { id: "s-demir", name: "Frau Demir", title: "Sachbearbeitung Ausland", isAdmin: false, canBuild: false, isCaseworker: true },
+  { id: "s-vogel", name: "Herr Vogel", title: "Sachbearbeitung Ausland", isAdmin: false, canBuild: false, isCaseworker: true },
   { id: "s-lindner", name: "Frau Lindner", title: "Prozessverantwortliche", isAdmin: false, canBuild: true },
   { id: "s-obermeier", name: "Herr Obermeier", title: "Amtsleitung (Administrator)", isAdmin: true, canBuild: true },
   { id: "s-richter", name: "Frau Richter", title: "Verantwortliche für Extraktoren und Vorlagen", isAdmin: false, canBuild: false, canApproveTemplates: true },
@@ -128,6 +135,8 @@ interface Data {
   /** Templates accepted from proposals. The built-in ones live in code. */
   templates: DocumentTemplate[];
   proposals: TemplateProposal[];
+  /** Who gets which case, by the first letter of the family name. */
+  assignment?: OfficeAssignment;
 }
 
 const fresh = (): Data => ({
@@ -155,9 +164,18 @@ export class Store {
       const old = saved.processes as unknown as { live?: ProcessDef };
       const processes = old && "live" in old ? { [DEFAULT_CATEGORY]: old as unknown as ProcessStore } : saved.processes;
       for (const p of Object.values(processes)) for (const d of [p.live, p.draft, ...p.history]) if (d) { if (!d.catalogId) d.catalogId = DEFAULT_CATEGORY; if (!d.inputs) d.inputs = defaultInputs(); }
-      const staff = [...saved.staff, ...DEFAULT_STAFF.filter((d) => !saved.staff.some((m) => m.id === d.id))];
+      for (const p of Object.values(processes)) { if (p.live) p.live = upgradeAssignment(upgradeQuestionPath(p.live)); if (p.draft) p.draft = upgradeAssignment(upgradeQuestionPath(p.draft)); }
+      const staff = [...saved.staff.map((m) => (m.isCaseworker === undefined ? { ...m, isCaseworker: DEFAULT_STAFF.find((d) => d.id === m.id)?.isCaseworker } : m)), ...DEFAULT_STAFF.filter((d) => !saved.staff.some((m) => m.id === d.id))];
       const rules = saved.rules ?? initialRules(saved.ruleStates);
       this.data = { ...fresh(), ...saved, staff, processes, rules, config: { ...defaultConfig(), ...saved.config } };
+      // Cases that came in before the assignment existed get a caseworker by the same table.
+      const table = this.data.assignment ?? defaultAssignment();
+      this.data.applications = this.data.applications.map((a) => {
+        if (a.status === "draft" || a.assignedTo) return a;
+        const r = assignCaseworker(a.student.lastName, table);
+        const m = staff.find((x) => x.id === r.staffId);
+        return m ? { ...a, assignedTo: { id: m.id, name: m.name, via: r.via, at: a.submittedAt ?? a.updatedAt } } : a;
+      });
     }
   }
 
@@ -227,6 +245,9 @@ export class Store {
   }
 
   staff = (): StaffMember[] => this.data.staff;
+  addStaff = (m: StaffMember) => { this.data.staff = [...this.data.staff, m]; this.save(); };
+  assignment = (): OfficeAssignment => this.data.assignment ?? defaultAssignment();
+  setAssignment = (a: OfficeAssignment) => { this.data.assignment = a; this.save(); };
   setStaff(id: string, patch: Partial<StaffMember>) {
     this.data.staff = this.data.staff.map((m) => (m.id === id ? { ...m, ...patch } : m));
     this.save();

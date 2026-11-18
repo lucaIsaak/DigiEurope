@@ -1,4 +1,4 @@
-import "@fontsource-variable/newsreader";
+import "@fontsource-variable/plus-jakarta-sans";
 import { GeistSans } from "geist/font/sans";
 import type { ReactNode } from "react";
 import { Shell } from "@/components/Shell";

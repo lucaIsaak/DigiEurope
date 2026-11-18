@@ -73,6 +73,8 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { AssignmentTable } from "@/components/AssignmentTable";
+import { RulePicker } from "@/components/RulePicker";
 import { InputsEditor } from "@/components/InputsEditor";
 import { CATEGORIES, ICONS, NODE_W, edgeBase, layout, ARROW, nodeTypes, toRfNode, type StepNode } from "@/components/FlowKit";
 import { Spinner } from "@/components/ui";
@@ -525,7 +527,18 @@ function Builder() {
                 <p className="small muted" style={{ margin: 0 }}>{bi(NODE_CATALOG[sel.data.kind].description)}</p>
                 {NODE_CATALOG[sel.data.kind].ai && <p className="banner banner-info small" style={{ margin: 0 }}>{t("builder.aiNote")}</p>}
                 {sel.data.kind === "connector" && <p className="small muted" style={{ margin: 0 }}>{t("builder.connectorNote")}</p>}
-                {NODE_CATALOG[sel.data.kind].fields.map((f) => {
+                {sel.data.kind === "read_documents" && (
+                  <p className="small muted" style={{ margin: 0 }}>{t("builder.readPerType")}</p>
+                )}
+                {sel.data.kind === "read_documents" && sel.data.config.method !== undefined && sel.data.config.method !== "default" && (
+                  <div className="banner banner-warn small" style={{ display: "grid", gap: "0.5rem" }}>
+                    <span>{t("builder.readForced", { m: String(sel.data.config.method) })}</span>
+                    <button className="button button-ghost button-small" type="button" onClick={() => { checkpoint(); setNodes((ns) => ns.map((n) => (n.id === sel.id ? { ...n, data: { ...n.data, config: Object.fromEntries(Object.entries(n.data.config).filter(([k]) => k !== "method")) } } : n))); touch(); }}>{t("builder.readClear")}</button>
+                  </div>
+                )}
+                {sel.data.kind === "assign_caseworker" && <AssignmentTable embedded />}
+                {sel.data.kind === "run_rules" && <RulePicker value={sel.data.config.rules === undefined ? undefined : String(sel.data.config.rules)} onChange={(v) => { checkpoint(); setConfig("rules", v); }} />}
+                {NODE_CATALOG[sel.data.kind].fields.filter((f) => !(sel.data.kind === "run_rules" && f.key === "rules")).map((f) => {
                   let options = f.options;
                   if (sel.data.kind === "connector" && f.key === "action") options = CONNECTORS.find((c) => c.id === sel.data.config.system)?.actions.map((a) => ({ value: a.id, label: a.label }));
                   const val = sel.data.config[f.key] ?? f.default;

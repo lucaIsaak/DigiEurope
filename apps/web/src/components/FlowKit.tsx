@@ -21,6 +21,7 @@ export const ICONS: Record<NodeKind, LucideIcon> = {
   condition: GitBranch,
   human_task: UserCheck,
   assign_team: Users,
+  assign_caseworker: UserCheck,
   wait: Clock,
   ai_draft_mail: Sparkles,
   request_documents: FilePlus2,
@@ -38,9 +39,10 @@ export function summary(d: StepData, bi: (b: Bi) => string): string {
   const c = d.config;
   switch (d.kind) {
     case "condition": return `${c.field} ${c.op === "gte" ? "≥" : c.op === "lte" ? "≤" : c.op === "eq" ? "=" : "≠"} ${c.value}`;
-    case "read_documents": return `${c.scope === "all" ? "All documents" : c.scope === "parents" ? "Parents' documents" : "Student's documents"} · ${c.method === "default" ? "per type" : c.method}`;
+    case "read_documents": return `${c.scope === "all" ? "All documents" : c.scope === "parents" ? "Parents' documents" : "Student's documents"} · ${!c.method || c.method === "default" ? "per type" : c.method}`;
     case "review_fields": return String(c.instruction || "");
     case "assign_team": return String(c.team);
+    case "assign_caseworker": return "By family name";
     case "wait": return `${c.days} d`;
     case "ai_draft_mail": return c.tone === "formal" ? "Formal tone" : "Friendly tone";
     case "send_notification": return `${c.to}: ${c.subject}`;

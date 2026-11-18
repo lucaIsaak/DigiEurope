@@ -2,6 +2,7 @@
 
 import { Lock } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
+import { AssignmentTable } from "@/components/AssignmentTable";
 import { Spinner, useAsyncError } from "@/components/ui";
 import { api, type ExtractionSettings, type OfficeConfigResponse } from "@/lib/api";
 import { useI18n } from "@/lib/i18n";
@@ -65,6 +66,7 @@ export default function Settings() {
       <div className="set-row"><div>{t("office.inputs.languages")}</div><div>{cfg.config.languages.map((l) => l.toUpperCase()).join(" · ")}</div></div>
       <div className="set-row"><div>{t("office.inputs.fileTypes")}</div><div>PDF</div></div>
       <div className="set-row"><div>{t("office.inputs.workflow")}</div><div>{cfg.config.workflow.join(" → ")}</div></div>
+      <AssignmentTable />
       {!ex.aiKey && <p className="small muted" style={{ marginTop: "1rem" }}>{t("read.aiNote")}</p>}
       {error && <p className="error-text" role="alert">{error}</p>}
     </div>

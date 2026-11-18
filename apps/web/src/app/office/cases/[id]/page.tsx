@@ -1,7 +1,7 @@
 "use client";
 
 import type { CaseView, DocumentRef } from "@digieurope/shared";
-import { ArrowLeft, ArrowRight, CheckCircle2, Send, X, XCircle } from "lucide-react";
+import { ArrowLeft, ArrowRight, CheckCircle2, Send, UserCheck, X, XCircle } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { use, useCallback, useEffect, useMemo, useState } from "react";
@@ -10,6 +10,7 @@ import { EstimateCard, FindingList, FlowPanel, ReviewPanel, Timeline, useDocName
 import { Spinner, StatusDot, useAsyncError } from "@/components/ui";
 import { api, documentUrl, type CaseSummary } from "@/lib/api";
 import { useI18n } from "@/lib/i18n";
+import { useStaff } from "@/lib/staff";
 
 type Mode = "approve" | "request" | "reject" | null;
 
@@ -24,6 +25,11 @@ function OfficeCase({ id }: { id: string }) {
   const router = useRouter();
   const [c, setC] = useState<CaseView | null>(null);
   const [queue, setQueue] = useState<CaseSummary[]>([]);
+  const { staff } = useStaff();
+  const [caseworkers, setCaseworkers] = useState<{ id: string; name: string }[]>([]);
+  useEffect(() => {
+    api.assignment().then((a) => setCaseworkers(a.caseworkers)).catch(() => undefined);
+  }, []);
   const [docKey, setDocKey] = useState<string | null>(null);
   const [mode, setMode] = useState<Mode>(null);
   const [message, setMessage] = useState("");
@@ -78,7 +84,10 @@ function OfficeCase({ id }: { id: string }) {
     const r = await run(() => api.explanation(id, outcome, outcome === "approved" && typeof amount === "number" ? amount : 0, c.language));
     if (r) setMessage(r.text);
   };
-  const prefill = () => setMessage(blockers.map((f) => `• ${f.fix[c.language]}`).join("\n"));
+  const prefill = async () => {
+    const r = await run(() => api.questionDraft(id));
+    if (r) setMessage(r.message);
+  };
   const fieldLabel = (k: string) => (tk(`field.${k}`).startsWith("field.") ? k.replace(/_/g, " ") : tk(`field.${k}`));
   const statusText = decided ? t("cd.decided") : c.status === "info_requested" ? t("cd.waiting") : blockers.length ? t("cd.blocked", { n: blockers.length }) : t("cd.ready");
 
@@ -98,6 +107,15 @@ function OfficeCase({ id }: { id: string }) {
           <span>{c.stay.institution}</span>
           <span className="num">{date(c.stay.startDate)} – {date(c.stay.endDate)}</span>
           {c.assignedTeam && <span>{c.assignedTeam}</span>}
+          {c.assignedTo && <span className="cp-assigned"><UserCheck size={13} />{t("cd.assignedTo", { name: c.assignedTo.name })}{c.assignedTo.via === "substitute" ? ` · ${t("cd.via.substitute")}` : c.assignedTo.via === "manual" ? ` · ${t("cd.via.manual")}` : ""}</span>}
+          {caseworkers.length > 0 && !decided && (staff?.isAdmin || staff?.isCaseworker) && (
+            <label className="cp-reassign"><span className="sr-only">{t("cd.reassign")}</span>
+              <select value={c.assignedTo?.id ?? ""} onChange={async (e) => { const r = await run(() => api.assignCase(id, e.target.value)); if (r) setC(r); }}>
+                {!c.assignedTo && <option value="">{t("cd.unassigned")}</option>}
+                {caseworkers.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
+              </select>
+            </label>
+          )}
         </p>
       </header>
 
@@ -198,9 +216,10 @@ function OfficeCase({ id }: { id: string }) {
           )}
           {mode === "request" && (
             <div className="stack" style={{ gap: "0.7rem" }}>
-              <label className="field">{t("office.case.requestHint")}<textarea value={message} onChange={(e) => setMessage(e.target.value)} rows={6} /></label>
+              <label className="field">{t("office.case.requestHint")}<textarea value={message} onChange={(e) => setMessage(e.target.value)} rows={9} /></label>
+              <p className="small muted" style={{ margin: 0 }}>{t("office.case.requestNote")}</p>
               <div className="row">
-                <button className="button button-ghost button-small" type="button" onClick={prefill} disabled={blockers.length === 0}>{t("office.case.prefill")}</button>
+                <button className="button button-ghost button-small" type="button" onClick={() => void prefill()}>{t("office.case.prefill")}</button>
                 <button className="button" type="button" disabled={!message.trim()} onClick={() => void act("request_info")}><Send size={15} />{t("office.case.sendRequest")}</button>
               </div>
             </div>
@@ -222,7 +241,7 @@ function OfficeCase({ id }: { id: string }) {
         {!decided && c.status !== "draft" && (
           <>
             {c.status === "submitted" && <button className="button button-ghost button-small" type="button" onClick={async () => { const r = await run(() => api.openCase(id)); if (r) setC(r); }}>{t("office.case.open")}</button>}
-            <button className="button button-ghost button-small" type="button" onClick={() => { setMode(mode === "request" ? null : "request"); setError(null); if (blockers.length) prefill(); else setMessage(""); }}><Send size={14} />{t("office.case.request")}</button>
+            <button className="button button-ghost button-small" type="button" onClick={() => { setMode(mode === "request" ? null : "request"); setError(null); setMessage(""); if (mode !== "request") void prefill(); }}><Send size={14} />{t("office.case.request")}</button>
             <button className="button button-ghost button-small" type="button" disabled={awaitingReview} onClick={() => { setMode(mode === "reject" ? null : "reject"); setMessage(""); setError(null); }}><XCircle size={14} />{t("office.case.reject")}</button>
             <button className="button button-small" type="button" disabled={blockers.length > 0 || awaitingReview} onClick={() => { setMode(mode === "approve" ? null : "approve"); setMessage(""); setError(null); }}><CheckCircle2 size={14} />{t("cd.approveAmount", { amount: eur(typeof amount === "number" ? amount : c.estimate.monthly) })}</button>
           </>

@@ -19,7 +19,7 @@ export function stepSignature(n: Pick<FlowNode, "kind" | "config">): string {
   switch (n.kind) {
     case "connector": return `connector|${c.system}.${c.action}`;
     case "condition": return `condition|${c.field} ${c.op}`;
-    case "read_documents": return `read_documents|${c.scope}/${c.method}`;
+    case "read_documents": return `read_documents|${c.scope}/${c.method ?? "default"}`;
     case "trigger": return `trigger|${c.source}`;
     case "send_notification": return `send_notification|${c.to}`;
     case "ai_draft_mail": return "ai_draft_mail|";

@@ -13,7 +13,7 @@ import {
   type DocumentTemplate,
   type Rule,
 } from "@digieurope/shared";
-import { AlertTriangle, CheckCircle2, CircleDot, Clock, Lock, Pencil, Plus, Power, Search, ShieldCheck, Sparkles, User, XCircle } from "lucide-react";
+import { AlertTriangle, CheckCircle2, CircleDot, Clock, Lock, Pencil, Plus, Power, Search, ShieldCheck, Sparkles, User, Workflow, XCircle } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { ConditionBuilder } from "@/components/ConditionBuilder";
 import { TodoBar, refreshTodo, useTodo, type TodoItem } from "@/components/TodoBar";
@@ -23,7 +23,7 @@ import { useI18n } from "@/lib/i18n";
 import type { MessageKey } from "@/lib/messages";
 import { useStaff } from "@/lib/staff";
 
-type Filter = "attention" | "all";
+type Filter = "all" | "attention" | "federal" | "office" | "paused";
 const needsAttention = (r: RuleEntry) => r.status === "draft" || r.status === "changed";
 
 export default function Rules() {
@@ -53,14 +53,9 @@ export default function Rules() {
   const shown = useMemo(() => {
     const term = q.trim().toLowerCase();
     return (rules ?? [])
-      .filter((r) => filter === "all" || needsAttention(r))
       .filter((r) => !term || bi(r.title).toLowerCase().includes(term) || r.id.toLowerCase().includes(term))
       .sort((a, b) => Number(needsAttention(b)) - Number(needsAttention(a)));
-  }, [rules, filter, q, bi]);
-
-  useEffect(() => {
-    if (shown.length && (!sel || !shown.some((r) => r.id === sel))) setSel(shown[0]!.id);
-  }, [shown, sel]);
+  }, [rules, q, bi]);
 
   if (!rules) return <Spinner label={t("common.loading")} />;
   const cur = rules.find((r) => r.id === sel) ?? null;
@@ -94,14 +89,17 @@ export default function Rules() {
     refreshTodo();
   };
 
-  const attention = rules.filter(needsAttention).length;
-  const groups = ([
-    { key: "attention", label: "r.group.attention", tone: "warn", items: shown.filter(needsAttention) },
-    { key: "federal", label: "r.group.federal", tone: "fed", items: shown.filter((r) => !needsAttention(r) && r.status !== "paused" && r.scope === "federal") },
-    { key: "office", label: "r.group.office", tone: "off", items: shown.filter((r) => !needsAttention(r) && r.status !== "paused" && r.scope === "office") },
-    { key: "paused", label: "r.group.paused", tone: "mute", items: shown.filter((r) => r.status === "paused" && !needsAttention(r)) },
-  ] as { key: string; label: MessageKey; tone: string; items: RuleEntry[] }[]).filter((g) => g.items.length > 0);
+  const allGroups = ([
+    { key: "attention", label: "r.group.attention", items: shown.filter(needsAttention) },
+    { key: "federal", label: "r.group.federal", items: shown.filter((r) => !needsAttention(r) && r.status !== "paused" && r.scope === "federal") },
+    { key: "office", label: "r.group.office", items: shown.filter((r) => !needsAttention(r) && r.status !== "paused" && r.scope === "office") },
+    { key: "paused", label: "r.group.paused", items: shown.filter((r) => r.status === "paused" && !needsAttention(r)) },
+  ] as { key: Filter; label: MessageKey; items: RuleEntry[] }[]);
+  const groups = allGroups.filter((g) => (filter === "all" || g.key === filter) && g.items.length > 0);
+  const open = (id: string) => { setSel(id); setEditing(null); setCreating(false); setError(null); };
+  const close = () => { setSel(null); setEditing(null); setCreating(false); };
 
+  const attention = rules.filter(needsAttention).length;
   const startNew = () => {
     setError(null);
     setSel(null);
@@ -109,118 +107,138 @@ export default function Rules() {
     setEditing({ title: { de: "", en: "" }, plain: { de: "", en: "" }, fix: { de: "", en: "" }, severity: "blocker", when: [], pass: [], tests: [] });
   };
 
+  const card = (r: RuleEntry) => {
+    const rule = (r.draft ?? r.live)!.rule;
+    const sx = sentences(rule);
+    const when = sx.when?.[0] ?? null;
+    const pass = sx.pass ?? [];
+    return (
+      <button key={r.id} type="button" className="rcard" aria-current={r.id === sel} onClick={() => open(r.id)}>
+        <span className="rc-flow">
+          <span className="rc-step if"><b>{t("r.flow.if")}</b>{when ?? t("r.flow.always")}</span>
+          <span className="rc-step chk"><b>{t("r.flow.check")}</b>{pass[0] ?? "–"}{pass.length > 1 && <i>{t("r.flow.more", { n: pass.length - 1 })}</i>}</span>
+        </span>
+        <span className="rc-title">{bi(r.title)}</span>
+        <span className="rc-plain">{bi(rule.plain)}</span>
+        <span className="rc-foot">
+          <span className={`chip ${r.status === "live" ? "ok" : r.status === "paused" ? "mute" : "warn"}`}>{t(`r.status.${r.status}` as MessageKey)}</span>
+          <span className={`rc-sev ${rule.severity}`}>{t(rule.severity === "blocker" ? "r.sev.short.blocker" : "r.sev.short.warning")}</span>
+          {r.draft?.rule.draftedByAi && <Sparkles size={12} />}
+          <span className={`rc-used${r.usedIn.length === 0 ? " none" : ""}`}>{r.usedIn.length === 0 ? t("r.usedIn0") : r.usedIn.length === 1 ? t("r.usedIn1") : t("r.usedIn", { n: r.usedIn.length })}</span>
+          <span className="rc-v">v{rule.version}</span>
+        </span>
+      </button>
+    );
+  };
+
+  const drawerOpen = creating || !!cur;
   return (
     <div>
-      <div className="page-head">
-        <div>
-          <span className="eyebrow"><ShieldCheck size={14} />{t("side.configure")}</span>
+      <header className="hero">
+        <div className="hero-text">
           <h1>{t("r.title")}</h1>
           <p>{t("r.lead")}</p>
         </div>
-        {canBuild && <button type="button" className="button" onClick={startNew}><Plus size={16} />{t("r.new")}</button>}
-      </div>
+        <div className="hero-actions">
+          <dl className="hero-figs">
+            <div><dd className="num">{rules.length}</dd><dt>{t("r.fig.total")}</dt></div>
+            <div><dd className="num">{rules.filter((r) => r.status === "live").length}</dd><dt>{t("r.status.live")}</dt></div>
+            <div><dd className="num">{attention}</dd><dt>{t("r.group.attention")}</dt></div>
+          </dl>
+          {canBuild && <button type="button" className="button" onClick={startNew}><Plus size={16} />{t("r.new")}</button>}
+        </div>
+      </header>
       <TodoBar items={todoItems} />
 
-      <div className="rl">
-        <aside className="rl-list">
-          <div className="rl-tools">
-            <label className="wl-search" style={{ width: "100%" }}>
-              <Search size={15} />
-              <input value={q} onChange={(e) => setQ(e.target.value)} placeholder={t("r.search")} aria-label={t("r.search")} />
-            </label>
-            <label className="rl-only">
-              <input type="checkbox" checked={filter === "attention"} disabled={attention === 0} onChange={(e) => setFilter(e.target.checked ? "attention" : "all")} />
-              {t("r.onlyAttention")} <span className="n">{attention}</span>
-            </label>
-          </div>
-          <div className="rl-rows">
-            {groups.map((g) => (
-              <div key={g.key} className="rl-group">
-                <div className={`rl-group-head ${g.tone}`}><span>{t(g.label)}</span><span className="n">{g.items.length}</span></div>
-                {g.items.map((r) => {
-                  const rule = (r.draft ?? r.live)!.rule;
-                  return (
-                    <button key={r.id} type="button" className="rl-item" aria-current={!creating && r.id === sel} onClick={() => { setSel(r.id); setEditing(null); setCreating(false); }}>
-                      <span className={`sdot ${r.status}`} aria-hidden />
-                      <span className="rl-main">
-                        <strong>{bi(r.title)}</strong>
-                        <small>
-                          <span className="mono">{r.id}</span>
-                          <span className={`rl-sev ${rule.severity}`}>{t(rule.severity === "blocker" ? "r.sev.short.blocker" : "r.sev.short.warning")}</span>
-                          {needsAttention(r) && <span className="rl-state">{t(`r.status.${r.status}` as MessageKey)}</span>}
-                          {r.draft?.rule.draftedByAi && <Sparkles size={11} />}
-                        </small>
-                      </span>
-                    </button>
-                  );
-                })}
-              </div>
-            ))}
-            {groups.length === 0 && <p className="muted small" style={{ padding: "1rem" }}>{t("todo.none")}</p>}
-          </div>
-        </aside>
-
-        {creating && editing ? (
-          <Editor
-            entry={null}
-            body={editing}
-            facts={facts}
-            onChange={setEditing}
-            onCancel={() => { setEditing(null); setCreating(false); }}
-            onSave={async () => {
-              const res = await run(() => api.createRule({ title: editing.title, plain: editing.plain, fix: editing.fix, severity: editing.severity, when: editing.when, pass: editing.pass }));
-              if (res) {
-                setRules((rs) => [...rs!, res]);
-                refreshTodo();
-                setCreating(false);
-                setEditing(null);
-                setFilter("all");
-                setSel(res.id);
-              }
-            }}
-            error={error}
-          />
-        ) : !cur ? (
-          <div className="panel preview-empty">{t("r.select")}</div>
-        ) : editing ? (
-          <Editor
-            entry={cur}
-            body={editing}
-            facts={facts}
-            onChange={setEditing}
-            onCancel={() => setEditing(null)}
-            onSave={async () => {
-              const res = await run(() => api.saveRuleDraft(cur.id, editing));
-              if (res) {
-                await after(res);
-                setEditing(null);
-              }
-            }}
-            error={error}
-          />
-        ) : (
-          <Detail
-            entry={cur}
-            me={staff?.name ?? ""}
-            canBuild={canBuild}
-            sentences={sentences}
-            onEdit={() => startEdit(cur)}
-            onApprove={async () => after((await run(() => api.approveRule(cur.id))) as RuleEntry | undefined)}
-            onDiscard={async () => {
-              const res = await run(() => api.discardRule(cur.id));
-              if (res && "deleted" in res) {
-                setRules((rs) => rs!.filter((x) => x.id !== cur.id));
-                setSel(null);
-                refreshTodo();
-              } else await after(res as RuleEntry | undefined);
-            }}
-            onToggle={async () => after(await run(() => (cur.paused ? api.approveRule(cur.id) : api.revokeRule(cur.id))))}
-            error={error}
-            dateTime={dateTime}
-            date={date}
-          />
-        )}
+      <div className="rl-bar">
+        <div className="pillrow" role="tablist">
+          <button type="button" aria-pressed={filter === "all"} onClick={() => setFilter("all")}>{t("r.f.all")} <span>{shown.length}</span></button>
+          {allGroups.map((g) => g.items.length > 0 && (
+            <button key={g.key} type="button" aria-pressed={filter === g.key} onClick={() => setFilter(g.key)}>{t(g.label)} <span>{g.items.length}</span></button>
+          ))}
+        </div>
+        <label className="wl-search">
+          <Search size={15} />
+          <input value={q} onChange={(e) => setQ(e.target.value)} placeholder={t("r.search")} aria-label={t("r.search")} />
+        </label>
       </div>
+
+      {groups.map((g) => (
+        <section key={g.key} className="rgroup">
+          <h2>{t(g.label)} <span>{g.items.length}</span></h2>
+          <div className="rgrid">{g.items.map(card)}</div>
+        </section>
+      ))}
+      {groups.length === 0 && <p className="muted" style={{ padding: "2rem 0" }}>{t("todo.none")}</p>}
+
+      {drawerOpen && (
+        <>
+          <div className="drawer-bg" onClick={close} />
+          <aside className="drawer wide" role="dialog" aria-label={t("r.title")}>
+            <button type="button" className="drawer-x icon-button" aria-label={t("r.close")} onClick={close}><XCircle size={18} /></button>
+            <div className="drawer-scroll">
+              {creating && editing ? (
+                <Editor
+                  entry={null}
+                  body={editing}
+                  facts={facts}
+                  onChange={setEditing}
+                  onCancel={close}
+                  onSave={async () => {
+                    const res = await run(() => api.createRule({ title: editing.title, plain: editing.plain, fix: editing.fix, severity: editing.severity, when: editing.when, pass: editing.pass }));
+                    if (res) {
+                      setRules((rs) => [...rs!, res]);
+                      refreshTodo();
+                      setCreating(false);
+                      setEditing(null);
+                      setFilter("all");
+                      setSel(res.id);
+                    }
+                  }}
+                  error={error}
+                />
+              ) : cur && editing ? (
+                <Editor
+                  entry={cur}
+                  body={editing}
+                  facts={facts}
+                  onChange={setEditing}
+                  onCancel={() => setEditing(null)}
+                  onSave={async () => {
+                    const res = await run(() => api.saveRuleDraft(cur.id, editing));
+                    if (res) {
+                      await after(res);
+                      setEditing(null);
+                    }
+                  }}
+                  error={error}
+                />
+              ) : cur ? (
+                <Detail
+                  entry={cur}
+                  me={staff?.name ?? ""}
+                  canBuild={canBuild}
+                  sentences={sentences}
+                  onEdit={() => startEdit(cur)}
+                  onApprove={async () => after((await run(() => api.approveRule(cur.id))) as RuleEntry | undefined)}
+                  onDiscard={async () => {
+                    const res = await run(() => api.discardRule(cur.id));
+                    if (res && "deleted" in res) {
+                      setRules((rs) => rs!.filter((x) => x.id !== cur.id));
+                      setSel(null);
+                      refreshTodo();
+                    } else await after(res as RuleEntry | undefined);
+                  }}
+                  onToggle={async () => after(await run(() => (cur.paused ? api.approveRule(cur.id) : api.revokeRule(cur.id))))}
+                  error={error}
+                  dateTime={dateTime}
+                  date={date}
+                />
+              ) : null}
+            </div>
+          </aside>
+        </>
+      )}
     </div>
   );
 }
@@ -261,6 +279,7 @@ function Detail(props: {
           <h2>{bi(rule.title)}</h2>
           <div className="meta-line">
             <span>{r.id} · {t("r.version", { v: rule.version })}</span>
+            <span><Workflow size={13} />{r.usedIn.length === 0 ? t("r.usedIn0") : r.usedIn.map((u) => u.name).join(", ")}</span>
             <span><User size={13} />{t("r.writtenBy", { by: shown.author, date: props.date(shown.createdAt) })}</span>
             {r.live?.approvedBy && <span><CheckCircle2 size={13} />{t("r.approvedBy", { by: r.live.approvedBy, date: props.date(r.live.approvedAt) })}</span>}
             <SourceLink source={rule.source} />
@@ -305,33 +324,34 @@ function Detail(props: {
         </div>
       )}
 
-      <div>
-        <h3>{t("office.rules.plain")}</h3>
-        <p style={{ fontSize: "1.02rem", margin: 0 }}>{bi(rule.plain)}</p>
-      </div>
+      <p className="rd-lead">{bi(rule.plain)}</p>
 
-      <div>
-        <h3>{t("r.whatChecked")}</h3>
-        {s.when === null || s.pass === null ? (
-          <pre className="code">{rule.when ? `${describeCheck(rule.when)}\n` : ""}{describeCheck(rule.pass)}</pre>
-        ) : (
-          <>
-            <p className="small muted" style={{ margin: "0 0 0.35rem" }}>{s.when.length ? t("r.appliesWhen") : t("r.always")}</p>
-            {s.when.map((x, i) => <div className="sentence" key={`w${i}`}><CircleDot size={14} />{x}</div>)}
-            <p className="small muted" style={{ margin: "0.7rem 0 0.35rem" }}>{t("r.passesWhen")}</p>
-            {s.pass.map((x, i) => <div className="sentence" key={`p${i}`}><CheckCircle2 size={14} />{x}</div>)}
-          </>
-        )}
-        <details style={{ marginTop: "0.5rem" }}>
-          <summary className="small muted">{t("r.technical")}</summary>
-          <pre className="code">{rule.when ? `when: ${describeCheck(rule.when)}\n` : ""}pass: {describeCheck(rule.pass)}</pre>
-        </details>
-      </div>
-
-      <div>
-        <h3>{t("r.message")} <span className={`badge ${rule.severity === "blocker" ? "bad" : "warn"}`} style={{ marginLeft: 6 }}>{t(rule.severity === "blocker" ? "r.severity.blocker" : "r.severity.warning")}</span></h3>
-        <p className="small" style={{ margin: 0 }}>{bi(rule.fix)}</p>
-      </div>
+      {s.when === null || s.pass === null ? (
+        <pre className="code">{rule.when ? `${describeCheck(rule.when)}\n` : ""}{describeCheck(rule.pass)}</pre>
+      ) : (
+        <div className="flow">
+          <div className="fl-block if">
+            <span className="fl-tag">{t("r.flow.if")}</span>
+            {s.when.length === 0 ? <p>{t("r.always")}</p> : s.when.map((x, i) => <p key={i}><CircleDot size={14} />{x}</p>)}
+          </div>
+          <span className="fl-arrow" aria-hidden>↓</span>
+          <div className="fl-block chk">
+            <span className="fl-tag">{t("r.flow.check")}</span>
+            <small>{t("r.passesWhen")}</small>
+            {s.pass.map((x, i) => <p key={i}><CheckCircle2 size={14} />{x}</p>)}
+          </div>
+          <span className="fl-arrow" aria-hidden>↓</span>
+          <div className="fl-block oth">
+            <span className="fl-tag">{t("r.flow.otherwise")}</span>
+            <small>{t(rule.severity === "blocker" ? "r.severity.blocker" : "r.severity.warning")}</small>
+            <p>{bi(rule.fix)}</p>
+          </div>
+        </div>
+      )}
+      <details style={{ marginTop: "0.6rem" }}>
+        <summary className="small muted">{t("r.technical")}</summary>
+        <pre className="code">{rule.when ? `when: ${describeCheck(rule.when)}\n` : ""}pass: {describeCheck(rule.pass)}</pre>
+      </details>
 
       <div>
         <h3>{t("r.tests")} · {t("r.testsOk", { n: passed, m: tests.length })}</h3>

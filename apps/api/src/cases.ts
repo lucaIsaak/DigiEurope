@@ -3,6 +3,7 @@ import {
   estimate,
   explainEstimate,
   draftExplanation,
+  processRuleIds,
   runChecks,
   type AuditRecord,
   BUILTIN_TEMPLATES,
@@ -20,6 +21,7 @@ import {
   type StudentInfo,
 } from "@digieurope/shared";
 import { extractDocument, specOf } from "./documents.js";
+import { draftMail, questionText } from "./engine.js";
 import { readConfigured } from "./extraction.js";
 import type { Store } from "./store.js";
 
@@ -30,10 +32,46 @@ export const allTemplates = (store: Store): DocumentTemplate[] => [...BUILTIN_TE
 export const allSpecs = (store: Store) => allTemplates(store).map(specOf);
 
 /** Runs the approved rules and the inputs the office's live process requires. */
-export function checksFor(store: Store, app: Application, now: Date = new Date()) {
-  const inputs = store.process(DEFAULT_CATEGORY)?.live?.inputs;
-  return runChecks(app, store.ruleStates(), now, store.liveRules(), { inputs, templates: allTemplates(store) });
+export function checksFor(store: Store, app: Application, now: Date = new Date(), ruleIds?: string[] | null) {
+  const live = store.process(DEFAULT_CATEGORY)?.live;
+  const ids = ruleIds === undefined ? (live ? processRuleIds(live) : null) : ruleIds;
+  const rules = ids === null ? store.liveRules() : store.liveRules().filter((r) => ids.includes(r.id));
+  return runChecks(app, store.ruleStates(), now, rules, { inputs: live?.inputs, templates: allTemplates(store) });
 }
+
+/** Open points about documents themselves: unreadable ones and fields read with low confidence. In the student's language. */
+export function documentQuestions(store: Store, app: Application, minConfidence = 0.8): string[] {
+  const de = app.language === "de";
+  const specs = allSpecs(store);
+  const out: string[] = [];
+  for (const d of app.documents) {
+    const spec = specs.find((x) => x.kind === d.kind);
+    const title = spec?.title ?? d.filename;
+    if (!d.extraction.readable) {
+      out.push(de ? `„${title}“ ließ sich nicht lesen. Bitte laden Sie eine bessere Kopie hoch.` : `“${title}” could not be read. Please upload a clearer copy.`);
+    } else if (d.extraction.needsReview) {
+      const unsure = Object.entries(d.extraction.confidence ?? {})
+        .filter(([, c]) => c < minConfidence)
+        .map(([k]) => spec?.fields.find(([key]) => key === k)?.[1] ?? k.replace(/_/g, " "));
+      out.push(de ? `„${title}“: Bitte prüfen Sie diese Angaben${unsure.length ? ` (${unsure.join(", ")})` : ""} und laden Sie bei Bedarf eine lesbarere Kopie hoch.` : `“${title}”: please check these details${unsure.length ? ` (${unsure.join(", ")})` : ""} and upload a clearer copy if needed.`);
+    }
+  }
+  return out;
+}
+
+/** A prefilled question for the student: the open rule findings plus unclear documents. The caseworker edits and sends it. */
+export function questionDraft(store: Store, app: Application, now: Date = new Date()) {
+  const report = checksFor(store, app, now);
+  const extra = documentQuestions(store, app);
+  const mail = draftMail(app, report, "friendly", extra);
+  return { subject: mail.subject, message: questionText(app, report, extra), items: report.findings.filter((f) => f.severity === "blocker").length + extra.length };
+}
+
+/** The rule ids the live process applies; null means all live rules. */
+export const appliedRuleIds = (store: Store): string[] | null => {
+  const live = store.process(DEFAULT_CATEGORY)?.live;
+  return live ? processRuleIds(live) : null;
+};
 
 /** Reads a file with the method configured for its document type, knowing all accepted templates. */
 export const readFor = (store: Store, content: Buffer, mimeType: string, override?: ExtractionMethod) =>
@@ -183,8 +221,9 @@ export function buildAudit(store: Store, app: Application, now: Date = new Date(
   const report = checksFor(store, app, now);
   const failed = new Set(report.findings.map((f) => f.ruleId));
   const passed = new Set(report.passed.map((p) => p.ruleId));
+  const applied = appliedRuleIds(store);
   const rules = Object.values(store.rules())
-    .filter((r) => r.live && !r.paused)
+    .filter((r) => r.live && !r.paused && (applied === null || applied.includes(r.live.rule.id)))
     .map((r) => ({
       id: r.live!.rule.id,
       version: r.live!.rule.version,

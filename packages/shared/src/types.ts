@@ -99,7 +99,7 @@ export interface ParentInfo {
 
 export interface HistoryEntry {
   at: string;
-  kind: "created" | "submitted" | "opened" | "info_requested" | "approved" | "rejected" | "parent_invited" | "parent_uploaded" | "checked" | "note";
+  kind: "created" | "submitted" | "opened" | "info_requested" | "approved" | "rejected" | "parent_invited" | "parent_uploaded" | "checked" | "note" | "assigned";
   text?: string;
 }
 
@@ -174,6 +174,8 @@ export interface Application {
   /** Calls to connected systems made by the process. */
   integrations?: IntegrationEntry[];
   assignedTeam?: string;
+  /** The caseworker responsible for this case. */
+  assignedTo?: { id: string; name: string; via: "range" | "substitute" | "fallback" | "manual"; at: string };
   /** State of the process that handles this case. */
   flow?: FlowState;
   /** Answers to the custom questions of the process, by question id. */
@@ -336,6 +338,8 @@ export interface StaffMember {
   canBuild: boolean;
   /** Oversight (for example a federal body) sees and compares all offices, but works in no office. */
   isOversight?: boolean;
+  /** Takes cases: can be picked in the case assignment. */
+  isCaseworker?: boolean;
   /** May accept template proposals and decide how a template is extracted. */
   canApproveTemplates?: boolean;
 }

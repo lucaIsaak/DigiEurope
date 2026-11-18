@@ -254,7 +254,7 @@ export function Shell({ children }: { children: ReactNode }) {
     );
   }
   return (
-    <div className={office ? undefined : "student-site"}>
+    <div>
       <header className={`site-header${office ? " office-bar" : ""}`}>
         <div className={`container header-inner${office ? " wide" : ""}`}>
           <Link href={oversightArea ? "/oversight" : office ? "/office" : "/"} className="brand">

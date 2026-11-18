@@ -7,6 +7,7 @@ import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Spinner, StatusChip, StatusDot } from "@/components/ui";
 import { api, type CaseSummary, type Insights } from "@/lib/api";
+import { useStaff } from "@/lib/staff";
 import { useI18n } from "@/lib/i18n";
 import type { MessageKey } from "@/lib/messages";
 
@@ -20,7 +21,10 @@ export default function Inbox() {
   const [rows, setRows] = useState<CaseSummary[] | null>(null);
   const [ins, setIns] = useState<Insights | null>(null);
   const [sla, setSla] = useState(5);
+  const { staff } = useStaff();
   const [tab, setTab] = useState<Tab>("needs");
+  const [scopeChoice, setScopeChoice] = useState<"mine" | "all" | null>(null);
+  const scope = scopeChoice ?? (staff?.isCaseworker ? "mine" : "all");
   const [q, setQ] = useState("");
   const [selected, setSelected] = useState<string | null>(null);
   const [preview, setPreview] = useState<CaseView | null>(null);
@@ -61,23 +65,27 @@ export default function Inbox() {
     };
   }, [load]);
 
+  /** "My cases" are the ones assigned to me, plus cases nobody has yet. */
+  const scoped = useMemo(() => (rows ?? []).filter((r) => scope === "all" || !r.assignedTo || r.assignedTo.id === staff?.id), [rows, scope, staff?.id]);
+  const mineCount = useMemo(() => (rows ?? []).filter((r) => !r.assignedTo || r.assignedTo.id === staff?.id).length, [rows, staff?.id]);
+
   const counts = useMemo(() => {
     const c: Record<Tab, number> = { needs: 0, waiting: 0, decided: 0, all: 0 };
-    for (const r of rows ?? []) {
+    for (const r of scoped) {
       c[TAB_OF[r.status] ?? "all"] += 1;
       c.all += 1;
     }
     return c;
-  }, [rows]);
+  }, [scoped]);
 
   const shown = useMemo(() => {
     const term = q.trim().toLowerCase();
-    return (rows ?? [])
+    return scoped
       .filter((r) => tab === "all" || TAB_OF[r.status] === tab)
       .filter((r) => !term || r.name.toLowerCase().includes(term) || r.reference.toLowerCase().includes(term))
       // Oldest first in the work tabs, so nobody waits longest by accident.
       .sort((a, b) => (tab === "needs" || tab === "waiting" ? (a.submittedAt ?? "").localeCompare(b.submittedAt ?? "") : (b.submittedAt ?? "").localeCompare(a.submittedAt ?? "")));
-  }, [rows, tab, q]);
+  }, [scoped, tab, q]);
 
   // Keep a selection, and load the preview for it.
   useEffect(() => {
@@ -161,6 +169,10 @@ export default function Inbox() {
             </button>
           ))}
         </div>
+        <div className="q-tabs q-scope" role="group" aria-label={t("wl.scope")}>
+          <button type="button" aria-pressed={scope === "mine"} onClick={() => setScopeChoice("mine")}>{t("wl.scope.mine")} <span className="n">{mineCount}</span></button>
+          <button type="button" aria-pressed={scope === "all"} onClick={() => setScopeChoice("all")}>{t("wl.scope.all")} <span className="n">{(rows ?? []).length}</span></button>
+        </div>
         <label className="q-search">
           <Search size={14} />
           <input value={q} onChange={(e) => setQ(e.target.value)} placeholder={t("wl.search")} aria-label={t("wl.search")} />
@@ -195,7 +207,7 @@ export default function Inbox() {
                   <i className="av" aria-hidden>{initials(r)}</i>
                   <span>
                     <strong>{r.name.split(", ").reverse().join(" ")}{r.id === fresh && <em className="q-new">{t("wl.new")}</em>}</strong>
-                    <small className="num">{r.reference} · {r.source === "portal" ? t("wl.portal") : t("wl.direct")}</small>
+                    <small className="num">{r.reference} · {r.source === "portal" ? t("wl.portal") : t("wl.direct")}{r.assignedTo ? ` · ${r.assignedTo.name}` : ""}</small>
                   </span>
                 </span>
                 <span className="two"><strong>{country(r.country)}</strong><small>{tk(`stay.${r.stayType}`)}</small></span>

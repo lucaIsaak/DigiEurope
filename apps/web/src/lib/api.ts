@@ -1,4 +1,4 @@
-import type { Condition, Application, CaseView, DocumentTemplate, FieldType, TemplateField, TemplateProposal, CatalogNode, CatalogVariant, Harmony, OfficeSettings, ProcessDef, StaffMember, RunLogEntry, Mail, IntegrationEntry, ProcessIssue, DocumentKind, Extraction, LetterFields, Lang, Rule, RuleState, StayInfo, StudentInfo } from "@digieurope/shared";
+import type { Condition, Application, CaseView, DocumentTemplate, FieldType, TemplateField, TemplateProposal, CatalogNode, CatalogVariant, Harmony, OfficeAssignment, OfficeSettings, ProcessDef, StaffMember, RunLogEntry, Mail, IntegrationEntry, ProcessIssue, DocumentKind, Extraction, LetterFields, Lang, Rule, RuleState, StayInfo, StudentInfo } from "@digieurope/shared";
 
 export class ApiError extends Error {
   issues?: ProcessIssue[];
@@ -40,6 +40,13 @@ export function fileToBase64(file: Blob): Promise<string> {
 
 const filePayload = async (file: File) => ({ filename: file.name, mimeType: file.type || "application/pdf", dataBase64: await fileToBase64(file) });
 
+export interface AssignmentView {
+  assignment: OfficeAssignment;
+  caseworkers: { id: string; name: string; title: string }[];
+  staff: { id: string; name: string }[];
+  problems: { invalid: string[]; overlaps: string[]; gaps: string[] };
+}
+
 export interface CaseSummary {
   id: string;
   reference: string;
@@ -53,6 +60,7 @@ export interface CaseSummary {
   blockers: number;
   warnings: number;
   estimateMonthly: number;
+  assignedTo: { id: string; name: string } | null;
   team: string | null;
   waitingAt: string | null;
   /** Required documents that are in, and how many are required. */
@@ -109,6 +117,8 @@ export interface RuleEntry {
   live: RuleVersionView | null;
   draft: RuleVersionView | null;
   history: RuleVersionView[];
+  /** The processes whose "Run approved rules" step applies this rule. */
+  usedIn: { catalogId: string; name: string }[];
 }
 
 export interface RuleDraftBody {
@@ -262,6 +272,10 @@ export const api = {
   openCase: (id: string) => call<CaseView>(`/office/cases/${id}/open`, { method: "POST" }),
   act: (id: string, action: "request_info" | "approve" | "reject", body: { message?: string; amount?: number }) =>
     call<CaseView>(`/office/cases/${id}/actions`, { method: "POST", json: { action, ...body } }),
+  questionDraft: (id: string) => call<{ subject: string; message: string; items: number }>(`/office/cases/${id}/question-draft`),
+  assignment: () => call<AssignmentView>("/office/assignment"),
+  saveAssignment: (assignment: OfficeAssignment) => call<{ assignment: OfficeAssignment }>("/office/assignment", { method: "PUT", json: { assignment } }),
+  assignCase: (id: string, staffId: string) => call<CaseView>(`/office/cases/${id}/assign`, { method: "POST", json: { staffId } }),
   explanation: (id: string, outcome: "approved" | "rejected", amount: number, lang?: Lang) =>
     call<{ text: string }>(`/office/cases/${id}/explanation?outcome=${outcome}&amount=${amount}${lang ? `&lang=${lang}` : ""}`),
   auditRecord: async (id: string) => {
@@ -291,7 +305,8 @@ export const api = {
   staffMe: () => call<StaffMember | null>("/staff/me"),
   staffLogout: () => call<{ ok: true }>("/staff/logout", { method: "POST" }),
   staffList: () => call<StaffMember[]>("/office/staff"),
-  setAccess: (id: string, access: { canBuild?: boolean; canApproveTemplates?: boolean }) => call<StaffMember[]>(`/office/staff/${id}`, { method: "PUT", json: access }),
+  addStaff: (body: { name: string; title?: string; isCaseworker?: boolean; canBuild?: boolean; canApproveTemplates?: boolean }) => call<StaffMember[]>("/office/staff", { method: "POST", json: body }),
+  setAccess: (id: string, access: { canBuild?: boolean; canApproveTemplates?: boolean; isCaseworker?: boolean }) => call<StaffMember[]>(`/office/staff/${id}`, { method: "PUT", json: access }),
   setInfo: (id: string, key: string, value: string) => call<CaseView>(`/applications/${id}/info`, { method: "PUT", json: { key, value } }),
   templates: () => call<TemplateLibrary>("/office/templates"),
   suggestTemplate: async (file: File) => call<TemplateSuggestion>("/office/templates/proposals/suggest", { method: "POST", json: await filePayload(file) }),

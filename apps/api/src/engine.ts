@@ -4,6 +4,7 @@ import {
   buildFacts,
   estimate,
   evaluate,
+  ruleSelection,
   type Application,
   type Check,
   type CheckReport,
@@ -20,7 +21,9 @@ import {
 export interface EngineCtx {
   now: Date;
   /** Runs the approved rules and the required inputs of the office. */
-  check: (app: Application) => CheckReport;
+  check: (app: Application, ruleIds?: string[] | null) => CheckReport;
+  /** Who handles the case, by the office's table of family-name letters. */
+  assign?: (app: Application) => { id: string; name: string; via: "range" | "substitute" | "fallback"; letter: string; covering?: string } | null;
   /** Reads a stored document again with the configured (or overridden) method. */
   reread?: (doc: DocumentRef, override?: ExtractionMethod) => Promise<{ kind: DocumentKind; extraction: Extraction } | null>;
 }
@@ -34,22 +37,35 @@ const fill = (text: string, app: Application) =>
     .replace(/\{reference\}/g, app.reference)
     .replace(/\{amount\}/g, app.decision ? `${app.decision.monthlyAmount} €` : `${estimate(app).monthly} €`);
 
-/** The "AI" mail draft, simulated: a clear message built from the open items, in the student's language. */
-export function draftMail(app: Application, report: CheckReport, tone: string): { subject: string; body: string } {
+/** Greeting, the middle part and the sign-off around a message to the student. */
+export function frameMail(app: Application, middle: string, tone = "friendly"): string {
   const de = app.language === "de";
-  const items = report.findings.filter((f) => f.severity === "blocker").map((f) => `• ${f.fix[app.language]}`).join("\n");
   const first = app.student.firstName;
   const formal = tone === "formal";
   const greeting = de ? (formal ? `Sehr geehrte:r ${first} ${app.student.lastName},` : `Hallo ${first},`) : formal ? `Dear ${first} ${app.student.lastName},` : `Hi ${first},`;
+  return `${greeting}\n\n${middle}\n\n${de ? "Freundliche Grüße" : "Kind regards"}\nStudierendenwerk Musterstadt`;
+}
+
+/** The middle part of a question to the student: what is missing and what to do. `extra` are further open items, for example unclear documents. */
+export function questionText(app: Application, report: CheckReport, extra: string[] = []): string {
+  const de = app.language === "de";
+  const items = [...report.findings.filter((f) => f.severity === "blocker").map((f) => f.fix[app.language]), ...extra].map((x) => `• ${x}`).join("\n");
   const intro = de
     ? `vielen Dank für Ihren Antrag ${app.reference}. Bevor wir ihn bearbeiten können, brauchen wir noch Folgendes:`
     : `thank you for your application ${app.reference}. Before we can process it we still need the following:`;
   const outro = de
     ? "Laden Sie die Unterlagen einfach in Ihrem Antrag hoch. Sobald alles vollständig ist, geht Ihr Antrag direkt in die Prüfung."
     : "Simply upload the documents in your application. As soon as everything is complete, your application goes straight to review.";
+  return `${intro}\n\n${items}\n\n${outro}`;
+}
+
+/** The "AI" mail draft, simulated: a clear message built from the open items, in the student's language. */
+export function draftMail(app: Application, report: CheckReport, tone: string, extra: string[] = []): { subject: string; body: string } {
+  const de = app.language === "de";
+  const count = report.blockers + extra.length;
   return {
-    subject: de ? `Ihr Antrag ${app.reference}: Das fehlt noch (${report.blockers})` : `Your application ${app.reference}: what is still missing (${report.blockers})`,
-    body: `${greeting}\n\n${intro}\n\n${items}\n\n${outro}\n\n${de ? "Freundliche Grüße" : "Kind regards"}\nStudierendenwerk Musterstadt`,
+    subject: de ? `Ihr Antrag ${app.reference}: Das fehlt noch (${count})` : `Your application ${app.reference}: what is still missing (${count})`,
+    body: frameMail(app, questionText(app, report, extra), tone),
   };
 }
 
@@ -103,13 +119,14 @@ async function execute(def: ProcessDef, start: string, input: Application, ctx: 
         break;
       }
       case "run_rules": {
-        report = ctx.check(app);
+        report = ctx.check(app, ruleSelection(node));
         handle = report.ready ? "complete" : "incomplete";
         entry(report.ready ? "All approved rules pass" : `${report.blockers} blocking item(s): ${report.findings.filter((f) => f.severity === "blocker").map((f) => f.ruleId).join(", ")}`, handle);
         break;
       }
       case "read_documents": {
         const scope = String(node.config.scope);
+        // Older steps may still force one method; new steps leave it to the setting of each document type.
         const override = node.config.method && node.config.method !== "default" ? (node.config.method as ExtractionMethod) : undefined;
         const inScope = (d: DocumentRef) => scope === "all" || (scope === "parents" ? d.kind.startsWith("parent") : !d.kind.startsWith("parent"));
         const docs = [...app.documents];
@@ -143,6 +160,20 @@ async function execute(def: ProcessDef, start: string, input: Application, ctx: 
         entry(`${node.config.field} ${node.config.op} ${node.config.value}: ${handle}`, handle);
         break;
       }
+      case "assign_caseworker": {
+        const who = ctx.assign?.(app);
+        if (!who) {
+          entry("No caseworker table is set up");
+          break;
+        }
+        app = {
+          ...app,
+          assignedTo: { id: who.id, name: who.name, via: who.via, at: at() },
+          history: [...app.history, { at: at(), kind: "assigned", text: `${who.name}` }],
+        };
+        entry(`Assigned to ${who.name} (${who.via === "range" ? `family name under ${who.letter}` : who.via === "substitute" ? `covering for an absent colleague, family name under ${who.letter}` : who.letter ? `no one available for ${who.letter}` : "no letter in the family name"})`);
+        break;
+      }
       case "assign_team":
         app = { ...app, assignedTeam: String(node.config.team) };
         entry(`Assigned to ${node.config.team}`);
@@ -156,6 +187,12 @@ async function execute(def: ProcessDef, start: string, input: Application, ctx: 
         entry("Mail drafted by AI (simulated)");
         break;
       case "request_documents": {
+        if (String(node.config.sending ?? "auto") === "caseworker" && app.officeMessage?.trim()) {
+          const de = app.language === "de";
+          send({ to: "student", subject: de ? `Rückfrage zu Ihrem Antrag ${app.reference}` : `Question about your application ${app.reference}`, body: frameMail(app, app.officeMessage.trim()), aiDraft: false, nodeId: node.id });
+          entry("Question sent, written by the caseworker");
+          break;
+        }
         const body = mailDraft?.body ?? fill(String(node.config.fallback), app);
         const subject = mailDraft?.subject ?? `Ihr Antrag ${app.reference}`;
         send({ to: "student", subject, body, aiDraft: Boolean(mailDraft), nodeId: node.id });

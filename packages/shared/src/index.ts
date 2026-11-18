@@ -14,3 +14,4 @@ export * from "./compare.js";
 export * from "./templates.js";
 export * from "./requirements.js";
 export * from "./conditions.js";
+export * from "./assignment.js";

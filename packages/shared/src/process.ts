@@ -1,4 +1,5 @@
 import { isCatalogVariant } from "./catalog.js";
+import { RULES } from "./rules.js";
 import type { Bilingual, FieldType } from "./types.js";
 
 export type NodeKind =
@@ -9,6 +10,7 @@ export type NodeKind =
   | "condition"
   | "human_task"
   | "assign_team"
+  | "assign_caseworker"
   | "wait"
   | "ai_draft_mail"
   | "request_documents"
@@ -138,6 +140,27 @@ export const CONNECTORS = [
   },
 ] as const;
 
+
+/** The rules a "Run approved rules" step applies. null means the step predates the selection and runs all live rules. */
+export function ruleSelection(node: Pick<FlowNode, "kind" | "config">): string[] | null {
+  if (node.kind !== "run_rules") return [];
+  const v = node.config.rules;
+  if (v === undefined) return null;
+  return String(v).split(",").map((x) => x.trim()).filter(Boolean);
+}
+
+/** The rules a whole process applies: the union over its "Run approved rules" steps. null means all live rules. */
+export function processRuleIds(def: Pick<ProcessDef, "nodes">): string[] | null {
+  const out = new Set<string>();
+  for (const n of def.nodes) {
+    if (n.kind !== "run_rules") continue;
+    const sel = ruleSelection(n);
+    if (sel === null) return null;
+    sel.forEach((id) => out.add(id));
+  }
+  return [...out];
+}
+
 export const NODE_CATALOG: Record<NodeKind, NodeSpec> = {
   trigger: {
     kind: "trigger", category: "start",
@@ -149,27 +172,18 @@ export const NODE_CATALOG: Record<NodeKind, NodeSpec> = {
   run_rules: {
     kind: "run_rules", category: "check",
     title: { de: "Freigegebene Regeln prüfen", en: "Run approved rules" },
-    description: { de: "Prüft den Antrag gegen alle freigegebenen Regeln. Feste Prüfung, keine KI.", en: "Checks the application against all approved rules. Fixed check, no AI." },
+    description: { de: "Prüft den Antrag gegen die hier ausgewählten, freigegebenen Regeln. Feste Prüfung, keine KI.", en: "Checks the application against the approved rules ticked here. Fixed check, no AI." },
     outputs: [{ id: "complete", label: { de: "vollständig", en: "complete" } }, { id: "incomplete", label: { de: "unvollständig", en: "incomplete" } }],
-    fields: [],
+    /** Comma-separated rule ids. Empty means no rule runs. A block saved before this existed has no value and runs all live rules. */
+    fields: [{ key: "rules", label: { de: "Regeln", en: "Rules" }, type: "text", default: "" }],
   },
   read_documents: {
     kind: "read_documents", category: "check", ai: true,
     title: { de: "Dokumente lesen", en: "Read documents" },
-    description: { de: "Liest Dokumente in Felder, mit der gewählten Methode. Bei unsicheren Feldern geht es zur Prüfung durch eine Person.", en: "Reads documents into fields with the chosen method. Doubtful fields go to a person for review." },
+    description: { de: "Liest Dokumente in Felder, mit der Methode, die bei jedem Dokumenttyp unter „Vorlagen“ eingestellt ist. Bei unsicheren Feldern geht es zur Prüfung durch eine Person.", en: "Reads documents into fields with the method set for each document type under Templates. Doubtful fields go to a person for review." },
     outputs: [{ id: "clear", label: { de: "klar", en: "clear" } }, { id: "review", label: { de: "prüfen", en: "review" } }],
     fields: [
       { key: "scope", label: { de: "Welche Dokumente", en: "Which documents" }, type: "select", default: "all", options: [opt("all", "Alle", "All"), opt("student", "Nur der Studierenden", "Student's only"), opt("parents", "Nur der Eltern", "Parents' only")] },
-      {
-        key: "method", label: { de: "Methode", en: "Method" }, type: "select", default: "default",
-        options: [
-          opt("default", "Einstellung je Dokumenttyp", "Setting per document type"),
-          opt("builtin", "Eingebauter Vorlagenleser", "Built-in template reader"),
-          opt("ai", "KI-Dokumentenlesen", "AI document reading"),
-          opt("ocr_rules", "OCR mit Regeln (Platzhalter)", "OCR with rules (placeholder)"),
-          opt("external", "Externer Dienst (Platzhalter)", "External service (placeholder)"),
-        ],
-      },
     ],
   },
   review_fields: {
@@ -204,6 +218,13 @@ export const NODE_CATALOG: Record<NodeKind, NodeSpec> = {
     outputs: OUT,
     fields: [{ key: "team", label: { de: "Team", en: "Team" }, type: "select", default: TEAMS[0]!, options: TEAMS.map((t) => opt(t, t)) }],
   },
+  assign_caseworker: {
+    kind: "assign_caseworker", category: "route",
+    title: { de: "Sachbearbeitung zuweisen", en: "Assign caseworker" },
+    description: { de: "Weist den Antrag der zuständigen Person zu, nach dem Anfangsbuchstaben des Nachnamens. Die Tabelle steht in den Einstellungen des Amts.", en: "Gives the case to the responsible person by the first letter of the family name. The table is in the office settings." },
+    outputs: OUT,
+    fields: [],
+  },
   wait: {
     kind: "wait", category: "route",
     title: { de: "Frist / Erinnerung", en: "Deadline / reminder" },
@@ -221,9 +242,12 @@ export const NODE_CATALOG: Record<NodeKind, NodeSpec> = {
   request_documents: {
     kind: "request_documents", category: "message",
     title: { de: "Unterlagen nachfordern", en: "Request documents" },
-    description: { de: "Setzt den Antrag auf „Rückfrage“ und schickt die Nachricht. Nimmt den KI-Entwurf, falls vorhanden.", en: "Sets the case to “question” and sends the message. Uses the AI draft if there is one." },
+    description: { de: "Setzt den Antrag auf „Rückfrage“ und schickt die Nachricht. Automatisch mit dem KI-Entwurf, oder von der Sachbearbeitung geschrieben (der Entwurf ist vorbefüllt).", en: "Sets the case to “question” and sends the message. Either automatically with the AI draft, or written by the caseworker (the draft is prefilled)." },
     outputs: OUT,
-    fields: [{ key: "fallback", label: { de: "Text, falls kein KI-Entwurf", en: "Text if there is no AI draft" }, type: "textarea", default: "Bitte laden Sie die fehlenden Unterlagen hoch." }],
+    fields: [
+      { key: "sending", label: { de: "Wer schreibt die Nachricht", en: "Who writes the message" }, type: "select", default: "auto", options: [opt("auto", "Automatisch (KI-Entwurf)", "Automatically (AI draft)"), opt("caseworker", "Sachbearbeitung prüft und sendet", "Caseworker checks and sends")] },
+      { key: "fallback", label: { de: "Text, falls kein KI-Entwurf", en: "Text if there is no AI draft" }, type: "textarea", default: "Bitte laden Sie die fehlenden Unterlagen hoch." },
+    ],
   },
   send_notification: {
     kind: "send_notification", category: "message",
@@ -286,6 +310,7 @@ export function validateProcess(def: Pick<ProcessDef, "nodes" | "edges"> & { cat
       }
     }
     if (n.kind === "condition" && String(n.config.value ?? "").trim() === "") issues.push({ nodeId: n.id, message: { de: "„Bedingung“: Vergleichswert fehlt.", en: "“Condition”: compare-to value is missing." } });
+    if (n.kind === "run_rules" && ruleSelection(n)?.length === 0) issues.push({ nodeId: n.id, message: { de: "„Freigegebene Regeln prüfen“: Es ist keine Regel ausgewählt.", en: "“Run approved rules”: no rule is ticked." } });
     if (n.kind === "send_notification" && !String(n.config.body ?? "").trim()) issues.push({ nodeId: n.id, message: { de: "„Nachricht senden“: Text fehlt.", en: "“Send message”: text is missing." } });
   }
   for (const e of def.edges) if (!byId.has(e.source) || !byId.has(e.target)) issues.push({ message: { de: "Eine Verbindung zeigt auf einen gelöschten Schritt.", en: "A connection points to a deleted step." } });
@@ -332,6 +357,46 @@ export function defaultInputs(): ProcessInput[] {
 let seq = 0;
 const nid = (p: string) => `${p}-${++seq}`;
 
+/** Older copies of the standard process ended right after "question" in the review. Adds the caseworker's question and the wait. */
+export function upgradeQuestionPath(def: ProcessDef): ProcessDef {
+  const edge = def.edges.find((e) => e.source === "review" && e.sourceHandle === "info");
+  const review = def.nodes.find((n) => n.id === "review" && n.kind === "review_fields");
+  const target = edge && def.nodes.find((n) => n.id === edge.target);
+  if (!edge || !review || target?.kind !== "end" || def.nodes.some((n) => n.id === "ask-q")) return def;
+  const at = target.position;
+  const nodes = [
+    ...def.nodes,
+    { id: "ask-q", kind: "request_documents" as const, position: { x: at.x, y: at.y - 130 }, config: defaultConfig("request_documents", { sending: "caseworker" }) },
+    { id: "wait-q", kind: "wait" as const, position: { x: at.x, y: at.y - 60 }, config: defaultConfig("wait") },
+  ];
+  const edges = [
+    ...def.edges.map((e) => (e.id === edge.id ? { ...e, target: "ask-q" } : e)),
+    { id: "ask-q:out", source: "ask-q", sourceHandle: "out", target: "wait-q" },
+    { id: "wait-q:out", source: "wait-q", sourceHandle: "out", target: target.id },
+  ];
+  return { ...def, nodes, edges };
+}
+
+/** Older copies of the standard process gave every case to "Team Ausland". Now the office's letter table decides, as the first step. */
+export function upgradeAssignment(def: ProcessDef): ProcessDef {
+  if (def.nodes.some((n) => n.kind === "assign_caseworker")) return def;
+  const startEdge = def.edges.find((e) => e.source === "start" && e.sourceHandle === "out");
+  const team = def.nodes.find((n) => n.id === "team" && n.kind === "assign_team" && n.config.team === "Team Ausland");
+  if (!startEdge || !team) return def;
+  const into = def.edges.filter((e) => e.target === "team");
+  const out = def.edges.find((e) => e.source === "team" && e.sourceHandle === "out");
+  if (!out || into.length === 0) return def;
+  const edges = def.edges
+    .filter((e) => e.source !== "team" && e.target !== "team" && e.id !== startEdge.id)
+    .concat(
+      { id: "start:out", source: "start", sourceHandle: "out", target: "assign" },
+      { id: "assign:out", source: "assign", sourceHandle: "out", target: startEdge.target },
+      ...into.map((e) => ({ ...e, target: out.target })),
+    );
+  const nodes = def.nodes.filter((n) => n.id !== "team").concat({ id: "assign", kind: "assign_caseworker", position: { x: 330, y: 55 }, config: defaultConfig("assign_caseworker") });
+  return { ...def, nodes, edges };
+}
+
 /** The standard process an office starts with. It reproduces the fixed workflow of the first version. */
 export function defaultProcess(now = "2026-09-01T09:00:00.000Z"): ProcessDef {
   const n = (id: string, kind: NodeKind, x: number, y: number, config: Record<string, ConfigValue> = {}): FlowNode => ({ id, kind, position: { x, y }, config: defaultConfig(kind, config) });
@@ -339,16 +404,18 @@ export function defaultProcess(now = "2026-09-01T09:00:00.000Z"): ProcessDef {
   void nid;
   const nodes: FlowNode[] = [
     n("start", "trigger", 330, 0),
+    n("assign", "assign_caseworker", 330, 55),
     n("read", "read_documents", 330, 110),
     n("review", "review_fields", 20, 230),
-    n("end-review", "end", 20, 380),
-    n("rules", "run_rules", 330, 260),
+    n("ask-q", "request_documents", -200, 330, { sending: "caseworker" }),
+    n("wait-q", "wait", -200, 450),
+    n("end-review", "end", -200, 570),
+    n("rules", "run_rules", 330, 260, { rules: RULES.map((r) => r.id).join(",") }),
     // incomplete branch
     n("draft", "ai_draft_mail", 20, 270),
     n("ask", "request_documents", 20, 400),
     n("end-incomplete", "end", 20, 540),
     // complete branch
-    n("team", "assign_team", 480, 270),
     n("human", "human_task", 480, 390, { instruction: "Inhaltlich prüfen und entscheiden." }),
     n("end-info", "end", 300, 560),
     n("notify-no", "send_notification", 560, 560, { to: "student", subject: "Entscheidung zu Ihrem Antrag {reference}", body: "Guten Tag {name}, Ihr Antrag wurde abgelehnt. Die Begründung steht im Bescheid." }),
@@ -358,9 +425,9 @@ export function defaultProcess(now = "2026-09-01T09:00:00.000Z"): ProcessDef {
     n("end-ok", "end", 820, 750),
   ];
   const edges: FlowEdge[] = [
-    e("start", "out", "read"), e("read", "clear", "rules"), e("read", "review", "review"), e("review", "confirmed", "rules"), e("review", "info", "end-review"),
+    e("start", "out", "assign"), e("assign", "out", "read"), e("read", "clear", "rules"), e("read", "review", "review"), e("review", "confirmed", "rules"), e("review", "info", "ask-q"), e("ask-q", "out", "wait-q"), e("wait-q", "out", "end-review"),
     e("rules", "incomplete", "draft"), e("draft", "out", "ask"), e("ask", "out", "end-incomplete"),
-    e("rules", "complete", "team"), e("team", "out", "human"),
+    e("rules", "complete", "human"),
     e("human", "approved", "case"), e("case", "out", "notify-ok"), e("notify-ok", "out", "end-ok"),
     e("human", "rejected", "notify-no"), e("notify-no", "out", "end-no"),
     e("human", "info", "end-info"),
