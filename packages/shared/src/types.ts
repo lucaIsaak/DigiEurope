@@ -218,6 +218,8 @@ export interface FlowState {
   /** Node a person has to act on. */
   waiting?: string;
   finished: boolean;
+  /** What earlier steps produced, by name, so later steps in the same branch can use it in their texts. */
+  vars?: Record<string, string>;
 }
 
 // ---- Rules -------------------------------------------------------------

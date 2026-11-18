@@ -74,6 +74,7 @@ import {
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AssignmentTable } from "@/components/AssignmentTable";
+import { InsertChips, ProvidesList } from "@/components/StepOutputs";
 import { RulePicker } from "@/components/RulePicker";
 import { InputsEditor } from "@/components/InputsEditor";
 import { CATEGORIES, ICONS, NODE_W, edgeBase, layout, ARROW, nodeTypes, toRfNode, type StepNode } from "@/components/FlowKit";
@@ -280,6 +281,26 @@ function Builder() {
   };
 
   const sel = useMemo(() => nodes.find((n) => n.id === selected) ?? null, [nodes, selected]);
+  /** The text field the person was typing in last, so a placeholder can be inserted at the cursor. */
+  const lastField = useRef<{ key: string; el: HTMLInputElement | HTMLTextAreaElement } | null>(null);
+  const insertToken = (token: string) => {
+    if (!sel) return;
+    const keys = NODE_CATALOG[sel.data.kind].fields.filter((f) => f.type === "text" || f.type === "textarea").map((f) => f.key);
+    const target = lastField.current && keys.includes(lastField.current.key) ? lastField.current : null;
+    const base = keys.includes("body") ? "body" : keys.includes("fallback") ? "fallback" : keys[0];
+    const key = target?.key ?? (base && lang === "en" && keys.includes(`${base}_en`) ? `${base}_en` : base);
+    if (!key) return;
+    const spec = NODE_CATALOG[sel.data.kind].fields.find((f) => f.key === key);
+    const cur = String(sel.data.config[key] ?? spec?.default ?? "");
+    checkpoint();
+    if (target?.el) {
+      const start = target.el.selectionStart ?? cur.length;
+      const end = target.el.selectionEnd ?? start;
+      setConfig(key, cur.slice(0, start) + token + cur.slice(end));
+      const caret = start + token.length;
+      setTimeout(() => { try { target.el.focus(); target.el.setSelectionRange(caret, caret); } catch { /* element gone */ } }, 0);
+    } else setConfig(key, cur + (cur && !/\s$/.test(cur) ? " " : "") + token);
+  };
   const setConfig = (key: string, value: ConfigValue) => {
     setNodes((ns) => ns.map((n) => (n.id === selected ? { ...n, data: { ...n.data, config: { ...n.data.config, [key]: value } } } : n)));
     touch();
@@ -536,6 +557,8 @@ function Builder() {
                     <button className="button button-ghost button-small" type="button" onClick={() => { checkpoint(); setNodes((ns) => ns.map((n) => (n.id === sel.id ? { ...n, data: { ...n.data, config: Object.fromEntries(Object.entries(n.data.config).filter(([k]) => k !== "method")) } } : n))); touch(); }}>{t("builder.readClear")}</button>
                   </div>
                 )}
+                <ProvidesList kind={sel.data.kind} />
+                {(sel.data.kind === "send_notification" || sel.data.kind === "request_documents") && <InsertChips nodes={nodes.map((n) => ({ id: n.id, kind: n.data.kind }))} edges={edges.map((e) => ({ source: e.source, target: e.target }))} nodeId={sel.id} onInsert={insertToken} />}
                 {sel.data.kind === "assign_caseworker" && <AssignmentTable embedded />}
                 {sel.data.kind === "run_rules" && <RulePicker value={sel.data.config.rules === undefined ? undefined : String(sel.data.config.rules)} onChange={(v) => { checkpoint(); setConfig("rules", v); }} />}
                 {NODE_CATALOG[sel.data.kind].fields.filter((f) => !(sel.data.kind === "run_rules" && f.key === "rules")).map((f) => {
@@ -557,11 +580,11 @@ function Builder() {
                           {options?.map((o) => <option key={o.value} value={o.value}>{bi(o.label)}</option>)}
                         </select>
                       ) : f.type === "textarea" ? (
-                        <textarea rows={4} value={String(val)} onFocus={checkpoint} onChange={(e) => setConfig(f.key, e.target.value)} />
+                        <textarea rows={f.key.startsWith("fallback") || f.key.startsWith("body") ? 7 : 4} value={String(val)} onFocus={(e) => { checkpoint(); lastField.current = { key: f.key, el: e.currentTarget }; }} onChange={(e) => setConfig(f.key, e.target.value)} />
                       ) : f.type === "number" ? (
                         <input type="number" min={1} value={Number(val)} onFocus={checkpoint} onChange={(e) => setConfig(f.key, Number(e.target.value))} />
                       ) : (
-                        <input value={String(val)} onFocus={checkpoint} onChange={(e) => setConfig(f.key, e.target.value)} />
+                        <input value={String(val)} onFocus={(e) => { checkpoint(); lastField.current = { key: f.key, el: e.currentTarget }; }} onChange={(e) => setConfig(f.key, e.target.value)} />
                       )}
                     </label>
                   );

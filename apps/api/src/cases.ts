@@ -21,7 +21,7 @@ import {
   type StudentInfo,
 } from "@digieurope/shared";
 import { extractDocument, specOf } from "./documents.js";
-import { draftMail, questionText } from "./engine.js";
+import { draftMail, nodeText, questionText } from "./engine.js";
 import { readConfigured } from "./extraction.js";
 import type { Store } from "./store.js";
 
@@ -59,8 +59,51 @@ export function documentQuestions(store: Store, app: Application, minConfidence 
   return out;
 }
 
-/** A prefilled question for the student: the open rule findings plus unclear documents. The caseworker edits and sends it. */
+/** The unclear documents and fields, as a brief list and in detail with the reasons. Handed on by the "Review fields" step. */
+export function reviewReport(store: Store, app: Application): { list: string; details: string } {
+  const de = app.language === "de";
+  const templates = allTemplates(store);
+  const cfg = store.config();
+  const list: string[] = [];
+  const details: string[] = [];
+  for (const d of app.documents) {
+    const tpl = templates.find((t) => t.id === d.kind);
+    const title = tpl ? tpl.name[app.language] : d.filename;
+    const label = (key: string) => (de ? tpl?.fields.find((f) => f.key === key)?.label : tpl?.en?.fields[key] ?? tpl?.fields.find((f) => f.key === key)?.label) ?? key.replace(/_/g, " ");
+    if (!d.extraction.readable) {
+      list.push(de ? `${title}: nicht lesbar` : `${title}: could not be read`);
+      details.push(de ? `${d.filename}: Die Datei ließ sich nicht lesen. Entweder ist es kein Formular, das der Leser kennt, oder die Datei enthält keinen lesbaren Text (zum Beispiel ein Foto).` : `${d.filename}: the file could not be read. Either it is not one of the forms the reader knows, or the file has no readable text (for example a photo).`);
+      continue;
+    }
+    if (!d.extraction.needsReview) continue;
+    const min = cfg.extraction[d.kind]?.minConfidence ?? 0.8;
+    const low = Object.entries(d.extraction.confidence ?? {}).filter(([, c]) => c < min);
+    list.push(`${title}: ${low.map(([k]) => label(k)).join(", ")}`);
+    for (const [k, c] of low) {
+      const value = d.extraction.fields[k] ?? "";
+      const partly = /\?|unleserlich|illegible/i.test(value);
+      const page = d.extraction.pages?.[k];
+      details.push(
+        de
+          ? `${title} · ${label(k)}${page ? ` (Seite ${page})` : ""}: gelesen als „${value}“, nur zu ${Math.round(c * 100)} % sicher (verlangt: ${Math.round(min * 100)} %). ${partly ? "Ein Teil des Werts war nicht lesbar." : "Die Schrift ist nicht klar genug für ein sicheres Lesen."}`
+          : `${title} · ${label(k)}${page ? ` (page ${page})` : ""}: read as “${value}”, only ${Math.round(c * 100)} % sure (${Math.round(min * 100)} % needed). ${partly ? "Part of the value could not be read." : "The text is not clear enough to read reliably."}`,
+      );
+    }
+  }
+  return { list: list.map((x) => `• ${x}`).join("\n"), details: details.map((x) => `• ${x}`).join("\n") };
+}
+
+/** A prefilled question for the student. If the process has a question step with a text, that text is used, with what the review step handed on. */
 export function questionDraft(store: Store, app: Application, now: Date = new Date()) {
+  const def = store.process(DEFAULT_CATEGORY)?.live;
+  const reviewNode = def?.nodes.find((n) => n.id === app.flow?.waiting && n.kind === "review_fields");
+  const target = reviewNode ? def?.edges.find((e) => e.source === reviewNode.id && e.sourceHandle === "info")?.target : undefined;
+  const node = def?.nodes.find((n) => n.id === target && n.kind === "request_documents" && n.config.sending === "caseworker");
+  if (node && app.flow?.vars?.review_list !== undefined) {
+    const vars = { ...app.flow.vars, ...Object.fromEntries(Object.entries(reviewReport(store, app)).map(([k, v]) => [`review_${k}`, v])) };
+    const message = nodeText(node, "fallback", app, vars).trim();
+    return { subject: app.language === "de" ? `Rückfrage zu Ihrem Antrag ${app.reference}` : `Question about your application ${app.reference}`, message, items: (vars.review_list ?? "").split("\n").filter(Boolean).length };
+  }
   const report = checksFor(store, app, now);
   const extra = documentQuestions(store, app);
   const mail = draftMail(app, report, "friendly", extra);

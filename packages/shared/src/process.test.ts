@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { defaultConfig, defaultProcess, processRuleIds, ruleSelection, upgradeQuestionPath, validateProcess } from "./process.js";
+import { STEP_OUTPUTS, defaultConfig, defaultProcess, upstreamOutputs, processRuleIds, ruleSelection, upgradeQuestionPath, validateProcess } from "./process.js";
 
 describe("process validation", () => {
   it("accepts the default process", () => {
@@ -58,5 +58,33 @@ describe("question path", () => {
     expect(up.edges.find((e) => e.id === "review:info")!.target).toBe("ask-q");
     expect(validateProcess(up)).toEqual([]);
     expect(upgradeQuestionPath(up)).toBe(up);
+  });
+});
+
+describe("outputs handed on between steps", () => {
+  const names = (id: string) => upstreamOutputs(defaultProcess(), id).map((x) => x.output.name);
+  it("the question step after the review can use what the review and the reading produced", () => {
+    const n = names("ask-q");
+    expect(n).toContain("review_list");
+    expect(n).toContain("review_details");
+    expect(n).toContain("unreadable_documents");
+    expect(n).toContain("caseworker");
+    expect(n).not.toContain("open_items");
+  });
+  it("the message after the rules can use the open items, but the approval message cannot yet use a missing-documents list from another branch", () => {
+    expect(names("draft")).toContain("open_items");
+    expect(names("notify-ok")).toContain("decision_amount");
+  });
+  it("every step that makes sense has outputs, the start and the end have none", () => {
+    expect(STEP_OUTPUTS.trigger).toEqual([]);
+    expect(STEP_OUTPUTS.end).toEqual([]);
+    expect(STEP_OUTPUTS.run_rules.map((x) => x.name)).toEqual(["open_items", "missing_documents", "warnings", "open_count"]);
+  });
+  it("validation says when a text uses something no earlier step provides", () => {
+    const p = defaultProcess();
+    p.nodes = p.nodes.map((n) => (n.id === "review" ? { ...n, config: { ...n.config, instruction: "Check {open_items} and {caseworker}" } } : n));
+    const issues = validateProcess(p).map((i) => i.message.en);
+    expect(issues.some((m) => m.includes("{open_items} is not available here"))).toBe(true);
+    expect(issues.some((m) => m.includes("{caseworker} is not available here"))).toBe(false);
   });
 });

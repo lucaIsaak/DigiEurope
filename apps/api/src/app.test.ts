@@ -3,6 +3,8 @@ import { buildApp } from "./app.js";
 import { PROPOSAL_SAMPLE_TITLE, SAMPLE_SETS, fixDocuments, formblatt8, getPerson, proposalSample, sampleDocuments, sampleLetter } from "./samples.js";
 import { extractDocument } from "./documents.js";
 import { seedDemoData } from "./seed.js";
+import { startRun } from "./engine.js";
+import { checksFor, reviewReport } from "./cases.js";
 import { Store } from "./store.js";
 
 const NOW = new Date("2026-11-16T10:00:00Z");
@@ -777,5 +779,54 @@ describe("texts in the language of the applicant", () => {
       expect(mail.subject).toContain(word);
       expect(mail.body).toContain(language === "en" ? "Hello" : "Guten Tag");
     }
+  });
+});
+
+describe("outputs handed on between steps (running)", () => {
+  it("the review step hands on a brief list and the reasons, and the question draft is built from them", async () => {
+    const { app, store } = setup();
+    const { id, person } = await create(app, "paul");
+    for (const d of sampleDocuments(person, ["unclear_income"], "en")) await upload(app, `/applications/${id}/documents`, d.filename, d.content);
+    const submitted = (await app.inject({ method: "POST", url: `/applications/${id}/submit` })).json();
+    expect(submitted.flow.waiting).toBe("review");
+    const vars = submitted.flow.vars;
+    expect(vars.review_list).toContain("Total income (EUR)");
+    expect(vars.review_details).toContain("55 %");
+    expect(vars.review_details).toContain("Part of the value could not be read");
+    expect(vars.caseworker).toBeTruthy();
+    const draft = (await app.inject({ method: "GET", url: `/office/cases/${id}/question-draft` })).json();
+    expect(draft.message).toContain("Total income (EUR)");
+    expect(draft.message).toContain("Details:");
+    expect(draft.message).not.toContain("{review_");
+    expect(reviewReport(store, store.get(id)!).details).toContain("55 %");
+  });
+
+  it("a message after the rules can use the open items, the missing documents and the decision", async () => {
+    const { app, store } = setup();
+    const { id, person } = await create(app, "mira");
+    for (const d of sampleDocuments(person, ["host_missing", "parent_unsigned"], "en")) await upload(app, `/applications/${id}/documents`, d.filename, d.content);
+    const a = store.get(id)!;
+    const def = {
+      id: "t", catalogId: "bafoeg.abroad", name: "t", version: 1, updatedAt: "", updatedBy: "", inputs: [],
+      nodes: [
+        { id: "s", kind: "trigger" as const, position: { x: 0, y: 0 }, config: { source: "any" } },
+        { id: "r", kind: "run_rules" as const, position: { x: 0, y: 0 }, config: { rules: "" } },
+        { id: "m", kind: "send_notification" as const, position: { x: 0, y: 0 }, config: { to: "student", subject_en: "{open_count} open", subject: "x", body_en: "Open:\n{open_items}\nMissing:\n{missing_documents}", body: "x" } },
+        { id: "e", kind: "end" as const, position: { x: 0, y: 0 }, config: {} },
+      ],
+      edges: [
+        { id: "s:out", source: "s", sourceHandle: "out", target: "r" },
+        { id: "r:incomplete", source: "r", sourceHandle: "incomplete", target: "m" },
+        { id: "r:complete", source: "r", sourceHandle: "complete", target: "e" },
+        { id: "m:out", source: "m", sourceHandle: "out", target: "e" },
+      ],
+    };
+    // No rule ticked, but the required inputs still block.
+    const run = await startRun(def, { ...a, language: "en" }, { now: NOW, check: (x, ids) => checksFor(store, x, NOW, ids) });
+    const mail = run.outbox!.find((m) => m.nodeId === "m")!;
+    expect(mail.subject).toMatch(/^\d+ open$/);
+    expect(mail.body).toContain("Host university confirmation");
+    expect(mail.body).not.toContain("{open_items}");
+    expect(run.flow!.vars!.open_count).toBe(mail.subject.split(" ")[0]);
   });
 });

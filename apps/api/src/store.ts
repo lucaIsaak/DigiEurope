@@ -7,6 +7,7 @@ import {
   upgradeQuestionPath,
   upgradeAssignment,
   upgradeEnglish,
+  upgradeOutputs,
   defaultAssignment,
   assignCaseworker,
   type OfficeAssignment,
@@ -165,7 +166,7 @@ export class Store {
       const old = saved.processes as unknown as { live?: ProcessDef };
       const processes = old && "live" in old ? { [DEFAULT_CATEGORY]: old as unknown as ProcessStore } : saved.processes;
       for (const p of Object.values(processes)) for (const d of [p.live, p.draft, ...p.history]) if (d) { if (!d.catalogId) d.catalogId = DEFAULT_CATEGORY; if (!d.inputs) d.inputs = defaultInputs(); }
-      for (const p of Object.values(processes)) { if (p.live) p.live = upgradeEnglish(upgradeAssignment(upgradeQuestionPath(p.live))); if (p.draft) p.draft = upgradeEnglish(upgradeAssignment(upgradeQuestionPath(p.draft))); }
+      for (const p of Object.values(processes)) { if (p.live) p.live = upgradeOutputs(upgradeEnglish(upgradeAssignment(upgradeQuestionPath(p.live)))); if (p.draft) p.draft = upgradeOutputs(upgradeEnglish(upgradeAssignment(upgradeQuestionPath(p.draft)))); }
       const OLD_TITLES: Record<string, string> = { "Sachbearbeitung Ausland": "Caseworker, abroad", "Prozessverantwortliche": "Process owner", "Amtsleitung (Administrator)": "Head of office (administrator)", "Verantwortliche für Extraktoren und Vorlagen": "Owner of extractors and templates", "Aufsicht Bundesebene (alle Ämter)": "Federal oversight (all offices)", Sachbearbeitung: "Caseworker" };
       saved.staff = saved.staff.map((m) => ({ ...m, title: OLD_TITLES[m.title] ?? m.title }));
       const staff = [...saved.staff.map((m) => (m.isCaseworker === undefined ? { ...m, isCaseworker: DEFAULT_STAFF.find((d) => d.id === m.id)?.isCaseworker } : m)), ...DEFAULT_STAFF.filter((d) => !saved.staff.some((m) => m.id === d.id))];

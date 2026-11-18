@@ -44,7 +44,7 @@ import { PEER_OFFICES, REFERENCE_SETTINGS, type OfficeProcess } from "./offices.
 import { DEFAULT_MIN_CONFIDENCE, aiAvailable, methodsInfo } from "./extraction.js";
 import { Store as ScratchStore } from "./store.js";
 import { askLive, liveAvailable, retrieve } from "./assistant.js";
-import { PARENT_KINDS, addDocument, allSpecs, allTemplates, checksFor, readFor, checkNow, invite, newApplication, officeAct, open, removeDocument, submit, view, withAudit, draftFor, questionDraft, type OfficeAction } from "./cases.js";
+import { PARENT_KINDS, addDocument, allSpecs, allTemplates, checksFor, readFor, checkNow, invite, newApplication, officeAct, open, removeDocument, submit, view, withAudit, draftFor, questionDraft, reviewReport, type OfficeAction } from "./cases.js";
 import { extractDocument } from "./documents.js";
 import { readPdfLines } from "./pdf.js";
 import { computeInsights } from "./metrics.js";
@@ -103,6 +103,7 @@ export function buildApp(opts: AppOptions) {
   const engineCtx = (from: Store = store): EngineCtx => ({
     now: now(),
     check: (a, ids) => checksFor(store, a, now(), ids),
+    review: (a) => reviewReport(store, a),
     assign: (a) => {
       const table = store.assignment();
       const r = assignCaseworker(a.student.lastName, table);

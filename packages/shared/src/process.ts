@@ -161,6 +161,101 @@ export function processRuleIds(def: Pick<ProcessDef, "nodes">): string[] | null 
   return [...out];
 }
 
+/** One thing a step hands on to the steps after it, usable as {name} in their texts. */
+export interface StepOutput {
+  name: string;
+  label: Bilingual;
+  example: string;
+}
+
+const o = (name: string, de: string, en: string, example: string): StepOutput => ({ name, label: { de, en }, example });
+
+/** What each kind of step produces. A later step in the same branch can put these into its message with {name}. */
+export const STEP_OUTPUTS: Record<NodeKind, StepOutput[]> = {
+  trigger: [],
+  assign_caseworker: [o("caseworker", "Zuständige Sachbearbeitung", "The responsible caseworker", "Frau Demir")],
+  assign_team: [o("team", "Zugewiesenes Team", "The assigned team", "Team Ausland")],
+  read_documents: [
+    o("documents_read", "Liste der gelesenen Dokumente", "List of the documents read", "• Income tax assessment (built-in reader)"),
+    o("unreadable_documents", "Dokumente, die nicht gelesen werden konnten", "Documents that could not be read", "• Enrolment_certificate.pdf"),
+  ],
+  review_fields: [
+    o("review_list", "Kurze Liste der unklaren Dokumente und Felder", "Brief list of the unclear documents and fields", "• Income tax assessment: Total income (EUR)"),
+    o("review_details", "Ausführlich, warum Felder nicht lesbar waren", "Detailed reasons why fields could not be read", "Total income (EUR): read as \"54?00 (illegible)\", 55 % sure (80 % needed). Part of the value could not be read."),
+  ],
+  run_rules: [
+    o("open_items", "Offene Punkte, die den Antrag blockieren", "Open items that block the application", "• The parents' signature is missing."),
+    o("missing_documents", "Fehlende erforderliche Dokumente", "Required documents that are missing", "• Host university confirmation"),
+    o("warnings", "Hinweise, die nicht blockieren", "Notes that do not block", "• Your stay is short."),
+    o("open_count", "Anzahl der offenen Punkte", "Number of open items", "2"),
+  ],
+  condition: [o("condition_result", "Ergebnis der Bedingung (ja/nein)", "Result of the condition (yes/no)", "yes")],
+  human_task: [
+    o("decision", "Entscheidung der Sachbearbeitung", "The caseworker's decision", "approved"),
+    o("decision_note", "Begründung für die Studierenden", "The explanation for the student", "Your monthly need is …"),
+    o("decision_amount", "Bewilligter Betrag pro Monat", "Approved amount per month", "840 €"),
+  ],
+  wait: [o("reminder_date", "Datum der Erinnerung", "Date of the reminder", "2026-11-25")],
+  ai_draft_mail: [
+    o("draft_subject", "Betreff des KI-Entwurfs", "Subject of the AI draft", "Your application: what is still missing (2)"),
+    o("draft_body", "Text des KI-Entwurfs", "Text of the AI draft", "Hi Paul, thank you for your application …"),
+  ],
+  request_documents: [
+    o("request_subject", "Betreff der gesendeten Nachfrage", "Subject of the question that was sent", "Question about your application"),
+    o("request_text", "Text der gesendeten Nachfrage", "Text of the question that was sent", "Hi Paul, …"),
+  ],
+  send_notification: [
+    o("message_subject", "Betreff der gesendeten Nachricht", "Subject of the message that was sent", "Your application has been approved"),
+    o("message_body", "Text der gesendeten Nachricht", "Text of the message that was sent", "Hello Paul, …"),
+  ],
+  connector: [
+    o("connector_id", "Kennung der Antwort des Systems", "ID returned by the system", "PA-00044"),
+    o("connector_system", "Angesprochenes System", "The system that was called", "payment"),
+    o("connector_action", "Ausgeführte Aktion", "The action that was run", "create_payment_order"),
+  ],
+  end: [],
+};
+
+/** Available in every text, without any step: name, reference and the estimated amount. */
+/** The text a question to the student starts from after a review: what is unclear and why. The caseworker edits it before it is sent. */
+export const QUESTION_TEXT = {
+  de: "vielen Dank für Ihren Antrag {reference}. Bevor wir ihn bearbeiten können, brauchen wir noch Folgendes:\n\n{review_list}\n\nDetails:\n{review_details}\n\nLaden Sie die Unterlagen einfach in Ihrem Antrag hoch. Sobald alles vollständig ist, geht Ihr Antrag direkt in die Prüfung.",
+  en: "thank you for your application {reference}. Before we can process it we still need the following:\n\n{review_list}\n\nDetails:\n{review_details}\n\nSimply upload the documents in your application. As soon as everything is complete, your application goes straight to review.",
+};
+
+export const GLOBAL_PLACEHOLDERS: StepOutput[] = [
+  o("name", "Name der Studierenden", "Name of the student", "Paul Neumann"),
+  o("reference", "Aktenzeichen", "Case reference", "MS-2026-00044"),
+  o("amount", "Betrag pro Monat", "Amount per month", "840 €"),
+];
+
+/** The outputs a step can use: everything produced by the steps that lead to it, nearest first. */
+export function upstreamOutputs(def: { nodes: { id: string; kind: NodeKind }[]; edges: { source: string; target: string }[] }, nodeId: string): { nodeId: string; kind: NodeKind; output: StepOutput }[] {
+  const byId = new Map(def.nodes.map((n) => [n.id, n]));
+  const seen = new Set<string>([nodeId]);
+  const order: string[] = [];
+  let frontier = [nodeId];
+  while (frontier.length) {
+    const next: string[] = [];
+    for (const id of frontier) {
+      for (const e of def.edges) {
+        if (e.target === id && !seen.has(e.source) && byId.has(e.source)) {
+          seen.add(e.source);
+          order.push(e.source);
+          next.push(e.source);
+        }
+      }
+    }
+    frontier = next;
+  }
+  return order.flatMap((id) => STEP_OUTPUTS[byId.get(id)!.kind].map((output) => ({ nodeId: id, kind: byId.get(id)!.kind, output })));
+}
+
+const TEXT_KEYS = ["subject", "body", "fallback", "instruction", "subject_en", "body_en", "fallback_en", "instruction_en"];
+const ALL_OUTPUT_NAMES = new Set(Object.values(STEP_OUTPUTS).flatMap((l) => l.map((x) => x.name)));
+/** {name} tokens in a text. */
+export const placeholdersIn = (text: string): string[] => [...text.matchAll(/\{([a-z_]+)\}/g)].map((m) => m[1]!);
+
 export const NODE_CATALOG: Record<NodeKind, NodeSpec> = {
   trigger: {
     kind: "trigger", category: "start",
@@ -319,6 +414,13 @@ export function validateProcess(def: Pick<ProcessDef, "nodes" | "edges"> & { cat
     }
     if (n.kind === "condition" && String(n.config.value ?? "").trim() === "") issues.push({ nodeId: n.id, message: { de: "„Bedingung“: Vergleichswert fehlt.", en: "“Condition”: compare-to value is missing." } });
     if (n.kind === "run_rules" && ruleSelection(n)?.length === 0) issues.push({ nodeId: n.id, message: { de: "„Freigegebene Regeln prüfen“: Es ist keine Regel ausgewählt.", en: "“Run approved rules”: no rule is ticked." } });
+    {
+      const have = new Set(upstreamOutputs(def, n.id).map((x) => x.output.name));
+      const used = new Set(TEXT_KEYS.flatMap((k) => placeholdersIn(String(n.config[k] ?? ""))));
+      for (const name of used) {
+        if (ALL_OUTPUT_NAMES.has(name) && !have.has(name)) issues.push({ nodeId: n.id, message: { de: `„${label.de}“: {${name}} gibt es hier nicht. Verbinden Sie vorher den Schritt, der es liefert.`, en: `“${label.en}”: {${name}} is not available here. Connect the step that provides it before this one.` } });
+      }
+    }
     if (n.kind === "send_notification" && !String(n.config.body ?? "").trim()) issues.push({ nodeId: n.id, message: { de: "„Nachricht senden“: Text fehlt.", en: "“Send message”: text is missing." } });
   }
   for (const e of def.edges) if (!byId.has(e.source) || !byId.has(e.target)) issues.push({ message: { de: "Eine Verbindung zeigt auf einen gelöschten Schritt.", en: "A connection points to a deleted step." } });
@@ -374,7 +476,7 @@ export function upgradeQuestionPath(def: ProcessDef): ProcessDef {
   const at = target.position;
   const nodes = [
     ...def.nodes,
-    { id: "ask-q", kind: "request_documents" as const, position: { x: at.x, y: at.y - 130 }, config: defaultConfig("request_documents", { sending: "caseworker" }) },
+    { id: "ask-q", kind: "request_documents" as const, position: { x: at.x, y: at.y - 130 }, config: defaultConfig("request_documents", { sending: "caseworker", fallback: QUESTION_TEXT.de, fallback_en: QUESTION_TEXT.en }) },
     { id: "wait-q", kind: "wait" as const, position: { x: at.x, y: at.y - 60 }, config: defaultConfig("wait") },
   ];
   const edges = [
@@ -403,6 +505,14 @@ export function upgradeAssignment(def: ProcessDef): ProcessDef {
     );
   const nodes = def.nodes.filter((n) => n.id !== "team").concat({ id: "assign", kind: "assign_caseworker", position: { x: 330, y: 55 }, config: defaultConfig("assign_caseworker") });
   return { ...def, nodes, edges };
+}
+
+/** The question step of older copies only said "please upload the missing documents". Gives it the text with the review outputs. */
+export function upgradeOutputs(def: ProcessDef): ProcessDef {
+  const node = def.nodes.find((n) => n.id === "ask-q" && n.kind === "request_documents" && n.config.sending === "caseworker");
+  if (!node || String(node.config.fallback ?? "").includes("{review_")) return def;
+  if (String(node.config.fallback ?? "") !== "Bitte laden Sie die fehlenden Unterlagen hoch." && String(node.config.fallback ?? "").trim() !== "") return def;
+  return { ...def, nodes: def.nodes.map((n) => (n === node ? { ...n, config: { ...n.config, fallback: QUESTION_TEXT.de, fallback_en: QUESTION_TEXT.en } } : n)) };
 }
 
 const EN_OF: Record<string, string> = {
@@ -447,7 +557,7 @@ export function defaultProcess(now = "2026-09-01T09:00:00.000Z"): ProcessDef {
     n("assign", "assign_caseworker", 330, 55),
     n("read", "read_documents", 330, 110),
     n("review", "review_fields", 20, 230),
-    n("ask-q", "request_documents", -200, 330, { sending: "caseworker" }),
+    n("ask-q", "request_documents", -200, 330, { sending: "caseworker", fallback: QUESTION_TEXT.de, fallback_en: QUESTION_TEXT.en }),
     n("wait-q", "wait", -200, 450),
     n("end-review", "end", -200, 570),
     n("rules", "run_rules", 330, 260, { rules: RULES.map((r) => r.id).join(",") }),
