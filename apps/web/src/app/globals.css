@@ -1688,3 +1688,37 @@ html:has(.ws), body:has(.ws) { overflow: hidden; height: 100%; }
 .inserts-row { display: flex; flex-wrap: wrap; gap: 0.35rem; }
 .chip-insert { border: 1px solid var(--line-strong); background: var(--surface); border-radius: 999px; padding: 0.15rem 0.6rem; cursor: pointer; }
 .chip-insert:hover { background: var(--primary-soft); border-color: var(--primary); }
+/* Outputs of earlier steps as coloured tiles (like dynamic content in Power Automate) */
+.tokfield { min-height: 2.3em; padding: 0.45rem 0.6rem; border: 1px solid var(--line-strong); border-radius: 8px; background: var(--surface); font-size: 0.88rem; line-height: 1.7; white-space: pre-wrap; overflow-wrap: anywhere; cursor: text; }
+.tokfield:focus { outline: 0; border-color: var(--primary); box-shadow: 0 0 0 3px color-mix(in srgb, var(--primary) 18%, transparent); }
+.tok { display: inline-flex; align-items: baseline; gap: 0.35rem; margin: 0 1px; padding: 0 0.5rem; border-radius: 7px; background: hsl(var(--h) 85% 93%); border: 1px solid hsl(var(--h) 60% 62%); color: hsl(var(--h) 65% 22%); font-size: 0.8rem; line-height: 1.55; vertical-align: baseline; user-select: all; white-space: nowrap; }
+.tok small { font-size: 0.62rem; font-weight: 700; letter-spacing: 0.03em; text-transform: uppercase; opacity: 0.75; }
+.tok b { font-weight: 600; }
+.tok.glob { background: var(--surface-2); border-color: var(--line-strong); color: var(--ink); }
+.tok.bad { background: var(--bad-soft); border-color: var(--bad); color: var(--bad); }
+.tok.bad small::after { content: " ⚠"; }
+:root[data-theme="dark"] .tok { background: hsl(var(--h) 40% 20%); border-color: hsl(var(--h) 50% 45%); color: hsl(var(--h) 80% 86%); }
+:root[data-theme="dark"] .tok.glob { background: var(--surface-2); color: var(--ink); border-color: var(--line-strong); }
+.tiles { display: grid; gap: 0.6rem; padding: 0.8rem; border-radius: 12px; background: var(--surface-2); }
+.tile-group { display: grid; gap: 0.35rem; }
+.tile-head { display: flex; align-items: center; gap: 0.4rem; font-size: 0.8rem; font-weight: 700; color: hsl(var(--h) 55% 30%); }
+.tile-head.glob { color: var(--muted); }
+:root[data-theme="dark"] .tile-head { color: hsl(var(--h) 70% 78%); }
+.tile-row { display: grid; gap: 0.35rem; }
+.otile { display: grid; gap: 0.1rem; text-align: left; padding: 0.4rem 0.6rem; border-radius: 9px; border: 1px solid hsl(var(--h) 60% 65%); border-left-width: 5px; background: hsl(var(--h) 85% 95%); color: hsl(var(--h) 65% 22%); font: inherit; font-size: 0.82rem; }
+.otile b { font-weight: 600; }
+.otile .ex { font-size: 0.74rem; opacity: 0.75; white-space: pre-line; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.otile.pick { cursor: pointer; }
+.otile.pick:hover { background: hsl(var(--h) 85% 90%); }
+.otile.glob { background: var(--surface); border-color: var(--line-strong); color: var(--ink); }
+:root[data-theme="dark"] .otile { background: hsl(var(--h) 35% 18%); border-color: hsl(var(--h) 45% 42%); color: hsl(var(--h) 80% 88%); }
+:root[data-theme="dark"] .otile.glob { background: var(--surface); }
+.outs-grid { display: grid; gap: 0.3rem; }
+/* The tiles beside the step panel, like the dynamic content popup in Power Automate */
+.ws-tiles { position: absolute; top: 112px; bottom: 12px; right: calc(12px + 330px + 10px); width: 300px; overflow: auto; z-index: 7; background: var(--surface); border: 1px solid var(--line); border-radius: 14px; box-shadow: 0 12px 36px rgba(20, 38, 79, 0.18); padding: 0.4rem; }
+.ws-tiles .tiles { background: transparent; padding: 0.5rem; }
+.ws-tiles-x { position: absolute; top: 0.45rem; right: 0.45rem; z-index: 2; }
+.tiles-hint { padding: 0.5rem 0.7rem; border-radius: 10px; background: var(--primary-soft); }
+.cp-brief { margin: 0 0 1rem; padding: 0.8rem 1rem; border-radius: 12px; background: var(--primary-soft); border: 1px solid color-mix(in srgb, var(--primary) 25%, transparent); }
+.cp-brief strong { display: block; font-size: 0.78rem; letter-spacing: 0.04em; text-transform: uppercase; color: var(--primary); margin-bottom: 0.2rem; }
+.cp-brief p { margin: 0; white-space: pre-line; }

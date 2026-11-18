@@ -219,8 +219,8 @@ export const STEP_OUTPUTS: Record<NodeKind, StepOutput[]> = {
 /** Available in every text, without any step: name, reference and the estimated amount. */
 /** The text a question to the student starts from after a review: what is unclear and why. The caseworker edits it before it is sent. */
 export const QUESTION_TEXT = {
-  de: "vielen Dank für Ihren Antrag {reference}. Bevor wir ihn bearbeiten können, brauchen wir noch Folgendes:\n\n{review_list}\n\nDetails:\n{review_details}\n\nLaden Sie die Unterlagen einfach in Ihrem Antrag hoch. Sobald alles vollständig ist, geht Ihr Antrag direkt in die Prüfung.",
-  en: "thank you for your application {reference}. Before we can process it we still need the following:\n\n{review_list}\n\nDetails:\n{review_details}\n\nSimply upload the documents in your application. As soon as everything is complete, your application goes straight to review.",
+  de: "vielen Dank für Ihren Antrag {reference}. Bevor wir ihn bearbeiten können, brauchen wir noch Folgendes:\n\n{review.review_list}\n\nDetails:\n{review.review_details}\n\nLaden Sie die Unterlagen einfach in Ihrem Antrag hoch. Sobald alles vollständig ist, geht Ihr Antrag direkt in die Prüfung.",
+  en: "thank you for your application {reference}. Before we can process it we still need the following:\n\n{review.review_list}\n\nDetails:\n{review.review_details}\n\nSimply upload the documents in your application. As soon as everything is complete, your application goes straight to review.",
 };
 
 export const GLOBAL_PLACEHOLDERS: StepOutput[] = [
@@ -251,10 +251,13 @@ export function upstreamOutputs(def: { nodes: { id: string; kind: NodeKind }[]; 
   return order.flatMap((id) => STEP_OUTPUTS[byId.get(id)!.kind].map((output) => ({ nodeId: id, kind: byId.get(id)!.kind, output })));
 }
 
-const TEXT_KEYS = ["subject", "body", "fallback", "instruction", "subject_en", "body_en", "fallback_en", "instruction_en"];
+/** Every field where a person types something, and so can put outputs of earlier steps into. */
+export const TOKEN_KEYS = ["subject", "body", "fallback", "instruction", "subject_en", "body_en", "fallback_en", "instruction_en", "value", "payload"];
 const ALL_OUTPUT_NAMES = new Set(Object.values(STEP_OUTPUTS).flatMap((l) => l.map((x) => x.name)));
-/** {name} tokens in a text. */
-export const placeholdersIn = (text: string): string[] => [...text.matchAll(/\{([a-z_]+)\}/g)].map((m) => m[1]!);
+export const TOKEN_RE = /\{([A-Za-z0-9_-]+)(?:\.([a-z_]+))?\}/g;
+/** The tokens in a text: {name} for the basics and for the latest output of that name, {stepId.output} for one particular step. */
+export const tokensIn = (text: string): { raw: string; step?: string; name: string }[] =>
+  [...text.matchAll(TOKEN_RE)].map((m) => (m[2] ? { raw: m[0], step: m[1]!, name: m[2] } : { raw: m[0], name: m[1]! }));
 
 export const NODE_CATALOG: Record<NodeKind, NodeSpec> = {
   trigger: {
@@ -371,6 +374,7 @@ export const NODE_CATALOG: Record<NodeKind, NodeSpec> = {
     fields: [
       { key: "system", label: { de: "System", en: "System" }, type: "select", default: "case_software", options: CONNECTORS.map((c) => ({ value: c.id, label: c.name })) },
       { key: "action", label: { de: "Aktion", en: "Action" }, type: "select", default: "create_case", options: CONNECTORS.flatMap((c) => c.actions.map((a) => ({ value: a.id, label: a.label }))) },
+      { key: "payload", label: { de: "Daten, die gesendet werden", en: "Data sent to the system" }, type: "textarea", default: "reference: {reference}\namount: {amount}" },
     ],
   },
   end: {
@@ -415,10 +419,23 @@ export function validateProcess(def: Pick<ProcessDef, "nodes" | "edges"> & { cat
     if (n.kind === "condition" && String(n.config.value ?? "").trim() === "") issues.push({ nodeId: n.id, message: { de: "„Bedingung“: Vergleichswert fehlt.", en: "“Condition”: compare-to value is missing." } });
     if (n.kind === "run_rules" && ruleSelection(n)?.length === 0) issues.push({ nodeId: n.id, message: { de: "„Freigegebene Regeln prüfen“: Es ist keine Regel ausgewählt.", en: "“Run approved rules”: no rule is ticked." } });
     {
-      const have = new Set(upstreamOutputs(def, n.id).map((x) => x.output.name));
-      const used = new Set(TEXT_KEYS.flatMap((k) => placeholdersIn(String(n.config[k] ?? ""))));
-      for (const name of used) {
-        if (ALL_OUTPUT_NAMES.has(name) && !have.has(name)) issues.push({ nodeId: n.id, message: { de: `„${label.de}“: {${name}} gibt es hier nicht. Verbinden Sie vorher den Schritt, der es liefert.`, en: `“${label.en}”: {${name}} is not available here. Connect the step that provides it before this one.` } });
+      const up = upstreamOutputs(def, n.id);
+      const have = new Set(up.map((x) => x.output.name));
+      const globals = new Set(GLOBAL_PLACEHOLDERS.map((g) => g.name));
+      const seenTokens = new Set<string>();
+      for (const k of TOKEN_KEYS) {
+        for (const tk of tokensIn(String(n.config[k] ?? ""))) {
+          if (seenTokens.has(tk.raw)) continue;
+          seenTokens.add(tk.raw);
+          if (tk.step) {
+            const src = byId.get(tk.step);
+            const srcLabel = src ? NODE_CATALOG[src.kind].title : null;
+            if (!src) issues.push({ nodeId: n.id, message: { de: `„${label.de}“: ${tk.raw} zeigt auf einen Schritt, den es nicht mehr gibt.`, en: `“${label.en}”: ${tk.raw} points to a step that no longer exists.` } });
+            else if (!up.some((x) => x.nodeId === tk.step && x.output.name === tk.name)) issues.push({ nodeId: n.id, message: { de: `„${label.de}“: „${srcLabel!.de}“ liefert ${tk.name} hier nicht. Der Schritt muss vor diesem Schritt stehen und mit ihm verbunden sein.`, en: `“${label.en}”: “${srcLabel!.en}” does not provide ${tk.name} here. That step has to come before this one and be connected to it.` } });
+          } else if (ALL_OUTPUT_NAMES.has(tk.name) && !have.has(tk.name) && !globals.has(tk.name)) {
+            issues.push({ nodeId: n.id, message: { de: `„${label.de}“: {${tk.name}} gibt es hier nicht. Verbinden Sie vorher den Schritt, der es liefert.`, en: `“${label.en}”: {${tk.name}} is not available here. Connect the step that provides it before this one.` } });
+          }
+        }
       }
     }
     if (n.kind === "send_notification" && !String(n.config.body ?? "").trim()) issues.push({ nodeId: n.id, message: { de: "„Nachricht senden“: Text fehlt.", en: "“Send message”: text is missing." } });
@@ -510,7 +527,11 @@ export function upgradeAssignment(def: ProcessDef): ProcessDef {
 /** The question step of older copies only said "please upload the missing documents". Gives it the text with the review outputs. */
 export function upgradeOutputs(def: ProcessDef): ProcessDef {
   const node = def.nodes.find((n) => n.id === "ask-q" && n.kind === "request_documents" && n.config.sending === "caseworker");
-  if (!node || String(node.config.fallback ?? "").includes("{review_")) return def;
+  if (node && /\{review_(list|details)\}/.test(`${node.config.fallback ?? ""}${node.config.fallback_en ?? ""}`)) {
+    const q = (v: unknown) => String(v ?? "").replace(/\{review_(list|details)\}/g, "{review.review_$1}");
+    return { ...def, nodes: def.nodes.map((n) => (n === node ? { ...n, config: { ...n.config, fallback: q(n.config.fallback), fallback_en: q(n.config.fallback_en) } } : n)) };
+  }
+  if (!node || String(node.config.fallback ?? "").includes("{review.")) return def;
   if (String(node.config.fallback ?? "") !== "Bitte laden Sie die fehlenden Unterlagen hoch." && String(node.config.fallback ?? "").trim() !== "") return def;
   return { ...def, nodes: def.nodes.map((n) => (n === node ? { ...n, config: { ...n.config, fallback: QUESTION_TEXT.de, fallback_en: QUESTION_TEXT.en } } : n)) };
 }

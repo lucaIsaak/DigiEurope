@@ -88,3 +88,13 @@ describe("outputs handed on between steps", () => {
     expect(issues.some((m) => m.includes("{caseworker} is not available here"))).toBe(false);
   });
 });
+
+describe("outputs of one particular step: validation", () => {
+  it("accepts a token that points at an earlier step that provides it, refuses others", () => {
+    const p = defaultProcess();
+    const set = (text: string) => ({ ...p, nodes: p.nodes.map((n) => (n.id === "notify-ok" ? { ...n, config: { ...n.config, body_en: text } } : n)) });
+    expect(validateProcess(set("{rules.open_count} and {review.review_list}")).filter((i) => /not|no longer/.test(i.message.en))).toEqual([]);
+    expect(validateProcess(set("{ghost.open_count}")).some((i) => i.message.en.includes("no longer exists"))).toBe(true);
+    expect(validateProcess(set("{notify-no.message_body}")).some((i) => i.message.en.includes("does not provide"))).toBe(true);
+  });
+});

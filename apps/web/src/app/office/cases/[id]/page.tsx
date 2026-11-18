@@ -119,6 +119,13 @@ function OfficeCase({ id }: { id: string }) {
         </p>
       </header>
 
+      {c.flow?.briefing && c.flow.waiting && !decided && (
+        <aside className="cp-brief" aria-label={t("cd.briefing")}>
+          <strong>{t("cd.briefing")}</strong>
+          <p>{c.flow.briefing}</p>
+        </aside>
+      )}
+
       <div className="cp-grid">
         <div className="cp-main">
           {c.decision && <DecisionExplain c={c} />}

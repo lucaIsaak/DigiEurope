@@ -220,6 +220,8 @@ export interface FlowState {
   finished: boolean;
   /** What earlier steps produced, by name, so later steps in the same branch can use it in their texts. */
   vars?: Record<string, string>;
+  /** The note of the step a person has to act on, with the outputs of earlier steps filled in. */
+  briefing?: string;
 }
 
 // ---- Rules -------------------------------------------------------------

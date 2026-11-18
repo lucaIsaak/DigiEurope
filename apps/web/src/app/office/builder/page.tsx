@@ -8,6 +8,7 @@ import {
   catalogVariants,
   CONNECTORS,
   NODE_CATALOG,
+  TOKEN_KEYS,
   defaultConfig,
   outputsOf,
   validateProcess,
@@ -74,7 +75,8 @@ import {
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AssignmentTable } from "@/components/AssignmentTable";
-import { InsertChips, ProvidesList } from "@/components/StepOutputs";
+import { OutputTiles, ProvidesList, useTokenResolver } from "@/components/StepOutputs";
+import { TokenField, type TokenFieldHandle } from "@/components/TokenField";
 import { RulePicker } from "@/components/RulePicker";
 import { InputsEditor } from "@/components/InputsEditor";
 import { CATEGORIES, ICONS, NODE_W, edgeBase, layout, ARROW, nodeTypes, toRfNode, type StepNode } from "@/components/FlowKit";
@@ -115,6 +117,9 @@ function Builder() {
   const [showVersions, setShowVersions] = useState(false);
   const [inputs, setInputs] = useState<ProcessInput[]>([]);
   const [showInputs, setShowInputs] = useState(false);
+  /** The tiles with the outputs of earlier steps open beside the panel while a text field is in use. */
+  const [tilesOpen, setTilesOpen] = useState(false);
+  useEffect(() => setTilesOpen(false), [selected]);
   const [templates, setTemplates] = useState<(DocumentTemplate & { check?: unknown })[]>([]);
   const loaded = useRef(false);
   const past = useRef<Snapshot[]>([]);
@@ -281,25 +286,18 @@ function Builder() {
   };
 
   const sel = useMemo(() => nodes.find((n) => n.id === selected) ?? null, [nodes, selected]);
-  /** The text field the person was typing in last, so a placeholder can be inserted at the cursor. */
-  const lastField = useRef<{ key: string; el: HTMLInputElement | HTMLTextAreaElement } | null>(null);
-  const insertToken = (token: string) => {
+  /** The fields where outputs of earlier steps can be put in as tiles. */
+  const tokenRefs = useRef<Record<string, TokenFieldHandle | null>>({});
+  const activeToken = useRef<string | null>(null);
+  const graph = useMemo(() => ({ nodes: nodes.map((n) => ({ id: n.id, kind: n.data.kind, x: n.position.x, y: n.position.y })), edges: edges.map((e) => ({ source: e.source, target: e.target })) }), [nodes, edges]);
+  const tokens = useTokenResolver(graph, selected ?? "");
+  const hasTokenFields = sel ? NODE_CATALOG[sel.data.kind].fields.some((f) => (f.type === "text" || f.type === "textarea") && TOKEN_KEYS.includes(f.key)) : false;
+  const insertToken = (raw: string) => {
     if (!sel) return;
-    const keys = NODE_CATALOG[sel.data.kind].fields.filter((f) => f.type === "text" || f.type === "textarea").map((f) => f.key);
-    const target = lastField.current && keys.includes(lastField.current.key) ? lastField.current : null;
-    const base = keys.includes("body") ? "body" : keys.includes("fallback") ? "fallback" : keys[0];
-    const key = target?.key ?? (base && lang === "en" && keys.includes(`${base}_en`) ? `${base}_en` : base);
-    if (!key) return;
-    const spec = NODE_CATALOG[sel.data.kind].fields.find((f) => f.key === key);
-    const cur = String(sel.data.config[key] ?? spec?.default ?? "");
-    checkpoint();
-    if (target?.el) {
-      const start = target.el.selectionStart ?? cur.length;
-      const end = target.el.selectionEnd ?? start;
-      setConfig(key, cur.slice(0, start) + token + cur.slice(end));
-      const caret = start + token.length;
-      setTimeout(() => { try { target.el.focus(); target.el.setSelectionRange(caret, caret); } catch { /* element gone */ } }, 0);
-    } else setConfig(key, cur + (cur && !/\s$/.test(cur) ? " " : "") + token);
+    const keys = NODE_CATALOG[sel.data.kind].fields.filter((f) => (f.type === "text" || f.type === "textarea") && TOKEN_KEYS.includes(f.key)).map((f) => f.key);
+    const base = keys.includes("body") ? "body" : keys.includes("fallback") ? "fallback" : keys.includes("payload") ? "payload" : keys.includes("instruction") ? "instruction" : keys[0];
+    const key = activeToken.current && keys.includes(activeToken.current) ? activeToken.current : base && lang === "en" && keys.includes(`${base}_en`) ? `${base}_en` : base;
+    if (key) tokenRefs.current[key]?.insert(raw);
   };
   const setConfig = (key: string, value: ConfigValue) => {
     setNodes((ns) => ns.map((n) => (n.id === selected ? { ...n, data: { ...n.data, config: { ...n.data.config, [key]: value } } } : n)));
@@ -557,8 +555,8 @@ function Builder() {
                     <button className="button button-ghost button-small" type="button" onClick={() => { checkpoint(); setNodes((ns) => ns.map((n) => (n.id === sel.id ? { ...n, data: { ...n.data, config: Object.fromEntries(Object.entries(n.data.config).filter(([k]) => k !== "method")) } } : n))); touch(); }}>{t("builder.readClear")}</button>
                   </div>
                 )}
-                <ProvidesList kind={sel.data.kind} />
-                {(sel.data.kind === "send_notification" || sel.data.kind === "request_documents") && <InsertChips nodes={nodes.map((n) => ({ id: n.id, kind: n.data.kind }))} edges={edges.map((e) => ({ source: e.source, target: e.target }))} nodeId={sel.id} onInsert={insertToken} />}
+                <ProvidesList kind={sel.data.kind} stepId={sel.id} names={tokens.names} />
+                {hasTokenFields && <p className="small muted tiles-hint" style={{ margin: 0 }}>{t("builder.tilesHint")}</p>}
                 {sel.data.kind === "assign_caseworker" && <AssignmentTable embedded />}
                 {sel.data.kind === "run_rules" && <RulePicker value={sel.data.config.rules === undefined ? undefined : String(sel.data.config.rules)} onChange={(v) => { checkpoint(); setConfig("rules", v); }} />}
                 {NODE_CATALOG[sel.data.kind].fields.filter((f) => !(sel.data.kind === "run_rules" && f.key === "rules")).map((f) => {
@@ -579,18 +577,37 @@ function Builder() {
                         >
                           {options?.map((o) => <option key={o.value} value={o.value}>{bi(o.label)}</option>)}
                         </select>
+                      ) : (f.type === "text" || f.type === "textarea") && TOKEN_KEYS.includes(f.key) ? (
+                        <TokenField
+                          key={`${sel.id}:${f.key}`}
+                          ref={(h) => { tokenRefs.current[f.key] = h; }}
+                          value={String(val)}
+                          multiline={f.type === "textarea"}
+                          rows={f.key.startsWith("fallback") || f.key.startsWith("body") ? 7 : f.key === "payload" ? 3 : 4}
+                          resolve={tokens.resolve}
+                          sig={tokens.sig}
+                          label={bi(f.label)}
+                          onFocus={() => { checkpoint(); activeToken.current = f.key; setTilesOpen(true); }}
+                          onChange={(v) => setConfig(f.key, v)}
+                        />
                       ) : f.type === "textarea" ? (
-                        <textarea rows={f.key.startsWith("fallback") || f.key.startsWith("body") ? 7 : 4} value={String(val)} onFocus={(e) => { checkpoint(); lastField.current = { key: f.key, el: e.currentTarget }; }} onChange={(e) => setConfig(f.key, e.target.value)} />
+                        <textarea rows={f.key.startsWith("fallback") || f.key.startsWith("body") ? 7 : 4} value={String(val)} onFocus={checkpoint} onChange={(e) => setConfig(f.key, e.target.value)} />
                       ) : f.type === "number" ? (
                         <input type="number" min={1} value={Number(val)} onFocus={checkpoint} onChange={(e) => setConfig(f.key, Number(e.target.value))} />
                       ) : (
-                        <input value={String(val)} onFocus={(e) => { checkpoint(); lastField.current = { key: f.key, el: e.currentTarget }; }} onChange={(e) => setConfig(f.key, e.target.value)} />
+                        <input value={String(val)} onFocus={checkpoint} onChange={(e) => setConfig(f.key, e.target.value)} />
                       )}
                     </label>
                   );
                 })}
                 <button className="button button-ghost button-small" type="button" onClick={() => { checkpoint(); setNodes((ns) => ns.filter((n) => n.id !== sel.id)); setEdges((es) => es.filter((e) => e.source !== sel.id && e.target !== sel.id)); setSelected(null); touch(); }}>{t("builder.delete")}</button>
               </div>
+            </aside>
+          )}
+          {sel && !showInputs && hasTokenFields && tilesOpen && (
+            <aside className="ws-tiles" aria-label={t("builder.tilesTitle")}>
+              <button className="icon-button ws-tiles-x" type="button" aria-label={t("builder.close")} onClick={() => setTilesOpen(false)}><X size={15} /></button>
+              <OutputTiles upstream={tokens.upstream} names={tokens.names} onInsert={insertToken} />
             </aside>
           )}
         </div>

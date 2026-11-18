@@ -45,7 +45,10 @@ const fill = (text: string, app: Application, vars: Record<string, string> = {})
     .replace(/\{name\}/g, `${app.student.firstName} ${app.student.lastName}`)
     .replace(/\{reference\}/g, app.reference)
     .replace(/\{amount\}/g, app.decision ? `${app.decision.monthlyAmount} €` : `${estimate(app).monthly} €`)
-    .replace(/\{([a-z_]+)\}/g, (whole, key: string) => (key in vars ? vars[key]! : whole));
+    .replace(/\{([A-Za-z0-9_-]+)(?:\.([a-z_]+))?\}/g, (whole, a: string, b?: string) => {
+      const key = b ? `${a}.${b}` : a;
+      return key in vars ? vars[key]! : whole;
+    });
 
 /** A text of a step with everything filled in: the applicant's language, the name, the reference and what earlier steps produced. */
 export const nodeText = (node: FlowNode, key: string, app: Application, vars: Record<string, string>): string => fill(textOf(node, key, app), app, vars);
@@ -89,7 +92,7 @@ function connectorResponse(system: string, action: string, app: Application) {
   return { ok: true, externalId: id, mode: "prototype connector: no real system was called", system, action };
 }
 
-function conditionHolds(node: FlowNode, app: Application, report: CheckReport, now: Date): boolean {
+function conditionHolds(node: FlowNode, app: Application, report: CheckReport, now: Date, valueText: string): boolean {
   const facts = buildFacts(app, now);
   const values: Record<string, unknown> = {
     blockers: report.blockers, warnings: report.warnings, estimateMonthly: estimate(app, now).monthly, tuitionFees: app.stay.tuitionFees,
@@ -97,7 +100,7 @@ function conditionHolds(node: FlowNode, app: Application, report: CheckReport, n
   };
   const field = String(node.config.field);
   const op = String(node.config.op);
-  const value = String(node.config.value);
+  const value = valueText;
   const check: Check =
     op === "ne" ? { not: { eq: [{ ref: "v" }, value] } } : op === "eq" ? { eq: [{ ref: "v" }, value] } : op === "lte" ? { lte: [{ ref: "v" }, value] } : { gte: [{ ref: "v" }, value] };
   return evaluate(check, { v: values[field] });
@@ -111,6 +114,7 @@ async function execute(def: ProcessDef, start: string, input: Application, ctx: 
   let report: CheckReport | null = null;
   let mailDraft: { subject: string; body: string } | null = null;
   let waiting: string | undefined;
+  let briefing: string | undefined;
   let finished = false;
   let current: string | undefined = start;
   const at = () => ctx.now.toISOString();
@@ -121,6 +125,11 @@ async function execute(def: ProcessDef, start: string, input: Application, ctx: 
     const node = byId.get(current);
     if (!node) break;
     const entry = (note: string, handle?: string) => log.push({ at: at(), nodeId: node.id, kind: node.kind, handle, note });
+    /** An output of this step: kept under its plain name (the latest one) and under the name of this step, so two steps of the same kind never get mixed up. */
+    const out = (k: string, v: string) => {
+      vars[k] = v;
+      vars[`${node.id}.${k}`] = v;
+    };
     let handle = "out";
     switch (node.kind) {
       case "trigger": {
@@ -137,10 +146,10 @@ async function execute(def: ProcessDef, start: string, input: Application, ctx: 
       case "run_rules": {
         report = ctx.check(app, ruleSelection(node));
         handle = report.ready ? "complete" : "incomplete";
-        vars.open_items = bullets(report.findings.filter((f) => f.severity === "blocker").map((f) => f.fix[app.language]));
-        vars.warnings = bullets(report.findings.filter((f) => f.severity !== "blocker").map((f) => f.fix[app.language]));
-        vars.missing_documents = bullets((report.requirements ?? []).filter((r) => r.type === "document" && r.applies && r.required && r.state !== "ok").map((r) => r.label[app.language]));
-        vars.open_count = String(report.blockers);
+        out("open_items", bullets(report.findings.filter((f) => f.severity === "blocker").map((f) => f.fix[app.language])));
+        out("warnings", bullets(report.findings.filter((f) => f.severity !== "blocker").map((f) => f.fix[app.language])));
+        out("missing_documents", bullets((report.requirements ?? []).filter((r) => r.type === "document" && r.applies && r.required && r.state !== "ok").map((r) => r.label[app.language])));
+        out("open_count", String(report.blockers));
         entry(report.ready ? "All approved rules pass" : `${report.blockers} blocking item(s): ${report.findings.filter((f) => f.severity === "blocker").map((f) => f.ruleId).join(", ")}`, handle);
         break;
       }
@@ -164,26 +173,27 @@ async function execute(def: ProcessDef, start: string, input: Application, ctx: 
           else if (extraction.needsReview) doubtful.push(docs[i]!.kind);
         }
         app = { ...app, documents: docs };
-        vars.documents_read = bullets(docs.filter((d) => inScope(d) && d.extraction.readable).map((d) => `${d.filename} (${d.extraction.engine ?? "builtin"})`));
-        vars.unreadable_documents = bullets(docs.filter((d) => inScope(d) && !d.extraction.readable).map((d) => d.filename));
+        out("documents_read", bullets(docs.filter((d) => inScope(d) && d.extraction.readable).map((d) => `${d.filename} (${d.extraction.engine ?? "builtin"})`)));
+        out("unreadable_documents", bullets(docs.filter((d) => inScope(d) && !d.extraction.readable).map((d) => d.filename)));
         handle = doubtful.length || unreadable ? "review" : "clear";
         entry(`${docs.filter(inScope).length} document(s) read with ${[...engines].join(", ") || "no reader"}${doubtful.length ? `; low confidence: ${doubtful.join(", ")}` : ""}${unreadable ? `; ${unreadable} unreadable` : ""}`, handle);
         break;
       }
       case "review_fields": {
         const r = ctx.review?.(app);
-        vars.review_list = r?.list ?? "";
-        vars.review_details = r?.details ?? "";
+        out("review_list", r?.list ?? "");
+        out("review_details", r?.details ?? "");
         waiting = node.id;
-        entry(`Waiting for a person to check the fields${textOf(node, "instruction", app) ? `: ${textOf(node, "instruction", app)}` : ""}`);
+        briefing = fill(textOf(node, "instruction", app), app, vars).trim() || undefined;
+        entry(`Waiting for a person to check the fields${briefing ? `: ${briefing}` : ""}`);
         current = undefined;
         continue;
       }
       case "condition": {
         report ??= ctx.check(app);
-        const yes = conditionHolds(node, app, report, ctx.now);
+        const yes = conditionHolds(node, app, report, ctx.now, fill(String(node.config.value ?? ""), app, vars));
         handle = yes ? "yes" : "no";
-        vars.condition_result = handle;
+        out("condition_result", handle);
         entry(`${node.config.field} ${node.config.op} ${node.config.value}: ${handle}`, handle);
         break;
       }
@@ -193,7 +203,7 @@ async function execute(def: ProcessDef, start: string, input: Application, ctx: 
           entry("No caseworker table is set up");
           break;
         }
-        vars.caseworker = who.name;
+        out("caseworker", who.name);
         app = {
           ...app,
           assignedTo: { id: who.id, name: who.name, via: who.via, at: at() },
@@ -204,18 +214,18 @@ async function execute(def: ProcessDef, start: string, input: Application, ctx: 
       }
       case "assign_team":
         app = { ...app, assignedTeam: String(node.config.team) };
-        vars.team = String(node.config.team);
+        out("team", String(node.config.team));
         entry(`Assigned to ${node.config.team}`);
         break;
       case "wait":
-        vars.reminder_date = new Date(ctx.now.getTime() + Number(node.config.days || 0) * 86_400_000).toISOString().slice(0, 10);
+        out("reminder_date", new Date(ctx.now.getTime() + Number(node.config.days || 0) * 86_400_000).toISOString().slice(0, 10));
         entry(`Reminder planned in ${node.config.days} day(s) (simulated, not waited)`);
         break;
       case "ai_draft_mail":
         report ??= ctx.check(app);
         mailDraft = draftMail(app, report, String(node.config.tone));
-        vars.draft_subject = mailDraft.subject;
-        vars.draft_body = mailDraft.body;
+        out("draft_subject", mailDraft.subject);
+        out("draft_body", mailDraft.body);
         entry("Mail drafted by AI (simulated)");
         break;
       case "request_documents": {
@@ -223,16 +233,16 @@ async function execute(def: ProcessDef, start: string, input: Application, ctx: 
           const subject = de() ? `Rückfrage zu Ihrem Antrag ${app.reference}` : `Question about your application ${app.reference}`;
           const text = frameMail(app, app.officeMessage.trim());
           send({ to: "student", subject, body: text, aiDraft: false, nodeId: node.id });
-          vars.request_subject = subject;
-          vars.request_text = text;
+          out("request_subject", subject);
+          out("request_text", text);
           entry("Question sent, written by the caseworker");
           break;
         }
         const body = mailDraft?.body ?? fill(textOf(node, "fallback", app), app, vars);
         const subject = mailDraft?.subject ?? `Ihr Antrag ${app.reference}`;
         send({ to: "student", subject, body, aiDraft: Boolean(mailDraft), nodeId: node.id });
-        vars.request_subject = subject;
-        vars.request_text = body;
+        out("request_subject", subject);
+        out("request_text", body);
         app = { ...app, status: "info_requested", officeMessage: body.split("\n\n").slice(1, -1).join("\n\n") || body, history: [...app.history, { at: at(), kind: "info_requested", text: "Automatisch durch den Ablauf" }] };
         entry(`Documents requested, message sent${mailDraft ? " (AI draft)" : ""}`);
         break;
@@ -241,8 +251,8 @@ async function execute(def: ProcessDef, start: string, input: Application, ctx: 
         const subject = fill(textOf(node, "subject", app), app, vars);
         const body = fill(textOf(node, "body", app), app, vars);
         send({ to: node.config.to as Mail["to"], subject, body, aiDraft: false, nodeId: node.id });
-        vars.message_subject = subject;
-        vars.message_body = body;
+        out("message_subject", subject);
+        out("message_body", body);
         entry(`Message to ${node.config.to}`);
         break;
       }
@@ -250,16 +260,17 @@ async function execute(def: ProcessDef, start: string, input: Application, ctx: 
         const system = String(node.config.system);
         const action = String(node.config.action);
         const response = connectorResponse(system, action, app);
-        vars.connector_id = response.externalId;
-        vars.connector_system = system;
-        vars.connector_action = action;
-        app = { ...app, integrations: [...(app.integrations ?? []), { at: at(), nodeId: node.id, system, action, request: { reference: app.reference, amount: app.decision?.monthlyAmount }, response }] };
+        out("connector_id", response.externalId);
+        out("connector_system", system);
+        out("connector_action", action);
+        app = { ...app, integrations: [...(app.integrations ?? []), { at: at(), nodeId: node.id, system, action, request: { reference: app.reference, amount: app.decision?.monthlyAmount, payload: fill(String(node.config.payload ?? ""), app, vars) }, response }] };
         entry(`${system}.${action} → ${response.externalId}`);
         break;
       }
       case "human_task":
         waiting = node.id;
-        entry(`Waiting for the caseworker${textOf(node, "instruction", app) ? `: ${textOf(node, "instruction", app)}` : ""}`);
+        briefing = fill(textOf(node, "instruction", app), app, vars).trim() || undefined;
+        entry(`Waiting for the caseworker${briefing ? `: ${briefing}` : ""}`);
         current = undefined;
         continue;
       case "end":
@@ -271,7 +282,7 @@ async function execute(def: ProcessDef, start: string, input: Application, ctx: 
     current = next(node.id, handle);
     if (!current && NODE_CATALOG[node.kind].outputs.length > 0) finished = true; // loose end: stop quietly
   }
-  const flow = { processId: def.id, version: def.version, startedAt: app.flow?.startedAt ?? at(), log, waiting, finished, vars };
+  const flow = { processId: def.id, version: def.version, startedAt: app.flow?.startedAt ?? at(), log, waiting, finished, vars, briefing };
   return { ...app, flow, updatedAt: at() };
 }
 
@@ -296,9 +307,13 @@ export async function resumeRun(def: ProcessDef, app: Application, outcome: Outc
   if (!edge) return { ...app, flow: { ...app.flow!, log, waiting: undefined, finished: true } };
   const vars: Record<string, string> = { ...(app.flow?.vars ?? {}) };
   if (waitingNode?.kind === "human_task") {
-    vars.decision = outcome;
-    vars.decision_note = app.decision?.note ?? app.officeMessage ?? "";
-    vars.decision_amount = app.decision ? `${app.decision.monthlyAmount} €` : "";
+    const set = (k: string, v: string) => {
+      vars[k] = v;
+      vars[`${waitingNode.id}.${k}`] = v;
+    };
+    set("decision", outcome);
+    set("decision_note", app.decision?.note ?? app.officeMessage ?? "");
+    set("decision_amount", app.decision ? `${app.decision.monthlyAmount} €` : "");
   }
   return execute(def, edge.target, { ...app, flow: { ...app.flow!, waiting: undefined } }, ctx, log, vars);
 }

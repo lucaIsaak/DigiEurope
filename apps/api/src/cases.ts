@@ -100,7 +100,8 @@ export function questionDraft(store: Store, app: Application, now: Date = new Da
   const target = reviewNode ? def?.edges.find((e) => e.source === reviewNode.id && e.sourceHandle === "info")?.target : undefined;
   const node = def?.nodes.find((n) => n.id === target && n.kind === "request_documents" && n.config.sending === "caseworker");
   if (node && app.flow?.vars?.review_list !== undefined) {
-    const vars = { ...app.flow.vars, ...Object.fromEntries(Object.entries(reviewReport(store, app)).map(([k, v]) => [`review_${k}`, v])) };
+    const fresh = Object.fromEntries(Object.entries(reviewReport(store, app)).flatMap(([k, v]) => [[`review_${k}`, v], [`${reviewNode!.id}.review_${k}`, v]]));
+    const vars = { ...app.flow.vars, ...fresh };
     const message = nodeText(node, "fallback", app, vars).trim();
     return { subject: app.language === "de" ? `Rückfrage zu Ihrem Antrag ${app.reference}` : `Question about your application ${app.reference}`, message, items: (vars.review_list ?? "").split("\n").filter(Boolean).length };
   }

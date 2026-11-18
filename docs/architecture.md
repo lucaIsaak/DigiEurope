@@ -111,3 +111,8 @@ Statuses: `draft → submitted → in_review → (info_requested ↔ submitted) 
 - A process for owning and updating the shared federal rule set after law changes.
 
 Decisions are recorded in `docs/adr/`.
+
+
+## Outputs between steps
+
+Every step of a process can hand named results to the steps after it (`STEP_OUTPUTS` in `packages/shared/src/process.ts`): the review step hands on a brief list of unclear fields and the reasons, the rules step the open items and missing documents, the decision step the explanation and amount, a system connector the ID the system returned, and so on. A later step in the same branch puts them into any of its texts (subject, message, note for the caseworker, compare-to value, data sent to a system) as a coloured tile. Stored, a tile is `{stepId.output}`, so two steps of the same kind never get mixed up; `{name}`, `{reference}` and `{amount}` are always available. The engine keeps the results with the case (`flow.vars`), so they survive the waits for a person, and "Validate" reports a tile whose step is not connected before the step that uses it.

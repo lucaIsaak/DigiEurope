@@ -4,6 +4,7 @@ import { PROPOSAL_SAMPLE_TITLE, SAMPLE_SETS, fixDocuments, formblatt8, getPerson
 import { extractDocument } from "./documents.js";
 import { seedDemoData } from "./seed.js";
 import { startRun } from "./engine.js";
+import type { ProcessDef } from "@digieurope/shared";
 import { checksFor, reviewReport } from "./cases.js";
 import { Store } from "./store.js";
 
@@ -806,7 +807,7 @@ describe("outputs handed on between steps (running)", () => {
     const { id, person } = await create(app, "mira");
     for (const d of sampleDocuments(person, ["host_missing", "parent_unsigned"], "en")) await upload(app, `/applications/${id}/documents`, d.filename, d.content);
     const a = store.get(id)!;
-    const def = {
+    const def: ProcessDef = {
       id: "t", catalogId: "bafoeg.abroad", name: "t", version: 1, updatedAt: "", updatedBy: "", inputs: [],
       nodes: [
         { id: "s", kind: "trigger" as const, position: { x: 0, y: 0 }, config: { source: "any" } },
@@ -828,5 +829,47 @@ describe("outputs handed on between steps (running)", () => {
     expect(mail.body).toContain("Host university confirmation");
     expect(mail.body).not.toContain("{open_items}");
     expect(run.flow!.vars!.open_count).toBe(mail.subject.split(" ")[0]);
+  });
+});
+
+describe("outputs of one particular step", () => {
+  it("two steps of the same kind keep their own outputs, and a message can pick either", async () => {
+    const { app, store } = setup();
+    const { id, person } = await create(app, "mira");
+    for (const d of sampleDocuments(person, ["host_missing", "parent_unsigned"], "en")) await upload(app, `/applications/${id}/documents`, d.filename, d.content);
+    const a = store.get(id)!;
+    const n = (nid: string, kind: ProcessDef["nodes"][number]["kind"], config: Record<string, string | number> = {}) => ({ id: nid, kind, position: { x: 0, y: 0 }, config });
+    const e = (source: string, handle: string, target: string) => ({ id: `${source}:${handle}`, source, sourceHandle: handle, target });
+    const all = (store.liveRules().map((r) => r.id)).join(",");
+    const def: ProcessDef = {
+      id: "t2", catalogId: "bafoeg.abroad", name: "t2", version: 1, updatedAt: "", updatedBy: "", inputs: [],
+      nodes: [n("s", "trigger", { source: "any" }), n("first", "run_rules", { rules: "" }), n("second", "run_rules", { rules: all }), n("m", "send_notification", { to: "student", subject: "x", body: "x", subject_en: "Counts", body_en: "First: {first.open_count}, second: {second.open_count}, latest: {open_count}" }), n("e", "end")],
+      edges: [e("s", "out", "first"), e("first", "incomplete", "second"), e("first", "complete", "e"), e("second", "incomplete", "m"), e("second", "complete", "e"), e("m", "out", "e")],
+    };
+    const run = await startRun(def, { ...a, language: "en" }, { now: NOW, check: (x, ids) => checksFor(store, x, NOW, ids) });
+    const body = run.outbox!.find((m) => m.nodeId === "m")!.body;
+    const first = Number(/First: (\d+)/.exec(body)![1]);
+    const second = Number(/second: (\d+)/.exec(body)![1]);
+    const latest = Number(/latest: (\d+)/.exec(body)![1]);
+    expect(second).toBeGreaterThan(first);
+    expect(latest).toBe(second);
+    expect(run.flow!.vars!["first.open_count"]).toBe(String(first));
+  });
+
+  it("a caseworker's briefing and a condition can use outputs too", async () => {
+    const { app, store } = setup();
+    const { id, person } = await create(app, "mira");
+    for (const d of sampleDocuments(person, [], "en")) await upload(app, `/applications/${id}/documents`, d.filename, d.content);
+    const a = store.get(id)!;
+    const n = (nid: string, kind: ProcessDef["nodes"][number]["kind"], config: Record<string, string | number> = {}) => ({ id: nid, kind, position: { x: 0, y: 0 }, config });
+    const e = (source: string, handle: string, target: string) => ({ id: `${source}:${handle}`, source, sourceHandle: handle, target });
+    const def: ProcessDef = {
+      id: "t3", catalogId: "bafoeg.abroad", name: "t3", version: 1, updatedAt: "", updatedBy: "", inputs: [],
+      nodes: [n("s", "trigger", { source: "any" }), n("r", "run_rules", { rules: "" }), n("c", "condition", { field: "blockers", op: "lte", value: "{r.open_count}" }), n("h", "human_task", { instruction: "x", instruction_en: "{r.open_count} open items for {name}" }), n("e", "end")],
+      edges: [e("s", "out", "r"), e("r", "incomplete", "c"), e("r", "complete", "c"), e("c", "yes", "h"), e("c", "no", "e"), e("h", "approved", "e"), e("h", "rejected", "e"), e("h", "info", "e")],
+    };
+    const run = await startRun(def, { ...a, language: "en" }, { now: NOW, check: (x, ids) => checksFor(store, x, NOW, ids) });
+    expect(run.flow!.waiting).toBe("h");
+    expect(run.flow!.briefing).toMatch(/^\d+ open items for Mira Sommer$/);
   });
 });
