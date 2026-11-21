@@ -20,6 +20,7 @@ import {
   validateProcess,
   type Category,
   type ConfigValue,
+  type GeneratedProcess,
   type FlowEdge,
   type FlowNode,
   type Mention,
@@ -75,6 +76,7 @@ import {
   Send,
   ShieldCheck,
   Sparkles,
+  MessageSquareText,
   Undo2,
   UserCheck,
   Users,
@@ -131,6 +133,11 @@ function Builder() {
   const [showVersions, setShowVersions] = useState(false);
   const [inputs, setInputs] = useState<ProcessInput[]>([]);
   const [showInputs, setShowInputs] = useState(false);
+  const [showGen, setShowGen] = useState(false);
+  const [genText, setGenText] = useState("");
+  const [genMode, setGenMode] = useState<"simulated" | "live">("simulated");
+  const [genInfo, setGenInfo] = useState<{ live: boolean; model: string | null } | null>(null);
+  const [genResult, setGenResult] = useState<(GeneratedProcess & { mode: "simulated" | "live"; fellBack?: string }) | null>(null);
   const [owner, setOwner] = useState("");
   const [tests, setTests] = useState<ProcessTest[]>([]);
   const [showTests, setShowTests] = useState(false);
@@ -397,6 +404,31 @@ function Builder() {
     touch();
     setToast({ text: n ? t("doc.done", { n: String(n) }) : t("doc.none"), tone: "ok" });
   };
+  const openGen = () => {
+    setShowGen((v) => !v);
+    setShowInputs(false);
+    setSelected(null);
+    if (!genInfo) api.generateInfo().then(setGenInfo).catch(() => setGenInfo({ live: false, model: null }));
+  };
+  const createProposal = async () => {
+    if (genText.trim().length < 10) return setToast({ text: t("gen.tooShort"), tone: "warn" });
+    setGenResult(null);
+    const r = await run(() => api.generateProcess(genText, genMode));
+    if (r) setGenResult(r);
+  };
+  const placeProposal = () => {
+    if (!genResult) return;
+    checkpoint();
+    const ns = layout(genResult.nodes.map(toRfNode), genResult.edges.map((e) => rfEdge(e, [])));
+    setNodes(ns);
+    setEdges(genResult.edges.map((e) => rfEdge(e, ns)));
+    setSelected(null);
+    setShowGen(false);
+    setGenResult(null);
+    touch();
+    setToast({ text: t("gen.placed"), tone: "ok" });
+    setTimeout(() => rf.fitView({ padding: 0.12, duration: 250 }), 120);
+  };
   const pendingSuggestions = nodes.filter((n) => n.data.suggestion).length;
   /** The request of an HTTP step as the JSON picker sends it for a test: tiles are filled with example values. */
   const httpRequestOf = (c: Record<string, ConfigValue>) => {
@@ -525,7 +557,8 @@ function Builder() {
           </span>
         )}
         <span className="ws-spacer" />
-        <button className={`button button-small ${showInputs ? "" : "button-ghost"}`} type="button" onClick={() => { setShowInputs((v) => !v); setSelected(null); }}><ListChecks size={15} />{t("builder.inputs")} ({inputs.length})</button>
+        <button className={`button button-small ${showInputs ? "" : "button-ghost"}`} type="button" onClick={() => { setShowInputs((v) => !v); setShowGen(false); setSelected(null); }}><ListChecks size={15} />{t("builder.inputs")} ({inputs.length})</button>
+        <button className={`button button-small ${showGen ? "" : "button-ghost"}`} type="button" onClick={openGen}><MessageSquareText size={15} />{t("gen.open")}</button>
         <button className="button button-ghost button-small" type="button" disabled={busy} title={t("doc.simulated")} onClick={documentWithAi}><Sparkles size={15} />{t("doc.run")}{pendingSuggestions > 0 ? ` (${pendingSuggestions})` : ""}</button>
         {pendingSuggestions > 0 && <button className="link-button small" type="button" onClick={() => { checkpoint(); setNodes((ns) => ns.map((x) => ({ ...x, data: { ...x.data, suggestion: undefined } }))); touch(); }}>{t("doc.rejectAll")}</button>}
         <button className="button button-ghost button-small" type="button" onClick={validate}><CheckCircle2 size={15} />{t("builder.validate")}</button>
@@ -657,7 +690,50 @@ function Builder() {
               <div className="body"><InputsEditor inputs={inputs} templates={templates} onChange={(next) => { setInputs(next); touch(); }} /></div>
             </aside>
           )}
-          {sel && !showInputs && (
+          {showGen && (
+            <aside className="ws-inspector gen-panel" aria-label={t("gen.title")}>
+              <header>
+                <span className="ico"><MessageSquareText size={16} strokeWidth={2.2} /></span>
+                <div style={{ flex: 1 }}><strong>{t("gen.title")}</strong></div>
+                <button className="icon-button" type="button" aria-label={t("builder.close")} onClick={() => setShowGen(false)}><X size={16} /></button>
+              </header>
+              <div className="body" style={{ display: "grid", gap: "0.7rem", alignContent: "start" }}>
+                <p className="small muted" style={{ margin: 0 }}>{t("gen.help")}</p>
+                <textarea rows={7} value={genText} placeholder={t("gen.placeholder")} onChange={(e) => { setGenText(e.target.value); setGenResult(null); }} aria-label={t("gen.title")} />
+                <div className="row" style={{ gap: "0.5rem" }}>
+                  <button className="link-button small" type="button" onClick={() => { setGenText(t("gen.example")); setGenResult(null); }}>{t("gen.useExample")}</button>
+                </div>
+                <fieldset className="gen-mode">
+                  <legend className="small">{t("gen.mode")}</legend>
+                  <label><input type="radio" name="gen-mode" checked={genMode === "simulated"} onChange={() => setGenMode("simulated")} /> {t("gen.simulated")}</label>
+                  <label className={genInfo?.live ? "" : "muted"}><input type="radio" name="gen-mode" disabled={!genInfo?.live} checked={genMode === "live"} onChange={() => setGenMode("live")} /> {t("gen.live")}{genInfo?.model ? ` · ${genInfo.model}` : ""}</label>
+                  {genInfo && !genInfo.live && <span className="small muted">{t("gen.liveOff")}</span>}
+                </fieldset>
+                <button className="button" type="button" disabled={busy} onClick={createProposal}><Sparkles size={15} />{busy ? t("gen.running") : t("gen.run")}</button>
+                {genResult && (
+                  <div className="doc-card" role="group" aria-label={t("gen.result", { steps: String(genResult.nodes.length), links: String(genResult.edges.length) })}>
+                    <div className="doc-head"><Sparkles size={14} /><strong>{t("gen.result", { steps: String(genResult.nodes.length), links: String(genResult.edges.length) })}</strong></div>
+                    {genResult.fellBack && <p className="small" style={{ margin: 0 }}>{t("gen.fellBack", { e: genResult.fellBack })}</p>}
+                    {genResult.understood.length > 0 && (
+                      <div><strong className="small">{t("gen.understood")}</strong><ul className="gen-list">{genResult.understood.map((x, i) => <li key={i}>{x}</li>)}</ul></div>
+                    )}
+                    {genResult.unmapped.length > 0 && (
+                      <div><strong className="small">{t("gen.unmapped")}</strong><ul className="gen-list warn">{genResult.unmapped.map((x, i) => <li key={i}>{x}</li>)}</ul></div>
+                    )}
+                    {genResult.issues.length > 0 && (
+                      <div><strong className="small">{t("gen.issues")}</strong><ul className="gen-list warn">{genResult.issues.map((x, i) => <li key={i}>{bi(x.message)}</li>)}</ul></div>
+                    )}
+                    {nodes.length > 0 && <p className="small muted" style={{ margin: 0 }}>{t("gen.replaces")}</p>}
+                    <div className="row" style={{ gap: "0.5rem" }}>
+                      <button className="button button-small" type="button" onClick={placeProposal}>{t("gen.place")}</button>
+                      <button className="button button-ghost button-small" type="button" onClick={() => setGenResult(null)}>{t("gen.discard")}</button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </aside>
+          )}
+          {sel && !showInputs && !showGen && (
             <aside className="ws-inspector" aria-label={t("builder.config")}>
               <header className={`cat-${NODE_CATALOG[sel.data.kind].category}`}>
                 <span className="ico">{(() => { const I = ICONS[sel.data.kind]; return <I size={16} strokeWidth={2.2} />; })()}</span>
@@ -798,7 +874,7 @@ function Builder() {
               </div>
             </aside>
           )}
-          {sel && !showInputs && hasTokenFields && tilesOpen && (
+          {sel && !showInputs && !showGen && hasTokenFields && tilesOpen && (
             <aside className="ws-tiles" aria-label={t("builder.tilesTitle")}>
               <button className="icon-button ws-tiles-x" type="button" aria-label={t("builder.close")} onClick={() => setTilesOpen(false)}><X size={15} /></button>
               {exprStack.map((e, i) => (

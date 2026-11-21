@@ -605,7 +605,7 @@ export function validateProcess(def: Pick<ProcessDef, "nodes" | "edges"> & { cat
         } else texts.push([k, v]);
       }
       for (const [k, v] of texts) for (const msg of checkText(v)) issues.push({ nodeId: n.id, message: { de: `„${label.de}“ (${k}): ${msg}`, en: `“${label.en}” (${k}): ${msg}` } });
-      if (n.kind === "condition" && (String(n.config.field ?? "custom") !== "custom" || ["gte", "lte"].includes(String(n.config.op)))) {
+      if (n.kind === "condition" && (CONDITION_FIELDS.some((f) => f.key === n.config.field && f.numeric) || ["gte", "lte"].includes(String(n.config.op)))) {
         const ty = typeOfText(String(n.config.value ?? ""), (name) => outputType(name));
         if (ty !== "number" && ty !== "any") issues.push({ nodeId: n.id, message: { de: `„${label.de}“: Der Vergleichswert ist ${ty === "list" ? "eine Liste" : "keine Zahl"}. Eine Bedingung vergleicht Zahlen; nehmen Sie bei einer Liste „Anzahl“ oder die Funktion „Anzahl“.`, en: `“${label.en}”: the compare-to value is ${ty === "list" ? "a list" : "not a number"}. A condition compares numbers; for a list use the format “count” or the function “Count”.` } });
       }

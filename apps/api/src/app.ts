@@ -55,6 +55,7 @@ import { Store as ScratchStore } from "./store.js";
 import { askLive, liveAvailable, retrieve } from "./assistant.js";
 import { PARENT_KINDS, addDocument, allSpecs, allTemplates, checksFor, readFor, checkNow, invite, newApplication, officeAct, open, removeDocument, submit, view, withAudit, draftFor, questionDraft, reviewReport, type OfficeAction } from "./cases.js";
 import { extractDocument } from "./documents.js";
+import { generateProcessFrom, liveProcessAiAvailable, processAiModel } from "./generator.js";
 import { readPdfLines } from "./pdf.js";
 import { computeInsights } from "./metrics.js";
 import { SAMPLE_SETS, fixDocuments, formblatt8, getPerson, proposalSample, sampleDocuments, sampleLetter, type Defect } from "./samples.js";
@@ -74,6 +75,8 @@ export interface AppOptions {
   now?: () => Date;
   /** Replaces the HTTP client of the "HTTP request" step (tests). */
   http?: (req: HttpRequest) => Promise<HttpResponse>;
+  /** Replaces fetch for the live process writer (tests). */
+  aiFetch?: typeof fetch;
 }
 
 const MAX_UPLOAD_BYTES = 5 * 1024 * 1024;
@@ -1080,6 +1083,15 @@ export function buildApp(opts: AppOptions) {
     const def = req.body?.def;
     if (!def || !Array.isArray(def.nodes) || !Array.isArray(def.edges) || def.nodes.length > 80) return bad(reply, "No process.");
     return { suggestions: documentProcess(def, now().toISOString()), simulated: true };
+  });
+  /** What can write a process from a description: the simulated writer always, a live model only when a key is set. */
+  app.get("/office/processes/generate/info", async () => ({ live: liveProcessAiAvailable(), model: liveProcessAiAvailable() ? processAiModel() : null }));
+  /** A process from a description. Only a proposal: nothing is saved, the builder shows it and the person decides. */
+  app.post<{ Body: { description?: string; mode?: string } }>("/office/processes/generate", async (req, reply) => {
+    const description = String(req.body?.description ?? "").trim();
+    if (description.length < 10) return bad(reply, "Describe the process in a few sentences first.");
+    if (description.length > 4000) return bad(reply, "The description is too long (at most 4000 characters).");
+    return generateProcessFrom(description, req.body?.mode === "live" ? "live" : "simulated", opts.aiFetch);
   });
   app.get("/demo-api/exchange", async () => DEMO_EXCHANGE);
   app.post<{ Body: unknown }>("/demo-api/echo", async (req) => ({ received: req.body ?? null, at: now().toISOString() }));

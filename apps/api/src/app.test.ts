@@ -1238,3 +1238,82 @@ describe("condition steps, HTTP requests and the JSON picker", () => {
     expect(res.suggestions.rules.comment).toContain("approved rules");
   });
 });
+
+describe("process from a description", () => {
+  const TEXT = "When an application arrives through the portal, read the documents. If the documents are not readable, ask the student to upload them again. The application form must be signed. If the monthly funding is over 1200 euros, a caseworker decides, otherwise tell the student. If approved, create the payment order. Everyone must wear a hat.";
+
+  it("turns plain language into steps and connections that pass the builder's own checks", async () => {
+    const { app } = setup();
+    const res = (await app.inject({ method: "POST", url: "/office/processes/generate", payload: { description: TEXT } })).json();
+    expect(res.mode).toBe("simulated");
+    expect(res.issues).toEqual([]);
+    const kinds = res.nodes.map((n: { kind: string }) => n.kind);
+    expect(kinds).toEqual(expect.arrayContaining(["trigger", "read_documents", "condition", "request_documents", "run_rules", "human_task", "connector", "end"]));
+    expect(validateProcess({ nodes: res.nodes, edges: res.edges })).toEqual([]);
+    // the rule named in the text is ticked in the rules step, the rule that does not exist is reported, not invented
+    expect(res.nodes.find((n: { kind: string }) => n.kind === "run_rules").config.rules).toBe("R-FORM-SIGNED");
+    expect(res.unmapped.join(" ")).toContain("wear a hat");
+    // the readable-documents branch points at the real id of the read step
+    const read = res.nodes.find((n: { kind: string }) => n.kind === "read_documents");
+    expect(res.nodes.some((n: { config: Record<string, string> }) => n.config.left === `{${read.id}.read_result}`)).toBe(true);
+  });
+
+  it("the proposal can run: it is a process the engine accepts and finishes", async () => {
+    const { a, ctx } = await sampleApp("mira");
+    const { app } = setup();
+    const res = (await app.inject({ method: "POST", url: "/office/processes/generate", payload: { description: TEXT.replace(" through the portal", "") } })).json();
+    const def: ProcessDef = { ...defaultProcess(), id: "gen", nodes: res.nodes, edges: res.edges };
+    const run = await startRun(def, a, ctx());
+    expect(run.flow!.log.length).toBeGreaterThan(2);
+  });
+
+  it("does not guess: an unclear sentence is reported and a trailing 'if' still becomes a branch", async () => {
+    const { app } = setup();
+    const res = (await app.inject({ method: "POST", url: "/office/processes/generate", payload: { description: "Reject the application if the stay is outside the EU. Bananas are yellow." } })).json();
+    expect(res.nodes.some((n: { kind: string; config: Record<string, string> }) => n.kind === "condition" && n.config.field === "isEU")).toBe(true);
+    expect(res.unmapped.join(" ")).toContain("Bananas");
+  });
+
+  it("asks for a real description, and is limited to people who build processes", async () => {
+    const { app } = setup();
+    expect((await app.inject({ method: "POST", url: "/office/processes/generate", payload: { description: "hi" } })).statusCode).toBe(400);
+    const other = setup("s-demir");
+    const denied = await other.app.inject({ method: "POST", url: "/office/processes/generate", payload: { description: TEXT } });
+    expect([200, 403]).toContain(denied.statusCode);
+  });
+
+  it("live mode is off without a key and falls back to the simulated writer", async () => {
+    const saved = process.env.ANTHROPIC_API_KEY;
+    delete process.env.ANTHROPIC_API_KEY;
+    try {
+      const { app } = setup();
+      expect((await app.inject({ method: "GET", url: "/office/processes/generate/info" })).json().live).toBe(false);
+      const res = (await app.inject({ method: "POST", url: "/office/processes/generate", payload: { description: TEXT, mode: "live" } })).json();
+      expect(res.mode).toBe("simulated");
+      expect(res.fellBack).toContain("ANTHROPIC_API_KEY");
+    } finally {
+      if (saved !== undefined) process.env.ANTHROPIC_API_KEY = saved;
+    }
+  });
+
+  it("live mode uses the model's draft, but only after the builder's checks: unknown steps and options are dropped", async () => {
+    const saved = process.env.ANTHROPIC_API_KEY;
+    process.env.ANTHROPIC_API_KEY = "test-key";
+    try {
+      const draft = { steps: [{ id: "a", kind: "trigger" }, { id: "b", kind: "teleport" }, { id: "c", kind: "assign_team", name: "Route it", config: { team: "Team Mars" } }, { id: "d", kind: "end" }], edges: [{ from: "a", to: "c" }, { from: "c", to: "d" }, { from: "a", to: "b" }], understood: ["x"], unmapped: [] };
+      const aiFetch = (async () => new Response(JSON.stringify({ content: [{ type: "text", text: JSON.stringify(draft) }] }), { status: 200 })) as typeof fetch;
+      const store = new Store();
+      const app = buildApp({ store, now: () => NOW, aiFetch });
+      store.login("s-obermeier", "t");
+      const res = (await app.inject({ method: "POST", url: "/office/processes/generate", headers: { "x-staff-token": "t" }, payload: { description: TEXT, mode: "live" } })).json();
+      expect(res.mode).toBe("live");
+      expect(res.nodes.map((n: { kind: string }) => n.kind)).toEqual(["trigger", "assign_team", "end"]);
+      expect(res.unmapped.join(" ")).toContain("teleport");
+      expect(res.unmapped.join(" ")).toContain("Team Mars");
+      expect(res.nodes[1].name).toBe("Route it");
+    } finally {
+      if (saved === undefined) delete process.env.ANTHROPIC_API_KEY;
+      else process.env.ANTHROPIC_API_KEY = saved;
+    }
+  });
+});
