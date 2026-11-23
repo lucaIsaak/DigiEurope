@@ -91,7 +91,7 @@ import { TemplateParams } from "@/components/TemplateParams";
 import { TokenField, type TokenFieldHandle } from "@/components/TokenField";
 import { RulePicker } from "@/components/RulePicker";
 import { InputsEditor } from "@/components/InputsEditor";
-import { CATEGORIES, ICONS, NODE_W, edgeBase, layout, ARROW, nodeTypes, toRfNode, type StepData, type StepNode } from "@/components/FlowKit";
+import { CATEGORIES, ICONS, NODE_H, NODE_W, edgeBase, layout, ARROW, nodeTypes, toRfNode, type StepData, type StepNode } from "@/components/FlowKit";
 import Link from "next/link";
 import { Spinner } from "@/components/ui";
 import { ApiError, api, type MessageEntry, type ProcessImpact, type ProcessTestResult, type TestRunResult } from "@/lib/api";
@@ -219,7 +219,15 @@ function Builder() {
     if (arrange) { params.delete("tidy"); window.history.replaceState(null, "", `${window.location.pathname}?${params}`); }
     if (!isDraft || arrange) ns = layout(ns, es);
     // Once the steps are drawn their real heights are known; arrange again so tall ones do not touch.
-    if (arrange) setTimeout(() => { setNodes((cur) => layout(cur, es)); setTimeout(() => rf.fitView({ padding: 0.12, duration: 250 }), 150); }, 700);
+    // Saved positions can overlap (they were set before the real heights were known): arrange those too, so a process never opens as a pile.
+    const overlapping = (cur: StepNode[]) => cur.some((a, i) => cur.slice(i + 1).some((b) => {
+      const aw = a.measured?.width ?? NODE_W, ah = a.measured?.height ?? NODE_H, bw = b.measured?.width ?? NODE_W, bh = b.measured?.height ?? NODE_H;
+      return a.position.x < b.position.x + bw && b.position.x < a.position.x + aw && a.position.y < b.position.y + bh && b.position.y < a.position.y + ah;
+    }));
+    setTimeout(() => {
+      setNodes((cur) => (arrange || overlapping(cur) ? layout(cur, es) : cur));
+      setTimeout(() => rf.fitView({ padding: 0.12, duration: 250 }), 150);
+    }, 700);
     setNodes(ns);
     setEdges(es);
     setName(def.name);
@@ -333,6 +341,17 @@ function Builder() {
       touch();
       setTimeout(() => { setNodes((ns) => layout(ns, edgesRef.current)); rf.fitView({ padding: 0.12, duration: 300 }); }, 80);
     }
+  };
+
+  /** One click on a connection: a condition is put on it ("only carry on if …"), and opens for editing. */
+  const addConditionOnEdge = () => {
+    const e = edgesRef.current.find((x) => x.id === selEdge);
+    if (!e) return;
+    const from = nodesRef.current.find((n) => n.id === e.source);
+    const to = nodesRef.current.find((n) => n.id === e.target);
+    const at = { x: Math.round(((from?.position.x ?? 0) + (to?.position.x ?? 0)) / 32) * 16, y: Math.round(((from?.position.y ?? 0) + (to?.position.y ?? 0)) / 32) * 16 };
+    addNode("condition", undefined, at, e.id);
+    setSelEdge(null);
   };
 
   const deleteEdge = () => {
@@ -531,7 +550,7 @@ function Builder() {
       <div className="ws-toolbar">
         <div className="ws-left">
         <Link href="/office/processes" className="button button-ghost button-small" onClick={(e) => { if (dirty && !window.confirm(t("builder.switchConfirm"))) e.preventDefault(); }}><ArrowLeft size={15} /><span className="hide-narrow">{t("builder.back")}</span></Link>
-        <input className="ws-name" value={name} onChange={(e) => { setName(e.target.value); touch(); }} aria-label={t("builder.name")} />
+        <input className="ws-name" style={{ width: `${Math.min(34, Math.max(10, name.length + 2))}ch` }} value={name} onChange={(e) => { setName(e.target.value); touch(); }} aria-label={t("builder.name")} />
         <Tip text={category !== DEFAULT_CATEGORY ? `${live ? t("builder.live", { v: live.version }) : t("builder.notLive")}. ${t("builder.notRunning")}` : live ? t("builder.live", { v: live.version }) : t("builder.notLive")}>
           {live ? <span className="pill pill-ok">{t("builder.live", { v: live.version })}</span> : <span className="pill pill-muted">{t("builder.notLive")}</span>}
         </Tip>
@@ -666,7 +685,8 @@ function Builder() {
           {selEdge && (
             <div className="ws-edgebar" role="status">
               <span>{t("builder.edge.selected")}</span>
-              <button type="button" className="button button-small" onClick={deleteEdge}>{t("builder.edge.delete")}</button>
+              <button type="button" className="button button-small" onClick={addConditionOnEdge}><GitBranch size={14} />{t("builder.edge.addCondition")}</button>
+              <button type="button" className="button button-ghost button-small" onClick={deleteEdge}>{t("builder.edge.delete")}</button>
             </div>
           )}
 

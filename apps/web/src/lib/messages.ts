@@ -490,6 +490,7 @@ const raw = {
   // Staff access
   "office.nav.builder": ["Prozesse", "Processes"],
   "builder.edge.selected": ["Verbindung ausgewählt", "Connection selected"],
+  "builder.edge.addCondition": ["Bedingung hier einfügen", "Add a condition here"],
   "builder.edge.delete": ["Verbindung löschen", "Delete connection"],
   "builder.edge.hint": ["Tipp: Ziehen Sie einen Schritt auf eine Verbindung, um ihn dazwischen einzufügen.", "Tip: drop a step onto a connection to put it in between."],
   "tip.tidy": ["Ordnet alle Schritte übersichtlich von oben nach unten an. Die Schritte werden dabei verschoben.", "Arranges all steps neatly from top to bottom. The steps are moved."],

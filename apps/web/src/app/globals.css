@@ -232,7 +232,7 @@ pre.code { background: var(--bg); border: 1px solid var(--line); border-radius: 
 :root[data-theme="dark"] { --canvas: #0b0d12; --grid: #222736; --edge: #7a8599; }
 .ws { display: flex; flex-direction: column; height: calc(100vh - 65px); min-height: 560px; background: var(--bg); }
 .ws-toolbar { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); align-items: center; gap: 0.75rem; padding: 0.5rem 0.85rem; background: var(--surface); border-bottom: 1px solid var(--line); flex-wrap: nowrap; }
-.ws-name { font: 600 1rem/1.2 inherit; border: 1px solid transparent; background: transparent; padding: 0.35rem 0.5rem; border-radius: 8px; min-width: 70px; width: 22ch; max-width: 20vw; }
+.ws-name { font: 600 1rem/1.2 inherit; border: 1px solid transparent; background: transparent; padding: 0.35rem 0.5rem; border-radius: 8px; min-width: 70px; max-width: 24vw; }
 .ws-name:hover { border-color: var(--line); }
 .ws-name:focus { border-color: var(--primary); background: var(--surface); }
 .ws-sep { width: 1px; height: 22px; background: var(--line); margin: 0 0.25rem; }
