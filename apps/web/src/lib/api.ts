@@ -376,8 +376,10 @@ export const api = {
 
   processes: (category = "bafoeg.abroad") =>
     call<{ catalogId: string; live: ProcessDef | null; draft: ProcessDef | null; history: { version: number; updatedAt: string; updatedBy: string; name: string }[] }>(`/office/processes?category=${encodeURIComponent(category)}`),
-  processList: () => call<{ catalogId: string; name: string; liveVersion: number | null; hasDraft: boolean }[]>("/office/processes/list"),
-  createProcess: (catalogId: string, name?: string) => call<ProcessDef>("/office/processes/create", { method: "POST", json: { catalogId, name } }),
+  processList: () => call<{ catalogId: string; name: string; liveVersion: number | null; hasDraft: boolean; steps: number; updatedAt: string | null; updatedBy: string | null; owner: string | null }[]>("/office/processes/list"),
+  createProcess: (catalogId: string, name?: string, proposal?: { nodes: ProcessDef["nodes"]; edges: ProcessDef["edges"] }) => call<ProcessDef>("/office/processes/create", { method: "POST", json: { catalogId, name, proposal } }),
+  duplicateProcess: (from: string, catalogId: string, name?: string) => call<ProcessDef>("/office/processes/duplicate", { method: "POST", json: { from, catalogId, name } }),
+  deleteProcess: (catalogId: string) => call<{ ok: true }>("/office/processes/delete", { method: "POST", json: { catalogId } }),
   catalogue: () => call<{ catalogue: CatalogNode[]; coverage: { id: string; offices: { id: string; name: string }[] }[] }>("/oversight/catalogue"),
   compare: (category: string) => call<CompareResult>(`/oversight/compare?category=${encodeURIComponent(category)}`),
   saveDraft: (def: ProcessDef) => call<ProcessDef>("/office/processes/draft", { method: "PUT", json: { def } }),

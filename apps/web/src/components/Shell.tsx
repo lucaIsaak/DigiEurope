@@ -92,7 +92,7 @@ function OfficeShell({ children, current, oversight }: { children: ReactNode; cu
   const badge: Record<string, number> = oversight || !todo ? {} : {
     "/office/rules": todo.rulesToApprove,
     "/office/templates": todo.proposalsToDecide + todo.templatesToCheck,
-    "/office/builder": todo.processDrafts,
+    "/office/processes": todo.processDrafts,
   };
   const [busy, setBusy] = useState(false);
   if (!staff) return null;
@@ -100,14 +100,14 @@ function OfficeShell({ children, current, oversight }: { children: ReactNode; cu
     ? [{ href: "/oversight", key: "oversight.nav.catalogue", icon: FolderTree, show: true }]
     : [
         { href: "/office", key: "office.nav.inbox", icon: Inbox, show: true },
-        { href: "/office/builder", key: "office.nav.builder", icon: Workflow, show: canBuild },
+        { href: "/office/processes", key: "office.nav.builder", icon: Workflow, show: canBuild },
         { href: "/office/templates", key: "office.nav.templates", icon: FileStack, show: canBuild || Boolean(staff.canApproveTemplates) },
         { href: "/office/rules", key: "office.nav.rules", icon: ShieldCheck, show: true },
         { href: "/office/insights", key: "office.nav.insights", icon: BarChart3, show: true },
         { href: "/office/staff", key: "office.nav.staff", icon: KeyRound, show: staff.isAdmin },
         { href: "/office/settings", key: "office.nav.settings", icon: SlidersHorizontal, show: staff.isAdmin || Boolean(staff.canApproveTemplates) },
       ];
-  const active = (href: string) => current === href || (href !== "/office" && href !== "/oversight" && current.startsWith(href)) || (href === "/office" && current.startsWith("/office/cases"));
+  const active = (href: string) => current === href || (href === "/office/processes" && current.startsWith("/office/builder")) || (href !== "/office" && href !== "/oversight" && current.startsWith(href)) || (href === "/office" && current.startsWith("/office/cases"));
   const initials = staff.name.replace(/^(Frau|Herr)\s+/, "").split(" ").map((w) => w[0]).join("").slice(0, 2).toUpperCase();
   return (
     <div className="office-shell">
@@ -206,7 +206,7 @@ export function Shell({ children }: { children: ReactNode }) {
     ? staff?.isOversight
       ? [["/oversight", "oversight.nav.catalogue"]]
       : staff
-      ? [...OFFICE_NAV, ...(canBuild || staff.canApproveTemplates ? ([["/office/templates", "office.nav.templates"]] as [string, MessageKey][]) : []), ...(canBuild ? ([["/office/builder", "office.nav.builder"]] as [string, MessageKey][]) : []), ...(staff.isAdmin ? ([["/office/staff", "office.nav.staff"]] as [string, MessageKey][]) : [])]
+      ? [...OFFICE_NAV, ...(canBuild || staff.canApproveTemplates ? ([["/office/templates", "office.nav.templates"]] as [string, MessageKey][]) : []), ...(canBuild ? ([["/office/processes", "office.nav.builder"]] as [string, MessageKey][]) : []), ...(staff.isAdmin ? ([["/office/staff", "office.nav.staff"]] as [string, MessageKey][]) : [])]
       : []
     : STUDENT_NAV;
   useEffect(() => {
@@ -238,7 +238,30 @@ export function Shell({ children }: { children: ReactNode }) {
   }, []);
 
   const current = path === "/" ? "/" : path.replace(/\/$/, "");
-  if (onLogin) return <main id="main">{children}</main>;
+  const siteFooter = <footer className="site-footer">
+        <div className="container">
+          <span>
+            <span
+              onClick={() => {
+                const n = Date.now();
+                clicks.current = [...clicks.current.filter((x) => n - x < 2500), n];
+                if (clicks.current.length >= 5) {
+                  clicks.current = [];
+                  void reset();
+                }
+              }}
+            >
+              ©
+            </span>{" "}
+            {t("brand.name")} · {t("footer.note")}
+          </span>
+          <span className="row" style={{ gap: "1rem" }}>
+            <Link href="/samples">{t("footer.samples")}</Link>
+            <Link href="/office">{t("staff.footer")}</Link>
+          </span>
+        </div>
+      </footer>;
+  if (onLogin) return <div className="login-shell"><main id="main">{children}</main>{siteFooter}</div>;
   if (office && !onLogin && staff) {
     return (
       <OfficeShell current={current} oversight={oversightArea}>
@@ -294,29 +317,7 @@ export function Shell({ children }: { children: ReactNode }) {
       <main id="main" className={bleed ? "bleed" : "container page"}>
         {office && !onLogin && !staff ? <div className="container page"><Spinner label={t("common.loading")} /></div> : children}
       </main>
-      {!bleed && <footer className="site-footer">
-        <div className="container">
-          <span>
-            <span
-              onClick={() => {
-                const n = Date.now();
-                clicks.current = [...clicks.current.filter((x) => n - x < 2500), n];
-                if (clicks.current.length >= 5) {
-                  clicks.current = [];
-                  void reset();
-                }
-              }}
-            >
-              ©
-            </span>{" "}
-            {t("brand.name")} · {t("footer.note")}
-          </span>
-          <span className="row" style={{ gap: "1rem" }}>
-            <Link href="/samples">{t("footer.samples")}</Link>
-            <Link href="/office">{t("staff.footer")}</Link>
-          </span>
-        </div>
-      </footer>}
+      {!bleed && siteFooter}
     </div>
   );
 }

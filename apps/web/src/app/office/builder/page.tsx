@@ -4,8 +4,6 @@ import {
   type DocumentTemplate,
   type ProcessInput,
   DEFAULT_CATEGORY,
-  catalogVariant,
-  catalogVariants,
   CONNECTORS,
   NODE_CATALOG,
   TOKEN_KEYS,
@@ -20,7 +18,6 @@ import {
   validateProcess,
   type Category,
   type ConfigValue,
-  type GeneratedProcess,
   type FlowEdge,
   type FlowNode,
   type Mention,
@@ -54,8 +51,7 @@ import {
 import "@xyflow/react/dist/style.css";
 import {
   AlertTriangle,
-  ChevronDown,
-  FolderTree,
+  ArrowLeft,
   Check,
   CheckCircle2,
   Clock,
@@ -76,7 +72,6 @@ import {
   Send,
   ShieldCheck,
   Sparkles,
-  MessageSquareText,
   Undo2,
   UserCheck,
   Users,
@@ -95,7 +90,8 @@ import { TemplateParams } from "@/components/TemplateParams";
 import { TokenField, type TokenFieldHandle } from "@/components/TokenField";
 import { RulePicker } from "@/components/RulePicker";
 import { InputsEditor } from "@/components/InputsEditor";
-import { CATEGORIES, ICONS, NODE_W, edgeBase, layout, ARROW, nodeTypes, toRfNode, type StepNode } from "@/components/FlowKit";
+import { CATEGORIES, ICONS, NODE_W, edgeBase, layout, ARROW, nodeTypes, toRfNode, type StepData, type StepNode } from "@/components/FlowKit";
+import Link from "next/link";
 import { Spinner } from "@/components/ui";
 import { ApiError, api, type MessageEntry, type ProcessImpact, type ProcessTestResult, type TestRunResult } from "@/lib/api";
 import { useI18n } from "@/lib/i18n";
@@ -115,14 +111,13 @@ function Builder() {
   const [live, setLive] = useState<ProcessDef | null>(null);
   const [ready, setReady] = useState(false);
   const [category, setCategory] = useState<string>(DEFAULT_CATEGORY);
-  const [processList, setProcessList] = useState<{ catalogId: string; name: string; liveVersion: number | null; hasDraft: boolean }[]>([]);
-  const [showNew, setShowNew] = useState(false);
-  const [newCat, setNewCat] = useState("");
   const [history, setHistory] = useState<{ version: number; updatedAt: string; updatedBy: string; name: string }[]>([]);
   const [dirty, setDirty] = useState(false);
   const [toast, setToast] = useState<{ text: string; tone: "ok" | "warn" } | null>(null);
   const [issues, setIssues] = useState<ProcessIssue[]>([]);
   const [selected, setSelected] = useState<string | null>(null);
+  const [selEdge, setSelEdge] = useState<string | null>(null);
+  const [dropEdge, setDropEdge] = useState<string | null>(null);
   const [collapsed, setCollapsed] = useState(false);
   const [query, setQuery] = useState("");
   const [drawer, setDrawer] = useState(false);
@@ -133,11 +128,6 @@ function Builder() {
   const [showVersions, setShowVersions] = useState(false);
   const [inputs, setInputs] = useState<ProcessInput[]>([]);
   const [showInputs, setShowInputs] = useState(false);
-  const [showGen, setShowGen] = useState(false);
-  const [genText, setGenText] = useState("");
-  const [genMode, setGenMode] = useState<"simulated" | "live">("simulated");
-  const [genInfo, setGenInfo] = useState<{ live: boolean; model: string | null } | null>(null);
-  const [genResult, setGenResult] = useState<(GeneratedProcess & { mode: "simulated" | "live"; fellBack?: string }) | null>(null);
   const [owner, setOwner] = useState("");
   const [tests, setTests] = useState<ProcessTest[]>([]);
   const [showTests, setShowTests] = useState(false);
@@ -210,7 +200,13 @@ function Builder() {
   const load = useCallback((def: ProcessDef, isDraft: boolean) => {
     let ns = def.nodes.map(toRfNode);
     const es = def.edges.map((e) => rfEdge(e, ns));
-    if (!isDraft) ns = layout(ns, es);
+    // A process just made from a description has rough positions: arrange it once, then forget the hint.
+    const params = new URLSearchParams(window.location.search);
+    const arrange = params.get("tidy") === "1";
+    if (arrange) { params.delete("tidy"); window.history.replaceState(null, "", `${window.location.pathname}?${params}`); }
+    if (!isDraft || arrange) ns = layout(ns, es);
+    // Once the steps are drawn their real heights are known; arrange again so tall ones do not touch.
+    if (arrange) setTimeout(() => { setNodes((cur) => layout(cur, es)); setTimeout(() => rf.fitView({ padding: 0.12, duration: 250 }), 150); }, 700);
     setNodes(ns);
     setEdges(es);
     setName(def.name);
@@ -230,11 +226,10 @@ function Builder() {
 
   const refresh = useCallback(async (cat?: string) => {
     const target = cat ?? category;
-    const [p, list, lib, msgs] = await Promise.all([api.processes(target), api.processList(), api.templates().catch(() => null), api.messages().catch(() => [] as MessageEntry[])]);
+    const [p, lib, msgs] = await Promise.all([api.processes(target), api.templates().catch(() => null), api.messages().catch(() => [] as MessageEntry[])]);
     if (lib) setTemplates(lib.templates);
     setMessages(msgs);
     setCategory(target);
-    setProcessList(list);
     setLive(p.live);
     setHistory(p.history);
     const def = p.draft ?? p.live;
@@ -243,7 +238,8 @@ function Builder() {
     setReady(true);
   }, [load, category]);
   useEffect(() => {
-    void refresh();
+    const wanted = new URLSearchParams(window.location.search).get("category");
+    void refresh(wanted || undefined);
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
@@ -270,22 +266,68 @@ function Builder() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [setEdges, edgeLabel]);
 
-  const addNode = (kind: NodeKind, preset: Record<string, ConfigValue> | undefined, position: { x: number; y: number }) => {
+  /** The connection under a screen point, if any: dropping a step there puts it in between. */
+  const edgeAtPoint = (x: number, y: number): string | null => {
+    for (const el of document.elementsFromPoint(x, y)) {
+      const id = el.closest(".react-flow__edge")?.getAttribute("data-id");
+      if (id) return id;
+    }
+    return null;
+  };
+
+  /** Puts a step into a connection: source → step → target. The step's first output carries on to the old target. */
+  const insertIntoEdge = (edgeId: string, nodeId: string, kind: NodeKind): boolean => {
+    const e = edgesRef.current.find((x) => x.id === edgeId);
+    const outs = outputsOf(kind);
+    if (!e || !outs.length || kind === "trigger" || e.source === nodeId || e.target === nodeId) return false;
+    const first = outs[0]!;
+    setEdges((es) => [
+      ...es.filter((x) => x.id !== edgeId),
+      { id: edgeId, source: e.source, sourceHandle: e.sourceHandle, target: nodeId, label: e.label, ...edgeBase },
+      { id: `${nodeId}:${first.id}`, source: nodeId, sourceHandle: first.id, target: e.target, label: outs.length > 1 ? bi(first.label) : undefined, ...edgeBase },
+    ]);
+    return true;
+  };
+
+  const addNode = (kind: NodeKind, preset: Record<string, ConfigValue> | undefined, position: { x: number; y: number }, into?: string | null) => {
     checkpoint();
     const id = `${kind}-${Date.now().toString(36)}`;
     const stepName = uniqueStepName(bi(NODE_CATALOG[kind].title), nodesRef.current.map((n) => n.data.name ?? ""));
     setNodes((ns) => [...ns.map((n) => ({ ...n, selected: false })), { id, type: "step", position, selected: true, data: { kind, name: stepName, config: defaultConfig(kind, preset) } }]);
     setSelected(id);
+    if (into && insertIntoEdge(into, id, kind)) setTimeout(() => { setNodes((ns) => layout(ns, edgesRef.current)); rf.fitView({ padding: 0.12, duration: 300 }); }, 80);
     touch();
   };
 
   const onDrop = (e: React.DragEvent) => {
     e.preventDefault();
+    const into = edgeAtPoint(e.clientX, e.clientY);
+    setDropEdge(null);
     const raw = e.dataTransfer.getData("application/x-step");
     if (!raw) return;
     const { kind, preset } = JSON.parse(raw) as { kind: NodeKind; preset?: Record<string, ConfigValue> };
     const p = rf.screenToFlowPosition({ x: e.clientX, y: e.clientY });
-    addNode(kind, preset, { x: Math.round((p.x - NODE_W / 2) / 16) * 16, y: Math.round((p.y - 30) / 16) * 16 });
+    addNode(kind, preset, { x: Math.round((p.x - NODE_W / 2) / 16) * 16, y: Math.round((p.y - 30) / 16) * 16 }, into);
+  };
+
+  /** A step that is dragged by hand and has no connections yet is put into the connection it is let go on. */
+  const onNodeDragStop = (ev: React.MouseEvent, node: Node) => {
+    setDropEdge(null);
+    const kind = (node.data as StepData).kind;
+    if (edgesRef.current.some((x) => x.source === node.id || x.target === node.id)) return;
+    const into = edgeAtPoint(ev.clientX, ev.clientY);
+    if (into && insertIntoEdge(into, node.id, kind)) {
+      touch();
+      setTimeout(() => { setNodes((ns) => layout(ns, edgesRef.current)); rf.fitView({ padding: 0.12, duration: 300 }); }, 80);
+    }
+  };
+
+  const deleteEdge = () => {
+    if (!selEdge) return;
+    checkpoint();
+    setEdges((es) => es.filter((x) => x.id !== selEdge));
+    setSelEdge(null);
+    touch();
   };
   const addAtCenter = (kind: NodeKind, preset?: Record<string, ConfigValue>) => {
     const vp = document.querySelector(".ws-canvas")?.getBoundingClientRect();
@@ -404,31 +446,6 @@ function Builder() {
     touch();
     setToast({ text: n ? t("doc.done", { n: String(n) }) : t("doc.none"), tone: "ok" });
   };
-  const openGen = () => {
-    setShowGen((v) => !v);
-    setShowInputs(false);
-    setSelected(null);
-    if (!genInfo) api.generateInfo().then(setGenInfo).catch(() => setGenInfo({ live: false, model: null }));
-  };
-  const createProposal = async () => {
-    if (genText.trim().length < 10) return setToast({ text: t("gen.tooShort"), tone: "warn" });
-    setGenResult(null);
-    const r = await run(() => api.generateProcess(genText, genMode));
-    if (r) setGenResult(r);
-  };
-  const placeProposal = () => {
-    if (!genResult) return;
-    checkpoint();
-    const ns = layout(genResult.nodes.map(toRfNode), genResult.edges.map((e) => rfEdge(e, [])));
-    setNodes(ns);
-    setEdges(genResult.edges.map((e) => rfEdge(e, ns)));
-    setSelected(null);
-    setShowGen(false);
-    setGenResult(null);
-    touch();
-    setToast({ text: t("gen.placed"), tone: "ok" });
-    setTimeout(() => rf.fitView({ padding: 0.12, duration: 250 }), 120);
-  };
   const pendingSuggestions = nodes.filter((n) => n.data.suggestion).length;
   /** The request of an HTTP step as the JSON picker sends it for a test: tiles are filled with example values. */
   const httpRequestOf = (c: Record<string, ConfigValue>) => {
@@ -479,9 +496,9 @@ function Builder() {
   const shownEdges = useMemo(
     () => edges.map((e) => {
       const on = Boolean(result) && visitedHandles.get(e.source) === (e.sourceHandle ?? "out") && visitedHandles.has(e.target);
-      return { ...e, className: on ? "visited" : undefined, animated: on, markerEnd: { ...ARROW, color: on ? "#17a06a" : ARROW.color } };
+      return { ...e, interactionWidth: 28, className: [on ? "visited" : "", e.id === dropEdge ? "drop-target" : ""].filter(Boolean).join(" ") || undefined, animated: on, markerEnd: { ...ARROW, color: on ? "#17a06a" : ARROW.color } };
     }),
-    [edges, result, visitedHandles],
+    [edges, result, visitedHandles, dropEdge],
   );
 
   if (!ready) return <div className="container page"><Spinner label={t("common.loading")} /></div>;
@@ -499,39 +516,7 @@ function Builder() {
   return (
     <div className="ws">
       <div className="ws-toolbar">
-        <span style={{ position: "relative" }}>
-          <button className="button button-ghost button-small" type="button" onClick={() => setShowNew((v) => !v)} title={t("builder.category")}>
-            <FolderTree size={15} />
-            {(() => { const v = catalogVariant(category); return v ? bi(v.path.at(-1)!) : category; })()}
-            <ChevronDown size={14} />
-          </button>
-          {showNew && (
-            <div className="card" style={{ position: "absolute", top: "110%", left: 0, zIndex: 30, width: 360, padding: "0.8rem" }}>
-              <div className="small muted" style={{ marginBottom: "0.4rem" }}>{t("builder.processes")}</div>
-              {processList.map((p) => {
-                const v = catalogVariant(p.catalogId);
-                return (
-                  <button key={p.catalogId} type="button" className="pal-item" onClick={async () => { setShowNew(false); if (p.catalogId !== category) { if (dirty && !window.confirm(t("builder.switchConfirm"))) return; setReady(false); await refresh(p.catalogId); } }}>
-                    <span className="ico"><FolderTree size={14} /></span>
-                    <span style={{ flex: 1 }}>
-                      <div>{v ? bi(v.path.at(-1)!) : p.catalogId}</div>
-                      <div className="small muted">{v ? v.path.slice(0, -1).map((x) => bi(x)).join(" › ") : ""} · {p.liveVersion ? `v${p.liveVersion}` : t("builder.notLive")}</div>
-                    </span>
-                    {p.catalogId === category && <Check size={14} />}
-                  </button>
-                );
-              })}
-              <div className="small muted" style={{ margin: "0.7rem 0 0.3rem" }}>{t("builder.newProcess")}</div>
-              <div className="row" style={{ flexWrap: "nowrap" }}>
-                <select value={newCat} onChange={(e) => setNewCat(e.target.value)} aria-label={t("builder.category")} style={{ fontSize: "0.85rem", padding: "0.4rem" }}>
-                  <option value="">{t("builder.chooseCategory")}</option>
-                  {catalogVariants().filter((v) => !processList.some((p) => p.catalogId === v.id)).map((v) => <option key={v.id} value={v.id}>{v.path.map((x) => bi(x)).join(" › ")}</option>)}
-                </select>
-                <button className="button button-small" type="button" disabled={!newCat} onClick={async () => { const r = await run(() => api.createProcess(newCat)); if (r) { setShowNew(false); setNewCat(""); setReady(false); await refresh(newCat); } }}>{t("builder.create")}</button>
-              </div>
-            </div>
-          )}
-        </span>
+        <Link href="/office/processes" className="button button-ghost button-small" onClick={(e) => { if (dirty && !window.confirm(t("builder.switchConfirm"))) e.preventDefault(); }}><ArrowLeft size={15} />{t("builder.back")}</Link>
         <input className="ws-name" value={name} onChange={(e) => { setName(e.target.value); touch(); }} aria-label={t("builder.name")} />
         {live ? <span className="pill pill-ok">{t("builder.live", { v: live.version })}</span> : <span className="pill pill-muted">{t("builder.notLive")}</span>}
         {category !== DEFAULT_CATEGORY && <span className="pill pill-muted" title={t("builder.notRunning")}>{t("builder.notRunning")}</span>}
@@ -557,8 +542,7 @@ function Builder() {
           </span>
         )}
         <span className="ws-spacer" />
-        <button className={`button button-small ${showInputs ? "" : "button-ghost"}`} type="button" onClick={() => { setShowInputs((v) => !v); setShowGen(false); setSelected(null); }}><ListChecks size={15} />{t("builder.inputs")} ({inputs.length})</button>
-        <button className={`button button-small ${showGen ? "" : "button-ghost"}`} type="button" onClick={openGen}><MessageSquareText size={15} />{t("gen.open")}</button>
+        <button className={`button button-small ${showInputs ? "" : "button-ghost"}`} type="button" onClick={() => { setShowInputs((v) => !v); setSelected(null); }}><ListChecks size={15} />{t("builder.inputs")} ({inputs.length})</button>
         <button className="button button-ghost button-small" type="button" disabled={busy} title={t("doc.simulated")} onClick={documentWithAi}><Sparkles size={15} />{t("doc.run")}{pendingSuggestions > 0 ? ` (${pendingSuggestions})` : ""}</button>
         {pendingSuggestions > 0 && <button className="link-button small" type="button" onClick={() => { checkpoint(); setNodes((ns) => ns.map((x) => ({ ...x, data: { ...x.data, suggestion: undefined } }))); touch(); }}>{t("doc.rejectAll")}</button>}
         <button className="button button-ghost button-small" type="button" onClick={validate}><CheckCircle2 size={15} />{t("builder.validate")}</button>
@@ -626,7 +610,7 @@ function Builder() {
           })}
         </aside>
 
-        <div className="ws-canvas" onDrop={onDrop} onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = "move"; }}>
+        <div className="ws-canvas" onDrop={onDrop} onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = "move"; if (e.dataTransfer.types.includes("application/x-step")) { const id = edgeAtPoint(e.clientX, e.clientY); setDropEdge((cur) => (cur === id ? cur : id)); } }} onDragLeave={(e) => { if (!e.currentTarget.contains(e.relatedTarget as globalThis.Node | null)) setDropEdge(null); }}>
           <ReactFlow
             nodes={nodes}
             edges={shownEdges}
@@ -634,9 +618,11 @@ function Builder() {
             onNodesChange={(c) => { onNodesChange(c); if (c.some((x) => x.type === "remove" || (x.type === "position" && x.dragging === false))) touch(); }}
             onEdgesChange={(c) => { onEdgesChange(c); if (c.some((x) => x.type === "remove")) touch(); }}
             onNodeDragStart={checkpoint}
+            onNodeDrag={(ev, node) => { if (!edgesRef.current.some((x) => x.source === node.id || x.target === node.id)) { const id = edgeAtPoint(ev.clientX, ev.clientY); setDropEdge((cur) => (cur === id ? cur : id)); } }}
+            onNodeDragStop={onNodeDragStop}
             onBeforeDelete={async () => { checkpoint(); return true; }}
             onConnect={onConnect}
-            onSelectionChange={({ nodes: sn }) => setSelected(sn[0]?.id ?? null)}
+            onSelectionChange={({ nodes: sn, edges: se }) => { setSelected(sn[0]?.id ?? null); setSelEdge(sn.length === 0 ? se[0]?.id ?? null : null); }}
             onPaneClick={() => setShowVersions(false)}
             snapToGrid
             snapGrid={[16, 16]}
@@ -652,6 +638,13 @@ function Builder() {
             <Controls showInteractive={false} position="bottom-left" />
             {!sel && nodes.length > 0 && <MiniMap pannable zoomable position="bottom-right" style={{ width: 130, height: 84 }} maskColor="rgba(120,130,150,0.12)" nodeColor="#8892a6" />}
           </ReactFlow>
+
+          {selEdge && (
+            <div className="ws-edgebar" role="status">
+              <span>{t("builder.edge.selected")}</span>
+              <button type="button" className="button button-small" onClick={deleteEdge}>{t("builder.edge.delete")}</button>
+            </div>
+          )}
 
           {nodes.length === 0 && <div className="ws-empty"><p>{t("builder.empty")}</p></div>}
 
@@ -690,50 +683,7 @@ function Builder() {
               <div className="body"><InputsEditor inputs={inputs} templates={templates} onChange={(next) => { setInputs(next); touch(); }} /></div>
             </aside>
           )}
-          {showGen && (
-            <aside className="ws-inspector gen-panel" aria-label={t("gen.title")}>
-              <header>
-                <span className="ico"><MessageSquareText size={16} strokeWidth={2.2} /></span>
-                <div style={{ flex: 1 }}><strong>{t("gen.title")}</strong></div>
-                <button className="icon-button" type="button" aria-label={t("builder.close")} onClick={() => setShowGen(false)}><X size={16} /></button>
-              </header>
-              <div className="body" style={{ display: "grid", gap: "0.7rem", alignContent: "start" }}>
-                <p className="small muted" style={{ margin: 0 }}>{t("gen.help")}</p>
-                <textarea rows={7} value={genText} placeholder={t("gen.placeholder")} onChange={(e) => { setGenText(e.target.value); setGenResult(null); }} aria-label={t("gen.title")} />
-                <div className="row" style={{ gap: "0.5rem" }}>
-                  <button className="link-button small" type="button" onClick={() => { setGenText(t("gen.example")); setGenResult(null); }}>{t("gen.useExample")}</button>
-                </div>
-                <fieldset className="gen-mode">
-                  <legend className="small">{t("gen.mode")}</legend>
-                  <label><input type="radio" name="gen-mode" checked={genMode === "simulated"} onChange={() => setGenMode("simulated")} /> {t("gen.simulated")}</label>
-                  <label className={genInfo?.live ? "" : "muted"}><input type="radio" name="gen-mode" disabled={!genInfo?.live} checked={genMode === "live"} onChange={() => setGenMode("live")} /> {t("gen.live")}{genInfo?.model ? ` · ${genInfo.model}` : ""}</label>
-                  {genInfo && !genInfo.live && <span className="small muted">{t("gen.liveOff")}</span>}
-                </fieldset>
-                <button className="button" type="button" disabled={busy} onClick={createProposal}><Sparkles size={15} />{busy ? t("gen.running") : t("gen.run")}</button>
-                {genResult && (
-                  <div className="doc-card" role="group" aria-label={t("gen.result", { steps: String(genResult.nodes.length), links: String(genResult.edges.length) })}>
-                    <div className="doc-head"><Sparkles size={14} /><strong>{t("gen.result", { steps: String(genResult.nodes.length), links: String(genResult.edges.length) })}</strong></div>
-                    {genResult.fellBack && <p className="small" style={{ margin: 0 }}>{t("gen.fellBack", { e: genResult.fellBack })}</p>}
-                    {genResult.understood.length > 0 && (
-                      <div><strong className="small">{t("gen.understood")}</strong><ul className="gen-list">{genResult.understood.map((x, i) => <li key={i}>{x}</li>)}</ul></div>
-                    )}
-                    {genResult.unmapped.length > 0 && (
-                      <div><strong className="small">{t("gen.unmapped")}</strong><ul className="gen-list warn">{genResult.unmapped.map((x, i) => <li key={i}>{x}</li>)}</ul></div>
-                    )}
-                    {genResult.issues.length > 0 && (
-                      <div><strong className="small">{t("gen.issues")}</strong><ul className="gen-list warn">{genResult.issues.map((x, i) => <li key={i}>{bi(x.message)}</li>)}</ul></div>
-                    )}
-                    {nodes.length > 0 && <p className="small muted" style={{ margin: 0 }}>{t("gen.replaces")}</p>}
-                    <div className="row" style={{ gap: "0.5rem" }}>
-                      <button className="button button-small" type="button" onClick={placeProposal}>{t("gen.place")}</button>
-                      <button className="button button-ghost button-small" type="button" onClick={() => setGenResult(null)}>{t("gen.discard")}</button>
-                    </div>
-                  </div>
-                )}
-              </div>
-            </aside>
-          )}
-          {sel && !showInputs && !showGen && (
+          {sel && !showInputs && (
             <aside className="ws-inspector" aria-label={t("builder.config")}>
               <header className={`cat-${NODE_CATALOG[sel.data.kind].category}`}>
                 <span className="ico">{(() => { const I = ICONS[sel.data.kind]; return <I size={16} strokeWidth={2.2} />; })()}</span>
@@ -874,7 +824,7 @@ function Builder() {
               </div>
             </aside>
           )}
-          {sel && !showInputs && !showGen && hasTokenFields && tilesOpen && (
+          {sel && !showInputs && hasTokenFields && tilesOpen && (
             <aside className="ws-tiles" aria-label={t("builder.tilesTitle")}>
               <button className="icon-button ws-tiles-x" type="button" aria-label={t("builder.close")} onClick={() => setTilesOpen(false)}><X size={15} /></button>
               {exprStack.map((e, i) => (

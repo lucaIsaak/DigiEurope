@@ -151,7 +151,7 @@ const INFO: Record<Section, Info> = {
 
 export function sectionOf(path: string): Section {
   if (path.startsWith("/oversight")) return "oversight";
-  if (path.startsWith("/office/builder")) return "builder";
+  if (path.startsWith("/office/builder") || path.startsWith("/office/processes")) return "builder";
   if (path.startsWith("/office/templates") || path.startsWith("/office/inputs")) return "templates";
   if (path.startsWith("/office/rules")) return "rules";
   if (path.startsWith("/office/insights")) return "insights";

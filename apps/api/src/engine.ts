@@ -181,13 +181,21 @@ export function questionText(app: Application, report: CheckReport, extra: strin
   return `${intro}\n\n${items}\n\n${outro}`;
 }
 
-/** The "AI" mail draft, simulated: a clear message built from the open items, in the student's language. */
-export function draftMail(app: Application, report: CheckReport, tone: string, extra: string[] = []): { subject: string; body: string } {
+/**
+ * The "AI" mail draft, simulated: a clear message built from the open items, in the student's language.
+ * `context` is what the process designer wants the mail to be about: it goes in front, and with nothing open the mail is only that.
+ */
+export function draftMail(app: Application, report: CheckReport, tone: string, extra: string[] = [], context = ""): { subject: string; body: string } {
   const de = app.language === "de";
   const count = report.blockers + extra.length;
+  const note = context.trim();
+  if (note && count === 0) {
+    return { subject: de ? `Ihr Antrag ${app.reference}` : `Your application ${app.reference}`, body: frameMail(app, note, tone) };
+  }
+  const open = questionText(app, report, extra);
   return {
     subject: de ? `Ihr Antrag ${app.reference}: Das fehlt noch (${count})` : `Your application ${app.reference}: what is still missing (${count})`,
-    body: frameMail(app, questionText(app, report, extra), tone),
+    body: frameMail(app, note ? `${note}\n\n${open}` : open, tone),
   };
 }
 
@@ -460,7 +468,7 @@ async function execute(def: ProcessDef, start: string, input: Application, ctx: 
         }
         case "ai_draft_mail": {
           const report = ctx.check(app);
-          mailDraft = draftMail(app, report, String(node.config.tone));
+          mailDraft = draftMail(app, report, String(node.config.tone), [], String(node.config.context ?? ""));
           out("draft_subject", mailDraft.subject);
           out("draft_body", mailDraft.body);
           entry("Mail drafted by AI (simulated)");

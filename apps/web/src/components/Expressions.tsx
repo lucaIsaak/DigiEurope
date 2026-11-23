@@ -1,7 +1,7 @@
 "use client";
 
 import { FN_CATEGORIES, FUNCTIONS, GLOBAL_PLACEHOLDERS, STEP_OUTPUTS, asList, asNumber, buildCall, callOf, fnByName, previewRandom, renderText, type Env, type FnSpec } from "@digieurope/shared";
-import { ArrowLeft, Search, X } from "lucide-react";
+import { ArrowLeft, ChevronDown, ChevronRight, Search, X } from "lucide-react";
 import { useMemo, useState } from "react";
 import { TokenField, type TokenFieldHandle, type TokenInfo } from "@/components/TokenField";
 import { useI18n } from "@/lib/i18n";
@@ -44,6 +44,8 @@ export function previewResult(raw: string, lang: "de" | "en"): { ok: true; text:
 export function FunctionTiles({ onInsert }: { onInsert: (raw: string) => void }) {
   const { t, bi } = useI18n();
   const [q, setQ] = useState("");
+  const [open, setOpen] = useState<Record<string, boolean>>({});
+  const searching = q.trim() !== "";
   const list = useMemo(() => {
     const term = q.trim().toLowerCase();
     return FUNCTIONS.filter((f) => !term || f.name.toLowerCase().includes(term) || f.label.de.toLowerCase().includes(term) || f.label.en.toLowerCase().includes(term) || f.help.en.toLowerCase().includes(term));
@@ -57,10 +59,15 @@ export function FunctionTiles({ onInsert }: { onInsert: (raw: string) => void })
       {FN_CATEGORIES.map((c) => {
         const items = list.filter((f) => f.category === c.id);
         if (items.length === 0) return null;
+        const shown = searching || open[c.id];
         return (
           <div key={c.id} className="fn-cat">
-            <div className="fn-cat-h">{bi(c.label)}</div>
-            {items.map((f) => (
+            <button type="button" className="fn-cat-h" aria-expanded={shown} onMouseDown={(e) => e.preventDefault()} onClick={() => setOpen((o) => ({ ...o, [c.id]: !o[c.id] }))}>
+              {shown ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+              <span>{bi(c.label)}</span>
+              <small>{items.length}</small>
+            </button>
+            {shown && items.map((f) => (
               <button key={f.name} type="button" className="fn-tile" onMouseDown={(e) => e.preventDefault()} onClick={() => onInsert(buildCall(f.name, f.params.map(() => "")))} title={bi(f.help)}>
                 <span className="fn-tile-top"><small>ƒ</small><b>{bi(f.label)}</b><i className="otype">{f.returns === "yesno" ? "yes/no" : f.returns}</i></span>
                 <span className="fn-help">{bi(f.help)}</span>

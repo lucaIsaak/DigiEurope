@@ -2,9 +2,9 @@
 
 import { CONNECTORS, NODE_CATALOG, outputsOf, type Category, type ConfigValue, type FlowNode, type NodeKind, type NodeSuggestion, type ProcessDef } from "@digieurope/shared";
 import dagre from "@dagrejs/dagre";
-import { Background, BackgroundVariant, Controls, Handle, MarkerType, Position, ReactFlow, ReactFlowProvider, useStore, type Edge, type Node, type NodeProps } from "@xyflow/react";
+import { Background, BackgroundVariant, Controls, Handle, MarkerType, Position, ReactFlow, ReactFlowProvider, useStore, useUpdateNodeInternals, type Edge, type Node, type NodeProps } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
-import { useMemo } from "react";
+import { useEffect, useMemo } from "react";
 import { useTheme } from "@/lib/theme";
 import { AlertTriangle, Check, ClipboardCheck, Clock, FilePlus2, Flag, GitBranch, Globe, ListChecks, MessageSquareText, Plug, ScanText, Send, ShieldCheck, Sparkles, UserCheck, Users, Zap, type LucideIcon } from "lucide-react";
 import { useI18n } from "@/lib/i18n";
@@ -82,6 +82,9 @@ function StepView({ id, data, selected }: NodeProps<StepNode>) {
       .map((p) => p.id)
       .join(",");
   });
+  // The ports change places when their targets move; the connection points must be measured again, or lines leave from the old spot and cross.
+  const updateInternals = useUpdateNodeInternals();
+  useEffect(() => { updateInternals(id); }, [portOrder, id, updateInternals]);
   const ports = portOrder ? portOrder.split(",").map((pid) => spec.outputs.find((o) => o.id === pid)!) : spec.outputs;
   return (
     <div className={`nd cat-${spec.category}${multi ? " multi" : ""}${selected ? " sel" : ""}${data.state ? ` ${data.state}` : ""}`} title={data.issue}>
@@ -123,9 +126,10 @@ export const edgeBase = { type: "smoothstep" as const, pathOptions: { borderRadi
 /** Top-to-bottom layout. Branches keep the order of their output ports (left to right). */
 export function layout(nodes: StepNode[], edges: Edge[]): StepNode[] {
   const g = new dagre.graphlib.Graph();
-  g.setGraph({ rankdir: "TB", nodesep: 56, ranksep: 96, marginx: 20, marginy: 20 });
+  g.setGraph({ rankdir: "TB", nodesep: 56, ranksep: 110, marginx: 20, marginy: 20 });
   g.setDefaultEdgeLabel(() => ({}));
-  nodes.forEach((n) => g.setNode(n.id, { width: NODE_W, height: NODE_H }));
+  const heightOf = (n: StepNode) => Math.max(n.measured?.height ?? 0, NODE_H + (n.data.comment ? 64 : 0));
+  nodes.forEach((n) => g.setNode(n.id, { width: NODE_W, height: heightOf(n) }));
   const order = (e: Edge) => {
     const src = nodes.find((n) => n.id === e.source);
     return src ? outputsOf(src.data.kind).findIndex((o) => o.id === e.sourceHandle) : 0;
@@ -134,7 +138,7 @@ export function layout(nodes: StepNode[], edges: Edge[]): StepNode[] {
   dagre.layout(g);
   return nodes.map((n) => {
     const p = g.node(n.id);
-    return p ? { ...n, position: { x: Math.round(p.x - NODE_W / 2), y: Math.round(p.y - NODE_H / 2) } } : n;
+    return p ? { ...n, position: { x: Math.round(p.x - NODE_W / 2), y: Math.round(p.y - heightOf(n) / 2) } } : n;
   });
 }
 

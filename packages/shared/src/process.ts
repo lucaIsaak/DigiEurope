@@ -427,9 +427,12 @@ export const NODE_CATALOG: Record<NodeKind, NodeSpec> = {
   ai_draft_mail: {
     kind: "ai_draft_mail", category: "message", ai: true,
     title: { de: "KI entwirft E-Mail", en: "AI drafts e-mail" },
-    description: { de: "KI formuliert aus den offenen Punkten eine verständliche Nachricht an die Studierenden. Im Prototyp simuliert.", en: "AI writes a clear message to the student from the open items. Simulated in the prototype." },
+    description: { de: "KI formuliert eine verständliche Nachricht an die Studierenden. Sagen Sie, worum es gehen soll; die offenen Punkte des Antrags folgen. Im Prototyp simuliert.", en: "AI writes a clear message to the student. Say what it should be about; the open items of the case follow. Simulated in the prototype." },
     outputs: OUT,
-    fields: [{ key: "tone", label: { de: "Ton", en: "Tone" }, type: "select", default: "friendly", options: [opt("friendly", "Freundlich", "Friendly"), opt("formal", "Förmlich", "Formal")] }],
+    fields: [
+      { key: "context", label: { de: "Worum soll es in der E-Mail gehen?", en: "What should the e-mail be about?" }, type: "textarea", default: "" },
+      { key: "tone", label: { de: "Ton", en: "Tone" }, type: "select", default: "friendly", options: [opt("friendly", "Freundlich", "Friendly"), opt("formal", "Förmlich", "Formal")] },
+    ],
   },
   request_documents: {
     kind: "request_documents", category: "message",

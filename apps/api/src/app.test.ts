@@ -416,6 +416,24 @@ describe("process categories and comparison across offices", () => {
     expect((await app.inject({ method: "POST", url: "/office/processes/publish", payload: { def: bad } })).statusCode).toBe(404);
   });
 
+  it("creates from a proposal, duplicates into a free category and deletes, but never the process the portal runs", async () => {
+    const { app } = setup();
+    const gen = (await app.inject({ method: "POST", url: "/office/processes/generate", payload: { description: "When an application arrives, read the documents. If approved, create the payment order." } })).json();
+    const made = await app.inject({ method: "POST", url: "/office/processes/create", payload: { catalogId: "bafoeg.domestic", name: "Aus Text", proposal: { nodes: gen.nodes, edges: gen.edges } } });
+    expect(made.statusCode).toBe(201);
+    expect(made.json().nodes.length).toBe(gen.nodes.length);
+    expect((await app.inject({ method: "POST", url: "/office/processes/create", payload: { catalogId: "bafoeg.followup", proposal: { nodes: [], edges: [] } } })).statusCode).toBe(400);
+    expect((await app.inject({ method: "POST", url: "/office/processes/duplicate", payload: { from: "bafoeg.domestic", catalogId: "bafoeg.domestic" } })).statusCode).toBe(409);
+    const dup = await app.inject({ method: "POST", url: "/office/processes/duplicate", payload: { from: "bafoeg.domestic", catalogId: "bafoeg.followup" } });
+    expect(dup.statusCode).toBe(201);
+    expect(dup.json().name).toBe("Aus Text (copy)");
+    const list = (await app.inject({ method: "GET", url: "/office/processes/list" })).json();
+    expect(list.find((x: { catalogId: string }) => x.catalogId === "bafoeg.followup").steps).toBe(gen.nodes.length);
+    expect((await app.inject({ method: "POST", url: "/office/processes/delete", payload: { catalogId: "bafoeg.followup" } })).statusCode).toBe(200);
+    expect((await app.inject({ method: "POST", url: "/office/processes/delete", payload: { catalogId: "bafoeg.abroad" } })).statusCode).toBe(409);
+    expect((await app.inject({ method: "POST", url: "/office/processes/delete", payload: { catalogId: "bafoeg.followup" } })).statusCode).toBe(404);
+  });
+
   it("the oversight body compares offices; office staff cannot, and oversight does not work inside an office", async () => {
     const { app, store } = setup("s-weiss");
     const cmp = (await app.inject({ method: "GET", url: "/oversight/compare?category=bafoeg.abroad" })).json();

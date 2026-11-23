@@ -336,6 +336,11 @@ export class Store {
     this.save();
   }
 
+  deleteProcess(category: string) {
+    delete this.data.processes[category];
+    this.save();
+  }
+
   config = (): OfficeConfig => this.data.config;
   setConfig(c: OfficeConfig) {
     this.data.config = c;

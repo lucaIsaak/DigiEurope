@@ -1035,7 +1035,10 @@ export function buildApp(opts: AppOptions) {
   const nextVersion = (category: string) => (store.process(category)?.live?.version ?? 0) + 1;
 
   app.get("/office/processes/list", async () =>
-    Object.entries(store.processes()).map(([catalogId, p]) => ({ catalogId, name: (p.draft ?? p.live)?.name ?? catalogId, liveVersion: p.live?.version ?? null, hasDraft: Boolean(p.draft) })),
+    Object.entries(store.processes()).map(([catalogId, p]) => {
+      const d = p.draft ?? p.live;
+      return { catalogId, name: d?.name ?? catalogId, liveVersion: p.live?.version ?? null, hasDraft: Boolean(p.draft), steps: d?.nodes.length ?? 0, updatedAt: d?.updatedAt ?? null, updatedBy: d?.updatedBy ?? null, owner: d?.owner ?? null };
+    }),
   );
 
   app.get<{ Querystring: { category?: string } }>("/office/processes", async (req, reply) => {
@@ -1045,15 +1048,44 @@ export function buildApp(opts: AppOptions) {
     return { catalogId: category, live: p.live, draft: p.draft ?? null, history: p.history.map(({ version, updatedAt, updatedBy, name }) => ({ version, updatedAt, updatedBy, name })) };
   });
 
-  /** Starts a new process in a catalogue category that has none yet. */
-  app.post<{ Body: { catalogId?: string; name?: string } }>("/office/processes/create", async (req, reply) => {
-    const { catalogId, name } = req.body ?? {};
+  /** Starts a new process in a catalogue category that has none yet, empty or from a proposal (steps and connections only). */
+  app.post<{ Body: { catalogId?: string; name?: string; proposal?: { nodes?: ProcessDef["nodes"]; edges?: ProcessDef["edges"] } } }>("/office/processes/create", async (req, reply) => {
+    const { catalogId, name, proposal } = req.body ?? {};
     if (!catalogId || !isCatalogVariant(catalogId)) return bad(reply, "Please choose a category from the process catalogue.");
     if (store.process(catalogId)) return bad(reply, "This office already has a process in this category.", 409);
     const title = catalogVariant(catalogId)!.path.at(-1)!.de;
-    const draft: ProcessDef = { id: catalogId, catalogId, name: (name ?? "").trim().slice(0, 120) || title, version: 1, updatedAt: now().toISOString(), updatedBy: req.staff!.name, inputs: [], nodes: [{ id: "start", kind: "trigger", position: { x: 0, y: 0 }, config: { source: "any" } }], edges: [] };
+    const base: ProcessDef = { id: catalogId, catalogId, name: (name ?? "").trim().slice(0, 120) || title, version: 1, updatedAt: now().toISOString(), updatedBy: req.staff!.name, inputs: [], nodes: [{ id: "start", kind: "trigger", position: { x: 0, y: 0 }, config: { source: "any" } }], edges: [] };
+    let draft = base;
+    if (proposal) {
+      const cleaned = cleanDef({ ...base, nodes: proposal.nodes ?? [], edges: proposal.edges ?? [] }, req.staff!.name, 1);
+      if (!cleaned || cleaned.nodes.length === 0) return bad(reply, "The proposal cannot be used.");
+      draft = cleaned;
+    }
     store.setProcess(catalogId, { live: null, draft, history: [] });
     return reply.code(201).send(draft);
+  });
+
+  /** A copy of a process in another free category. The copy starts as a draft, never live. */
+  app.post<{ Body: { from?: string; catalogId?: string; name?: string } }>("/office/processes/duplicate", async (req, reply) => {
+    const { from, catalogId, name } = req.body ?? {};
+    const src = from ? store.process(from) : undefined;
+    const def = src && (src.draft ?? src.live);
+    if (!def) return notFound(reply);
+    if (!catalogId || !isCatalogVariant(catalogId)) return bad(reply, "Please choose a category from the process catalogue.");
+    if (store.process(catalogId)) return bad(reply, "This office already has a process in this category.", 409);
+    const copy: ProcessDef = { ...JSON.parse(JSON.stringify(def)) as ProcessDef, id: catalogId, catalogId, name: (name ?? "").trim().slice(0, 120) || `${def.name} (copy)`, version: 1, updatedAt: now().toISOString(), updatedBy: req.staff!.name };
+    delete copy.changeNote;
+    store.setProcess(catalogId, { live: null, draft: copy, history: [] });
+    return reply.code(201).send(copy);
+  });
+
+  /** Removes a process. The one the portal runs cannot be removed. */
+  app.post<{ Body: { catalogId?: string } }>("/office/processes/delete", async (req, reply) => {
+    const cat = req.body?.catalogId ?? "";
+    if (!store.process(cat)) return notFound(reply);
+    if (cat === DEFAULT_CATEGORY) return bad(reply, "The process the portal runs cannot be deleted.", 409);
+    store.deleteProcess(cat);
+    return { ok: true };
   });
 
   app.put<{ Body: { def?: ProcessDef } }>("/office/processes/draft", async (req, reply) => {

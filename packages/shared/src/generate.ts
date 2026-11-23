@@ -154,7 +154,7 @@ interface Tail {
   handle: string;
 }
 const PRIMARY: Partial<Record<NodeKind, string>> = { check_inputs: "complete", run_rules: "complete", human_task: "approved", review_fields: "confirmed", condition: "yes" };
-const TRIGGER_TEXT = /\b(?:application|case|request|submission)s?\b.*\b(?:arrives?|arrived|comes? in|is submitted|submitted|is received|received|is delivered|starts?)\b/i;
+const TRIGGER_TEXT = /\b(?:application|case|request|submission)s?\b.*\b(?:arrives?|arrived|comes? in|is submitted|submitted|is received|received|is delivered|starts?)\b|\b(?:student|applicant)s? (?:objects?|appeals?|complains?|files? an? (?:objection|appeal))\b|\b(?:objection|appeal) (?:arrives?|comes? in|is (?:filed|received|submitted))\b/i;
 const TERMINAL_MESSAGE = /\b(reject|decline|deny|refuse)\w*/i;
 
 class Builder {
@@ -238,7 +238,7 @@ function actionsIn(text: string, b: Builder): Action[] {
   }
   on(/\b(?:draft|write|compose|formulate)\b[^.,;]*\b(?:mail|e-?mail|message|letter)\b[^.,;]*\b(?:ai|automatic\w*)\b|\bai\b[^.,;]*\b(?:draft|write|compose)\w*/i, "AI drafts a message", (bb, t) => bb.add("ai_draft_mail", "AI drafts the message", {}, t));
   on(/\b(?:ask|request|chase|require|invite)\b[^.,;]*\b(?:student|applicant|them|him|her|documents?|missing|upload\w*|information)\b/i, "Ask the applicant", (bb, t) => bb.add("request_documents", "Ask the applicant for the missing documents", { sending: "auto" }, t));
-  const note = /\b(?:send|notify|inform|e-?mail|tell|write to|message)\b[^.,;]*\b(?:student|applicant|parents?|office|him|her|them)\b|\bnotif\w+\b/i.exec(text);
+  const note = /\b(?:new|corrected|revised) decision\b[^.,;]*\b(?:sent|issued|made)\b|\b(?:send|notify|inform|e-?mail|tell|write to|message)\b[^.,;]*\b(?:student|applicant|parents?|office|him|her|them)\b|\bnotif\w+\b/i.exec(text);
   const askedAlready = found.some((f) => f.said === "Ask the applicant");
   if (note && !askedAlready) {
     const to = /parents?/i.test(text) ? "parents" : /\boffice\b|internal/i.test(text) ? "office" : "student";
@@ -288,7 +288,7 @@ function conditionIn(text: string): Cond | null {
   if (/\b(?:rules?|requirements?)\b[^.]*\b(?:fail\w*|not (?:met|fulfilled|passed)|violated|broken)\b|\bopen items?\b|\b(?:blocker|blocking)/.test(t)) return { kind: "branch", of: "run_rules", handle: "incomplete", label: "Rules not met" };
   if (/\b(?:incomplete|missing|not complete|something is missing|not everything)\b/.test(t)) return { kind: "branch", of: "check_inputs", handle: "incomplete", label: "Incomplete" };
   if (/\b(?:reject\w*|declin\w+|denied|deny|denies|refus\w+)\b/.test(t)) return { kind: "branch", of: "human_task", handle: "rejected", label: "Rejected" };
-  if (/\b(?:approv\w+|granted|grants?)\b/.test(t)) return { kind: "branch", of: "human_task", handle: "approved", label: "Approved" };
+  if (/\b(?:approv\w+|granted|grants?|justified|successful|upheld|well-founded)\b/.test(t)) return { kind: "branch", of: "human_task", handle: "approved", label: "Approved" };
   if (/\b(?:question|more information|needs? information|unclear)\b/.test(t) && /\b(?:caseworker|person|decision)\b/.test(t)) return { kind: "branch", of: "human_task", handle: "info", label: "Question" };
   if (/\b(?:funding|support|amount|grant|bafög|bafoeg|money|payment)\b/.test(t) || /€|eur\b|euros?/.test(t)) {
     if (/tuition/.test(t)) return numeric("tuitionFees", "Tuition fees (€)");
@@ -318,7 +318,11 @@ export function simulateDraft(description: string): ProcessDraft {
   const first = /\bportal\b/i.test(text.split(/[.\n]/)[0] ?? "") && /\b(?:arrives?|comes? in|submitted|received|starts?)\b/i.test(text.split(/[.\n]/)[0] ?? "");
   b.add("trigger", "Application arrives", first ? { source: "portal" } : {}, text.split(/[.\n]/)[0] ?? "");
   b.steps[0]!.comment = "Every process starts here.";
-  const sentences = text.split(/(?<=[.;!?])\s+|\n+/).map((s) => s.trim()).filter(Boolean);
+  // "..., and if it's justified a new decision is sent, otherwise ..." reads as two sentences with a clear condition.
+  const spoken = text
+    .replace(/,?\s+and\s+(?=(?:if|when)\b)/gi, ". ")
+    .replace(/\b(if|when)\s+(?:it(?:'s| is)|the (?:objection|appeal|claim) is)\s+(justified|successful|upheld|well-founded|valid)\s+(?![,.])/gi, "$1 $2, ");
+  const sentences = spoken.split(/(?<=[.;!?])\s+|\n+/).map((s) => s.trim()).filter(Boolean);
   let open: { tail: Tail } | null = null;
   const plain = (s: string) => s.replace(/[.;!?]+$/, "");
   const apply = (acts: Action[], from: string, quiet = false) => acts.forEach((a) => { a.run(b, from); if (!quiet) b.understood.push(a.said); });
@@ -386,6 +390,14 @@ export function simulateDraft(description: string): ProcessDraft {
           if (c.handle !== primary && b.tails.length && lastStep?.kind !== "end") b.add("end", lastStep?.kind === "request_documents" ? "Waiting for the applicant" : "Finished", {}, s);
         });
         b.tails = c.handle === primary ? out : rest;
+        // "…if justified, send a new decision, otherwise a rejection": the other outcome of a caseworker's decision.
+        const elseActs = elsePart && c.of === "human_task" && c.handle === "approved" ? actionsIn(elsePart, b) : [];
+        if (elseActs.length) {
+          const other: Tail = { id: src.id, handle: "rejected" };
+          const eo = b.chain([other], () => apply(elseActs, s, true));
+          b.tails = [...b.tails, ...eo];
+          b.understood.push(`Otherwise: ${elseActs.map((a) => a.said).join(", ")}`);
+        }
         const mainTail: Tail = { id: src.id, handle: primary };
         if (c.handle !== primary && !b.tails.some((t) => t.id === mainTail.id && t.handle === mainTail.handle) && !b.edges.some((e) => e.from === mainTail.id && e.handle === mainTail.handle)) b.tails = [...b.tails, mainTail];
         b.understood.push(`${c.label}: ${acts.map((a) => a.said).join(", ")}`);
