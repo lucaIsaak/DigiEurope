@@ -60,12 +60,13 @@ import {
   GitBranch,
   GripVertical,
   LayoutDashboard,
-  Maximize2,
   PanelLeftClose,
   PanelLeftOpen,
   Play,
   Plug,
   Redo2,
+  FlaskConical,
+  History,
   ListChecks,
   ScanText,
   Search,
@@ -100,6 +101,18 @@ import { useStaff } from "@/lib/staff";
 import { useTheme } from "@/lib/theme";
 
 interface Snapshot { nodes: FlowNode[]; edges: FlowEdge[] }
+
+/** A tooltip that explains a toolbar button. Fixed to the screen, so the scrolling toolbar cannot clip it. */
+function Tip({ text, children }: { text: string; children: React.ReactNode }) {
+  const [pos, setPos] = useState<{ x: number; y: number } | null>(null);
+  const show = (el: HTMLElement) => { const r = el.getBoundingClientRect(); setPos({ x: Math.min(Math.max(r.left + r.width / 2, 150), window.innerWidth - 150), y: r.bottom + 8 }); };
+  return (
+    <span className="tip-wrap" onMouseEnter={(e) => show(e.currentTarget)} onMouseLeave={() => setPos(null)} onFocusCapture={(e) => show(e.currentTarget)} onBlurCapture={() => setPos(null)} onMouseDownCapture={() => setPos(null)}>
+      {children}
+      {pos && <span className="tip-bubble" role="tooltip" style={{ left: pos.x, top: pos.y }}>{text}</span>}
+    </span>
+  );
+}
 
 function Builder() {
   const { t, bi, lang, tk, dateTime } = useI18n();
@@ -516,19 +529,30 @@ function Builder() {
   return (
     <div className="ws">
       <div className="ws-toolbar">
-        <Link href="/office/processes" className="button button-ghost button-small" onClick={(e) => { if (dirty && !window.confirm(t("builder.switchConfirm"))) e.preventDefault(); }}><ArrowLeft size={15} />{t("builder.back")}</Link>
+        <div className="ws-left">
+        <Link href="/office/processes" className="button button-ghost button-small" onClick={(e) => { if (dirty && !window.confirm(t("builder.switchConfirm"))) e.preventDefault(); }}><ArrowLeft size={15} /><span className="hide-narrow">{t("builder.back")}</span></Link>
         <input className="ws-name" value={name} onChange={(e) => { setName(e.target.value); touch(); }} aria-label={t("builder.name")} />
-        {live ? <span className="pill pill-ok">{t("builder.live", { v: live.version })}</span> : <span className="pill pill-muted">{t("builder.notLive")}</span>}
-        {category !== DEFAULT_CATEGORY && <span className="pill pill-muted" title={t("builder.notRunning")}>{t("builder.notRunning")}</span>}
-        {dirty && <span className="pill pill-warn">{t("builder.draft")} · {t("builder.unsaved")}</span>}
-        <span className="ws-sep" />
-        <button className="icon-button" type="button" title={`${t("builder.undo")} (⌘Z)`} aria-label={t("builder.undo")} disabled={past.current.length === 0} onClick={undo}><Undo2 size={16} /></button>
-        <button className="icon-button" type="button" title={`${t("builder.redo")} (⇧⌘Z)`} aria-label={t("builder.redo")} disabled={future.current.length === 0} onClick={redo}><Redo2 size={16} /></button>
-        <button className="icon-button" type="button" title={t("builder.tidy")} aria-label={t("builder.tidy")} onClick={tidy}><LayoutDashboard size={16} /></button>
-        <button className="icon-button" type="button" title={t("builder.fit")} aria-label={t("builder.fit")} onClick={() => rf.fitView({ padding: 0.12, duration: 250 })}><Maximize2 size={16} /></button>
+        <Tip text={category !== DEFAULT_CATEGORY ? `${live ? t("builder.live", { v: live.version }) : t("builder.notLive")}. ${t("builder.notRunning")}` : live ? t("builder.live", { v: live.version }) : t("builder.notLive")}>
+          {live ? <span className="pill pill-ok">{t("builder.live", { v: live.version })}</span> : <span className="pill pill-muted">{t("builder.notLive")}</span>}
+        </Tip>
+        {dirty && <span className="pill pill-warn" title={t("builder.unsaved")}>{t("builder.unsavedShort")}</span>}
+        </div>
+        <div className="ws-center">
+        <div className="ws-tools" role="group">
+          <Tip text={t("tip.inputs")}><button className={`tool-btn ${showInputs ? "on" : ""}`} type="button" aria-label={t("builder.inputs")} onClick={() => { setShowInputs((v) => !v); setSelected(null); }}><ListChecks size={16} /><span className="tool-label">{t("builder.inputs")}</span>{inputs.length > 0 && <b className="tool-count">{inputs.length}</b>}</button></Tip>
+          <Tip text={t("tip.improve")}><button className="tool-btn" type="button" disabled={busy} aria-label={t("doc.run")} onClick={documentWithAi}><Sparkles size={16} /><span className="tool-label">{t("doc.run")}</span>{pendingSuggestions > 0 && <b className="tool-count">{pendingSuggestions}</b>}</button></Tip>
+          <Tip text={t("tip.validate")}><button className="tool-btn" type="button" aria-label={t("builder.validate")} onClick={validate}><CheckCircle2 size={16} /><span className="tool-label">{t("builder.validate")}</span></button></Tip>
+          <Tip text={t("tip.testRun")}><button className={`tool-btn ${drawer ? "on" : ""}`} type="button" aria-label={t("builder.testRun")} onClick={() => { setDrawer((d) => !d); setShowTests(false); }}><Play size={16} /><span className="tool-label">{t("builder.testRun")}</span></button></Tip>
+          <Tip text={t("tip.tests")}><button className={`tool-btn ${showTests ? "on" : ""}`} type="button" aria-label={t("builder.testsBtn")} onClick={() => { setShowTests((d) => !d); setDrawer(false); }}><FlaskConical size={16} /><span className="tool-label">{t("builder.testsBtn")}</span>{tests.length > 0 && <b className="tool-count">{tests.length}</b>}</button></Tip>
+        </div>
+        </div>
+        <div className="ws-right">
+        <Tip text={`${t("builder.undo")} (⌘Z)`}><button className="icon-button" type="button" aria-label={t("builder.undo")} disabled={past.current.length === 0} onClick={undo}><Undo2 size={16} /></button></Tip>
+        <Tip text={`${t("builder.redo")} (⇧⌘Z)`}><button className="icon-button" type="button" aria-label={t("builder.redo")} disabled={future.current.length === 0} onClick={redo}><Redo2 size={16} /></button></Tip>
+        <Tip text={t("tip.tidy")}><button className="icon-button" type="button" aria-label={t("builder.tidy")} onClick={tidy}><LayoutDashboard size={16} /></button></Tip>
         {history.length > 0 && (
           <span style={{ position: "relative" }}>
-            <button className="button button-ghost button-small" type="button" onClick={() => setShowVersions((v) => !v)}>{t("builder.versions")}</button>
+            <Tip text={t("builder.versions")}><button className="icon-button" type="button" aria-label={t("builder.versions")} onClick={() => setShowVersions((v) => !v)}><History size={16} /></button></Tip>
             {showVersions && (
               <div className="card" style={{ position: "absolute", top: "110%", left: 0, zIndex: 20, width: 320, padding: "0.6rem 0.8rem" }}>
                 {[...history].reverse().map((h) => (
@@ -541,30 +565,30 @@ function Builder() {
             )}
           </span>
         )}
-        <span className="ws-spacer" />
-        <button className={`button button-small ${showInputs ? "" : "button-ghost"}`} type="button" onClick={() => { setShowInputs((v) => !v); setSelected(null); }}><ListChecks size={15} />{t("builder.inputs")} ({inputs.length})</button>
-        <button className="button button-ghost button-small" type="button" disabled={busy} title={t("doc.simulated")} onClick={documentWithAi}><Sparkles size={15} />{t("doc.run")}{pendingSuggestions > 0 ? ` (${pendingSuggestions})` : ""}</button>
+        <span className="ws-sep" />
         {pendingSuggestions > 0 && <button className="link-button small" type="button" onClick={() => { checkpoint(); setNodes((ns) => ns.map((x) => ({ ...x, data: { ...x.data, suggestion: undefined } }))); touch(); }}>{t("doc.rejectAll")}</button>}
-        <button className="button button-ghost button-small" type="button" onClick={validate}><CheckCircle2 size={15} />{t("builder.validate")}</button>
-        <button className={`button button-small ${drawer ? "" : "button-ghost"}`} type="button" onClick={() => { setDrawer((d) => !d); setShowTests(false); }}><Play size={14} />{t("builder.testRun")}</button>
-        <button className={`button button-small ${showTests ? "" : "button-ghost"}`} type="button" onClick={() => { setShowTests((d) => !d); setDrawer(false); }}><CheckCircle2 size={14} />{t("builder.testsBtn")} ({tests.length})</button>
-        <button className="button button-ghost button-small" type="button" disabled={busy} onClick={async () => { const r = await run(() => api.saveDraft(toDef())); if (r) { setDirty(false); setToast({ text: t("builder.saved"), tone: "ok" }); } }}>{t("builder.save")}</button>
-        <button
-          className="button button-small"
-          type="button"
-          disabled={busy}
-          onClick={async () => {
-            const found = validate();
-            if (found.length) return;
-            const [impact, tr] = await Promise.all([run(() => api.processImpact(toDef())), run(() => api.processTests(toDef()))]);
-            if (impact && tr) {
-              setChangeNote("");
-              setPublishDlg({ impact, tests: tr.results });
-            }
-          }}
-        >
-          {t("builder.publish")}
-        </button>
+        <Tip text={t("tip.save")}>
+          <button className="button button-ghost button-small" type="button" disabled={busy} onClick={async () => { const r = await run(() => api.saveDraft(toDef())); if (r) { setDirty(false); setToast({ text: t("builder.saved"), tone: "ok" }); } }}>{t("builder.save")}</button>
+        </Tip>
+        <Tip text={t("tip.publish")}>
+          <button
+            className="button button-small"
+            type="button"
+            disabled={busy}
+            onClick={async () => {
+              const found = validate();
+              if (found.length) return;
+              const [impact, tr] = await Promise.all([run(() => api.processImpact(toDef())), run(() => api.processTests(toDef()))]);
+              if (impact && tr) {
+                setChangeNote("");
+                setPublishDlg({ impact, tests: tr.results });
+              }
+            }}
+          >
+            {t("builder.publish")}
+          </button>
+        </Tip>
+        </div>
       </div>
 
       <div className="ws-body">

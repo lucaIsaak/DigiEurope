@@ -20,3 +20,4 @@ export * from "./expressions.js";
 export * from "./json.js";
 export * from "./documentation.js";
 export * from "./generate.js";
+export * from "./decision.js";

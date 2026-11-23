@@ -18,6 +18,8 @@ export const AMOUNTS = {
   travelEurope: 250,
   travelElsewhere: 500,
   tuitionCap: 5600,
+  /** Allowance on the student's own assets (§ 29 BAföG). ILLUSTRATIVE: the prototype ends the check above it; the law counts the excess against the need. */
+  assetAllowance: 15000,
   /** Simplified lump sum for social security and taxes when deriving net income. ILLUSTRATIVE. */
   deductionPercent: 21.5,
 };

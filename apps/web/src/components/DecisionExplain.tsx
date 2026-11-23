@@ -1,13 +1,14 @@
 "use client";
 
-import type { AuditRecord, CaseView } from "@digieurope/shared";
-import { CheckCircle2, Download, FileText, MessageSquareText, MinusCircle, ScrollText, ShieldCheck, UserCheck, XCircle } from "lucide-react";
+import { walkDecisionTree, type AuditRecord, type CaseView } from "@digieurope/shared";
+import { CheckCircle2, Download, FileText, GitBranch, MessageSquareText, MinusCircle, ScrollText, ShieldCheck, UserCheck, XCircle } from "lucide-react";
 import { useState } from "react";
+import { DecisionTree } from "@/components/DecisionTree";
 import { api } from "@/lib/api";
 import { useI18n } from "@/lib/i18n";
 import type { MessageKey } from "@/lib/messages";
 
-type Tab = "human" | "technical";
+type Tab = "human" | "tree" | "technical";
 
 /**
  * Explainability for a decided case: the human explanation the student received,
@@ -29,11 +30,34 @@ export function DecisionExplain({ c }: { c: CaseView }) {
         </div>
         <div className="seg" role="tablist" aria-label={t("xp.title")}>
           <button type="button" role="tab" aria-selected={tab === "human"} aria-pressed={tab === "human"} onClick={() => setTab("human")}><MessageSquareText size={14} />{t("xp.tab.human")}</button>
+          <button type="button" role="tab" aria-selected={tab === "tree"} aria-pressed={tab === "tree"} onClick={() => setTab("tree")}><GitBranch size={14} />{t("xp.tab.tree")}</button>
           <button type="button" role="tab" aria-selected={tab === "technical"} aria-pressed={tab === "technical"} onClick={() => setTab("technical")}><ScrollText size={14} />{t("xp.tab.technical")}</button>
         </div>
       </div>
-      {tab === "human" ? <Human c={c} /> : d.audit ? <Technical c={c} a={d.audit} /> : <p className="muted" style={{ padding: "1rem 1.4rem" }}>{t("xp.noRecord")}</p>}
+      {tab === "human" ? <Human c={c} /> : tab === "tree" ? <TreeTab c={c} /> : d.audit ? <Technical c={c} a={d.audit} /> : <p className="muted" style={{ padding: "1rem 1.4rem" }}>{t("xp.noRecord")}</p>}
     </section>
+  );
+}
+
+/** The decision tree with the path this case took, next to what the caseworker decided. */
+function TreeTab({ c }: { c: CaseView }) {
+  const { t, eur } = useI18n();
+  const d = c.decision!;
+  const walk = walkDecisionTree(c, new Date(d.decidedAt));
+  const rulesWord = walk.outcome === "approved" ? `${t("dt.out.approved")} · ${eur(walk.monthly)} ${t("common.perMonth")}` : t(`dt.out.${walk.outcome}` as MessageKey);
+  const ours = d.outcome === "approved" ? `${t("dt.out.approved")} · ${eur(d.monthlyAmount)} ${t("common.perMonth")}` : t("dt.out.rejected");
+  const same = walk.outcome === d.outcome && (d.outcome !== "approved" || walk.monthly === d.monthlyAmount);
+  return (
+    <div className="explain-body">
+      <h3 style={{ margin: 0 }}>{t("dt.title")}</h3>
+      <p className="small muted" style={{ margin: "0.2rem 0 0.9rem" }}>{t("dt.lead")}</p>
+      <div className={`dt-compare ${same ? "same" : "differs"}`}>
+        <span><b>{t("dt.rulesIs")}</b> {rulesWord}</span>
+        <span><b>{t("dt.decided")}</b> {ours} · {d.decidedBy}</span>
+        <em>{same ? t("dt.same") : t("dt.differs")}</em>
+      </div>
+      <DecisionTree walk={walk} />
+    </div>
   );
 }
 

@@ -24,7 +24,6 @@ export default function Inbox() {
   const { staff } = useStaff();
   const [tab, setTab] = useState<Tab>("needs");
   const [scopeChoice, setScopeChoice] = useState<"mine" | "all" | null>(null);
-  const scope = scopeChoice ?? (staff?.isCaseworker ? "mine" : "all");
   const [q, setQ] = useState("");
   const [selected, setSelected] = useState<string | null>(null);
   const [preview, setPreview] = useState<CaseView | null>(null);
@@ -66,8 +65,10 @@ export default function Inbox() {
   }, [load]);
 
   /** "My cases" are the ones assigned to me, plus cases nobody has yet. */
-  const scoped = useMemo(() => (rows ?? []).filter((r) => scope === "all" || !r.assignedTo || r.assignedTo.id === staff?.id), [rows, scope, staff?.id]);
   const mineCount = useMemo(() => (rows ?? []).filter((r) => !r.assignedTo || r.assignedTo.id === staff?.id).length, [rows, staff?.id]);
+  // Caseworkers start with their own cases. If nothing is assigned to you (an administrator, say), start with all of them, or the inbox looks empty.
+  const scope = scopeChoice ?? (staff?.isCaseworker && mineCount > 0 ? "mine" : "all");
+  const scoped = useMemo(() => (rows ?? []).filter((r) => scope === "all" || !r.assignedTo || r.assignedTo.id === staff?.id), [rows, scope, staff?.id]);
 
   const counts = useMemo(() => {
     const c: Record<Tab, number> = { needs: 0, waiting: 0, decided: 0, all: 0 };

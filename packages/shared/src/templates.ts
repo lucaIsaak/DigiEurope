@@ -14,7 +14,7 @@ const GERMAN_TEMPLATES: DocumentTemplate[] = [
     name: b("Antrag (Formblatt 1)", "Application (Formblatt 1)"),
     title: "Antrag auf Ausbildungsförderung im Ausland (Formblatt 1)",
     purpose: b("Der eigentliche Antrag auf Förderung.", "The application for funding itself."),
-    fields: [f("name", "Name der antragstellenden Person"), f("birth_date", "Geburtsdatum", "date"), f("university", "Deutsche Hochschule"), f("destination", "Zielland"), f("stay_type", "Art des Aufenthalts"), f("period_from", "Aufenthalt von", "date"), f("period_to", "Aufenthalt bis", "date")],
+    fields: [f("name", "Name der antragstellenden Person"), f("birth_date", "Geburtsdatum", "date"), f("university", "Deutsche Hochschule"), f("destination", "Zielland"), f("stay_type", "Art des Aufenthalts"), f("period_from", "Aufenthalt von", "date"), f("period_to", "Aufenthalt bis", "date"), f("assets", "Eigenes Vermögen (EUR)", "number", false)],
     signatures: [sig("student", "Unterschrift Antragsteller:in")],
   },
   {
@@ -118,7 +118,7 @@ const e = (title: string, fields: Record<string, string>, signatures: Record<str
 const APPLICANT = "Applicant's signature";
 /** English versions of the forms, so the demo can be shown with English documents. */
 const ENGLISH: Record<string, En> = {
-  application_form: e("Application for Training Funding Abroad (Formblatt 1)", { name: "Name of applicant", birth_date: "Date of birth", university: "German university", destination: "Destination country", stay_type: "Type of stay", period_from: "Stay from", period_to: "Stay until" }, { student: APPLICANT }),
+  application_form: e("Application for Training Funding Abroad (Formblatt 1)", { name: "Name of applicant", birth_date: "Date of birth", university: "German university", destination: "Destination country", stay_type: "Type of stay", period_from: "Stay from", period_to: "Stay until", assets: "Own assets (EUR)" }, { student: APPLICANT }),
   fb06: e("Formblatt 6: Supplement to the application for training abroad", { name: "Name of applicant", stay_type: "Type of stay", abroad_institution: "Institution abroad", country: "Country", period_from: "Start", period_to: "End", credit_recognition: "Credit recognition planned at home", tuition_fees: "Tuition fees (EUR)" }, { student: APPLICANT }),
   fb08: e("Formblatt 8: Application for advance payment of training funding", { name: "Name of applicant", parent_name: "Name of parent", reason: "Reason for non-payment", refused_since: "Payment refused since", parents_asked: "Parents were asked to pay" }, { student: APPLICANT }),
   enrollment_cert: e("Certificate of Enrolment (§ 9 BAföG)", { name: "Name", university: "University", term: "Semester", course: "Course of study" }),

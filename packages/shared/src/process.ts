@@ -329,7 +329,7 @@ export function upstreamOutputs(def: { nodes: { id: string; kind: NodeKind; conf
 }
 
 /** Every field where a person types something, and so can put outputs of earlier steps into. */
-export const TOKEN_KEYS = ["subject", "body", "fallback", "instruction", "subject_en", "body_en", "fallback_en", "instruction_en", "value", "left", "payload", "params", "url", "headers"];
+export const TOKEN_KEYS = ["subject", "body", "fallback", "instruction", "subject_en", "body_en", "fallback_en", "instruction_en", "context", "value", "left", "payload", "params", "url", "headers"];
 const ALL_OUTPUT_NAMES = new Set(Object.values(STEP_OUTPUTS).flatMap((l) => l.map((x) => x.name)));
 const allKnownOutputs = (def: { nodes: { kind: NodeKind; config?: Record<string, ConfigValue> }[] }) => def.nodes.flatMap((n) => outputsOfNode(n));
 export const TOKEN_RE = /\{([A-Za-z0-9_-]+)(?:\.([a-z_]+))?(?::([a-z]+))?\}/g;

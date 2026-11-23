@@ -7,6 +7,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Spinner } from "@/components/ui";
 import { api } from "@/lib/api";
 import { useI18n } from "@/lib/i18n";
+import type { MessageKey } from "@/lib/messages";
 import { useStaff } from "@/lib/staff";
 
 type Row = Awaited<ReturnType<typeof api.processList>>[number];
@@ -38,6 +39,7 @@ export default function ProcessesPage() {
   const [menu, setMenu] = useState<string | null>(null);
   const [dialog, setDialog] = useState<Dialog>(null);
   const [busy, setBusy] = useState(false);
+  const [genPct, setGenPct] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
   const [cat, setCat] = useState("");
@@ -79,9 +81,21 @@ export default function ProcessesPage() {
     setDialog({ kind: "new" });
     if (!info) api.generateInfo().then(setInfo).catch(() => setInfo({ live: false, model: null }));
   };
+  /** Drafting takes a moment, and the bar shows it: the built-in writer is paced on purpose, a real model takes as long as it takes. */
   const propose = async () => {
     setProposal(null);
-    const r = await attempt(() => api.generateProcess(text, mode));
+    const started = Date.now();
+    const fixed = mode === "simulated" ? 4200 : 0;
+    setGenPct(2);
+    const timer = setInterval(() => {
+      const ms = Date.now() - started;
+      setGenPct(fixed ? Math.min(96, (ms / fixed) * 100) : Math.min(92, 100 * (1 - Math.exp(-ms / 5000))));
+    }, 120);
+    const [r] = await Promise.all([attempt(() => api.generateProcess(text, mode)), new Promise((res) => setTimeout(res, fixed))]);
+    clearInterval(timer);
+    setGenPct(100);
+    await new Promise((res) => setTimeout(res, 350));
+    setGenPct(null);
     if (r) setProposal(r as Proposal);
   };
   const exportJson = async (r: Row) => {
@@ -216,8 +230,15 @@ export default function ProcessesPage() {
                   <label className={info?.live ? "" : "muted"}><input type="radio" name="gen-mode" disabled={!info?.live} checked={mode === "live"} onChange={() => setMode("live")} /> {t("gen.live")}{info?.model ? ` · ${info.model}` : ""}</label>
                   {info && !info.live && <span className="small muted">{t("gen.liveOff")}</span>}
                 </fieldset>
-                <div><button className="button" type="button" disabled={busy || text.trim().length < 10} onClick={propose}><MessageSquareText size={15} />{busy && !proposal ? t("gen.running") : t("gen.run")}</button></div>
-                {proposal && (
+                {genPct !== null && (
+                  <div className="gen-progress" role="status" aria-live="polite">
+                    <div className="gp-head"><Sparkles size={18} className="gp-spark" /><strong>{t("gen.prog.title")}</strong></div>
+                    <div className="gp-track" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(genPct)}><div className="gp-fill" style={{ width: `${genPct}%` }} /></div>
+                    <div className="gp-meta"><span>{t(`gen.prog.s${genPct < 20 ? 1 : genPct < 50 ? 2 : genPct < 78 ? 3 : genPct < 96 ? 4 : 5}` as MessageKey)}</span><span>{Math.round(genPct)} %</span></div>
+                  </div>
+                )}
+                <div hidden={genPct !== null}><button className="button" type="button" disabled={busy || genPct !== null || text.trim().length < 10} onClick={propose}><MessageSquareText size={15} />{busy && !proposal ? t("gen.running") : t("gen.run")}</button></div>
+                {proposal && genPct === null && (
                   <div className="doc-card" role="group">
                     <div className="doc-head"><Sparkles size={14} /><strong>{t("gen.result", { steps: String(proposal.nodes.length), links: String(proposal.edges.length) })}</strong></div>
                     {proposal.fellBack && <p className="small" style={{ margin: 0 }}>{t("gen.fellBack", { e: proposal.fellBack })}</p>}

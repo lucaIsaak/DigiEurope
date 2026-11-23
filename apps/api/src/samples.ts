@@ -71,6 +71,13 @@ const BASE_PEOPLE: Record<string, SamplePerson> = {
 };
 
 /** Stays start a few months after "now" so the sample cases stay realistic whenever the demo runs. Last year's letter case is fixed. */
+/** The assets the student states in the application. Derived from the name, so the demo data does not shift: always below the allowance. */
+function statedAssets(p: { student: { firstName: string; lastName: string; birthDate: string } }): number {
+  let h = 0;
+  for (const ch of `${p.student.firstName}${p.student.lastName}${p.student.birthDate}`) h = (h * 31 + ch.charCodeAt(0)) % 9973;
+  return 500 + (h % 22) * 500;
+}
+
 export function getPerson(key: string, now: Date = new Date()): SamplePerson {
   const base = BASE_PEOPLE[key]!;
   if (key === "noah") return base;
@@ -120,6 +127,7 @@ export function sampleDocuments(p: SamplePerson, defects: Defect[] = [], lang: "
   add("application_form", "Antrag_Formblatt1.pdf", {
     name, birth_date: p.student.birthDate, university: p.student.university, destination: `${p.stay.city}, ${p.stay.country}`,
     stay_type: intern ? L("Praktikum", "Internship") : L("Studium", "Study"), period_from: p.stay.startDate, period_to: p.stay.endDate,
+    assets: statedAssets(p),
   }, { student: !d("form_unsigned") });
   if (!d("enroll_missing")) add("enrollment_cert", "Immatrikulationsbescheinigung.pdf", { name, university: p.student.university, term: L("Wintersemester 2026/27", "Winter semester 2026/27"), course: p.student.course });
   if (!intern && !d("host_missing")) {

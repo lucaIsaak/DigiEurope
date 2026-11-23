@@ -4,7 +4,7 @@ import { PROPOSAL_SAMPLE_TITLE, SAMPLE_SETS, fixDocuments, formblatt8, getPerson
 import { extractDocument } from "./documents.js";
 import { seedDemoData } from "./seed.js";
 import { startRun } from "./engine.js";
-import { defaultProcess, upgradeProcess, validateProcess, type Application, type ProcessDef } from "@digieurope/shared";
+import { defaultProcess, upgradeProcess, validateProcess, walkDecisionTree, DECISION_TREE, type Application, type ProcessDef } from "@digieurope/shared";
 import { checksFor, reviewReport } from "./cases.js";
 import { Store } from "./store.js";
 
@@ -184,6 +184,34 @@ describe("demo data", () => {
     expect(insights.firstTimeComplete).toBeLessThan(80);
     const reset = (await app.inject({ method: "POST", url: "/admin/reset" })).json();
     expect(reset.ok).toBe(true);
+  });
+});
+
+describe("decision tree", () => {
+  it("walks every seeded case to a leaf of the tree, and decided cases end where the office decided", () => {
+    const { store } = setup();
+    seedDemoData(store, NOW);
+    const ids = new Set(DECISION_TREE.nodes.map((n) => n.id));
+    let approved = 0;
+    for (const a of store.list()) {
+      const w = walkDecisionTree(a, NOW);
+      expect(ids.has(w.leaf)).toBe(true);
+      expect(w.steps.length).toBeGreaterThan(0);
+      if (a.decision?.outcome === "rejected") expect(w.leaf).toBe("no-need");
+      if (a.decision?.outcome === "approved") { expect(w.outcome).toBe("approved"); approved += 1; }
+    }
+    expect(approved).toBeGreaterThan(5);
+  });
+
+  it("stops at the assets question when the student states more than the allowance", () => {
+    const { store } = setup();
+    seedDemoData(store, NOW);
+    const a = store.list().find((x) => x.decision?.outcome === "approved")!;
+    const copy = structuredClone(a);
+    copy.documents.find((d) => d.kind === "application_form")!.extraction.fields.assets = "60000";
+    const w = walkDecisionTree(copy, NOW);
+    expect(w.leaf).toBe("no-assets");
+    expect(w.steps.at(-1)?.id).toBe("assets");
   });
 });
 

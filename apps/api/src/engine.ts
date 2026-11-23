@@ -468,7 +468,7 @@ async function execute(def: ProcessDef, start: string, input: Application, ctx: 
         }
         case "ai_draft_mail": {
           const report = ctx.check(app);
-          mailDraft = draftMail(app, report, String(node.config.tone), [], String(node.config.context ?? ""));
+          mailDraft = draftMail(app, report, String(node.config.tone), [], F(String(node.config.context ?? ""), "context"));
           out("draft_subject", mailDraft.subject);
           out("draft_body", mailDraft.body);
           entry("Mail drafted by AI (simulated)");

@@ -16,6 +16,7 @@ import {
 import { AlertTriangle, CheckCircle2, CircleDot, Clock, Lock, Pencil, Plus, Power, Search, ShieldCheck, Sparkles, User, Workflow, XCircle } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { ConditionBuilder } from "@/components/ConditionBuilder";
+import { DecisionTree } from "@/components/DecisionTree";
 import { TodoBar, refreshTodo, useTodo, type TodoItem } from "@/components/TodoBar";
 import { SourceLink, Spinner, useAsyncError } from "@/components/ui";
 import { api, type RuleDraftBody, type RuleEntry, type RuleVersionView } from "@/lib/api";
@@ -37,6 +38,7 @@ export default function Rules() {
   const [sel, setSel] = useState<string | null>(null);
   const [editing, setEditing] = useState<RuleDraftBody | null>(null);
   const [creating, setCreating] = useState(false);
+  const [view, setView] = useState<"rules" | "tree">("rules");
   const { error, setError, run } = useAsyncError();
 
   const load = useCallback(async () => {
@@ -150,6 +152,19 @@ export default function Rules() {
       </header>
       <TodoBar items={todoItems} />
 
+      <div className="rl-view" role="tablist">
+        <button type="button" role="tab" aria-pressed={view === "rules"} onClick={() => setView("rules")}>{t("dt.tab.rules")}</button>
+        <button type="button" role="tab" aria-pressed={view === "tree"} onClick={() => setView("tree")}>{t("dt.tab.tree")}</button>
+      </div>
+
+      {view === "tree" ? (
+        <section className="rgroup">
+          <h2>{t("dt.page.title")}</h2>
+          <p className="muted" style={{ maxWidth: "70ch" }}>{t("dt.page.lead")}</p>
+          <DecisionTree />
+        </section>
+      ) : (
+        <>
       <div className="rl-bar">
         <div className="pillrow" role="tablist">
           <button type="button" aria-pressed={filter === "all"} onClick={() => setFilter("all")}>{t("r.f.all")} <span>{shown.length}</span></button>
@@ -170,6 +185,8 @@ export default function Rules() {
         </section>
       ))}
       {groups.length === 0 && <p className="muted" style={{ padding: "2rem 0" }}>{t("todo.none")}</p>}
+        </>
+      )}
 
       {drawerOpen && (
         <>
