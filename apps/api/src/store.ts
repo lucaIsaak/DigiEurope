@@ -201,10 +201,10 @@ export class Store {
     const file = join(dir, "store.json");
     this.isNew = !existsSync(file);
     if (!this.isNew) {
-      const saved = JSON.parse(readFileSync(file, "utf8")) as Data;
+      const saved = { ...fresh(), ...(JSON.parse(readFileSync(file, "utf8")) as Partial<Data>) } as Data;
       const old = saved.processes as unknown as { live?: ProcessDef };
-      const processes = old && "live" in old ? { [DEFAULT_CATEGORY]: old as unknown as ProcessStore } : saved.processes;
-      for (const p of Object.values(processes)) for (const d of [p.live, p.draft, ...p.history]) if (d) { if (!d.catalogId) d.catalogId = DEFAULT_CATEGORY; if (!d.inputs) d.inputs = defaultInputs(); }
+      const processes = old && "live" in old ? { [DEFAULT_CATEGORY]: old as unknown as ProcessStore } : (saved.processes ?? fresh().processes);
+      for (const p of Object.values(processes)) for (const d of [p.live, p.draft, ...(p.history ?? [])]) if (d) { if (!d.catalogId) d.catalogId = DEFAULT_CATEGORY; if (!d.inputs) d.inputs = defaultInputs(); }
       for (const p of Object.values(processes)) { if (p.live) p.live = upgradeProcess(p.live); if (p.draft) p.draft = upgradeProcess(p.draft); }
       const OLD_TITLES: Record<string, string> = { "Sachbearbeitung Ausland": "Caseworker, abroad", "Prozessverantwortliche": "Process owner", "Amtsleitung (Administrator)": "Head of office (administrator)", "Verantwortliche für Extraktoren und Vorlagen": "Owner of extractors and templates", "Aufsicht Bundesebene (alle Ämter)": "Federal oversight (all offices)", Sachbearbeitung: "Caseworker" };
       saved.staff = saved.staff.map((m) => ({ ...m, title: OLD_TITLES[m.title] ?? m.title }));
