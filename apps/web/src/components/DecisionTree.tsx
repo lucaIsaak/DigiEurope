@@ -44,7 +44,7 @@ function Leaf({ leaf, lit, faded, extra }: { leaf: TreeLeaf; lit: boolean; faded
  * The decision tree of the rules as a picture. With a walk, the path of one case is lit, with the value each answer rests on.
  * Without one it is the tree itself, as every office uses it.
  */
-export function DecisionTree({ walk }: { walk?: TreeWalk }) {
+export function DecisionTree({ walk, rules }: { walk?: TreeWalk; /** On the Rules page: names the rules behind each question and opens one. */ rules?: { title: (id: string) => string | undefined; open: (id: string) => void } }) {
   const { t, bi, eur } = useI18n();
   const rows = spine();
   const stepOf = (id: string) => walk?.steps.find((s) => s.id === id);
@@ -68,6 +68,12 @@ export function DecisionTree({ walk }: { walk?: TreeWalk }) {
                     <span className="dt-val">{bi(step.value)}</span>
                   ) : (
                     <span className="dt-look"><CircleHelp size={12} />{bi(r.q.looksAt)}</span>
+                  )}
+                  {rules && (
+                    <div className="dt-rules">
+                      <span>{r.q.rules.length ? t("dt.fedBy", { n: String(r.q.rules.length) }) : t("dt.calc")}</span>
+                      {r.q.rules.map((id) => rules.title(id) && <button key={id} type="button" onClick={() => rules.open(id)}>{rules.title(id)}</button>)}
+                    </div>
                   )}
                   <a className="dt-src" href={r.q.source.url} target="_blank" rel="noreferrer">{r.q.source.label}</a>
                 </div>

@@ -18,6 +18,8 @@ export interface TreeQuestion {
   /** What is looked at, in a few words. */
   looksAt: Bilingual;
   source: { label: string; url: string };
+  /** The rules (by id) whose result feeds this question. Questions that rest on the funding calculation list none. */
+  rules: string[];
   yes: string;
   no: string;
 }
@@ -39,31 +41,31 @@ export const DECISION_TREE: { start: string; nodes: TreeNode[] } = {
   start: "docs",
   nodes: [
     {
-      id: "docs", kind: "question", yes: "stay", no: "ask-docs",
+      id: "docs", kind: "question", rules: ["R-READABLE", "R-FORM-SIGNED", "R-ENROLL", "R-HOST-CONFIRM", "R-HOST-PERIOD", "R-INTERN-CONTRACT", "R-INTERN-UNI", "R-PARENT-FORM", "R-HEALTH", "R-HEALTH-ABROAD", "R-TUITION-WAIVER"], yes: "stay", no: "ask-docs",
       question: b("Sind alle nötigen Unterlagen da und lesbar?", "Are all required documents there and readable?"),
       looksAt: b("Unterlagen des Antrags", "Documents of the application"),
       source: { label: "§ 46 BAföG", url: `${G}/baf_g/__46.html` },
     },
     {
-      id: "stay", kind: "question", yes: "income", no: "no-stay",
+      id: "stay", kind: "question", rules: ["R-MIN-STUDY", "R-MIN-INTERN"], yes: "income", no: "no-stay",
       question: b("Ist der Aufenthalt lang genug?", "Is the stay long enough?"),
       looksAt: b("Dauer in Wochen", "Length in weeks"),
       source: { label: "§ 5 BAföG", url: `${G}/baf_g/__5.html` },
     },
     {
-      id: "income", kind: "question", yes: "assets", no: "check-income",
+      id: "income", kind: "question", rules: ["R-PARENT-TAX", "R-PARENT-YEAR"], yes: "assets", no: "check-income",
       question: b("Ist das Einkommen der Eltern sicher gelesen?", "Is the parents' income read with certainty?"),
       looksAt: b("Steuerbescheid der Eltern", "Parents' tax notice"),
       source: { label: "§ 21 BAföG", url: `${G}/baf_g/__21.html` },
     },
     {
-      id: "assets", kind: "question", yes: "no-assets", no: "need",
+      id: "assets", kind: "question", rules: [], yes: "no-assets", no: "need",
       question: b("Liegt das Vermögen der Person über dem Freibetrag?", "Are the student's assets above the allowance?"),
       looksAt: b("Vermögen laut Antrag", "Assets stated in the application"),
       source: { label: "§ 29 BAföG", url: `${G}/baf_g/__29.html` },
     },
     {
-      id: "need", kind: "question", yes: "no-need", no: "grant",
+      id: "need", kind: "question", rules: ["R-TUITION-CAP"], yes: "no-need", no: "grant",
       question: b("Deckt der Beitrag der Eltern den ganzen Bedarf?", "Does the parents' contribution cover the whole need?"),
       looksAt: b("Bedarf und Elternbeitrag pro Monat", "Need and parents' contribution per month"),
       source: { label: "§§ 11, 25 BAföG", url: `${G}/baf_g/__25.html` },

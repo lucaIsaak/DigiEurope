@@ -1983,3 +1983,8 @@ button.start-opt:hover { border-color: var(--ink); }
 .rl-view { display: inline-flex; gap: 2px; padding: 3px; margin: 0 0 1rem; border: 1px solid var(--line); border-radius: 10px; background: var(--surface-2); }
 .rl-view button { border: 0; background: transparent; padding: 0.4rem 0.9rem; border-radius: 8px; font: inherit; font-size: 0.88rem; cursor: pointer; color: var(--muted); }
 .rl-view button[aria-pressed="true"] { background: var(--surface); color: var(--ink); font-weight: 600; box-shadow: 0 0 0 1px var(--line); }
+.dt-rules { display: flex; flex-wrap: wrap; gap: 0.3rem; align-items: center; margin-top: 0.45rem; }
+.dt-rules > span { font-size: 0.72rem; color: var(--muted); width: 100%; }
+.dt-rules button { font: inherit; font-size: 0.72rem; padding: 0.12rem 0.55rem; border-radius: 999px; border: 1px solid var(--line); background: var(--surface-2); color: var(--ink); cursor: pointer; }
+.dt-rules button:hover { border-color: var(--primary); }
+.chip.info { background: #e9effb; color: #2a4bb5; }

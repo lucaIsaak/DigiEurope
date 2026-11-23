@@ -2,6 +2,7 @@
 
 import {
   BUILTIN_TEMPLATES,
+  DECISION_TREE,
   baselineFacts,
   describeCheck,
   describeRuleCondition,
@@ -52,6 +53,13 @@ export default function Rules() {
   }, [load]);
 
   const facts = useMemo(() => factCatalog(templates), [templates]);
+  /** Which question of the decision tree a rule feeds, by rule id. */
+  const treeQuestion = useMemo(() => {
+    const m = new Map<string, number>();
+    DECISION_TREE.nodes.filter((n) => n.kind === "question").forEach((n, i) => n.kind === "question" && n.rules.forEach((id) => m.set(id, i + 1)));
+    return m;
+  }, []);
+
   const shown = useMemo(() => {
     const term = q.trim().toLowerCase();
     return (rules ?? [])
@@ -126,6 +134,7 @@ export default function Rules() {
           <span className={`chip ${r.status === "live" ? "ok" : r.status === "paused" ? "mute" : "warn"}`}>{t(`r.status.${r.status}` as MessageKey)}</span>
           <span className={`rc-sev ${rule.severity}`}>{t(rule.severity === "blocker" ? "r.sev.short.blocker" : "r.sev.short.warning")}</span>
           {r.draft?.rule.draftedByAi && <Sparkles size={12} />}
+          <span className={`chip ${treeQuestion.has(r.id) ? "info" : "mute"}`}>{treeQuestion.has(r.id) ? t("dt.inTree", { n: String(treeQuestion.get(r.id)) }) : t("dt.notInTree")}</span>
           <span className={`rc-used${r.usedIn.length === 0 ? " none" : ""}`}>{r.usedIn.length === 0 ? t("r.usedIn0") : r.usedIn.length === 1 ? t("r.usedIn1") : t("r.usedIn", { n: r.usedIn.length })}</span>
           <span className="rc-v">v{rule.version}</span>
         </span>
@@ -140,6 +149,7 @@ export default function Rules() {
         <div className="hero-text">
           <h1>{t("r.title")}</h1>
           <p>{t("r.lead")}</p>
+          <p className="small" style={{ opacity: 0.85 }}>{t("dt.rules.lead")}</p>
         </div>
         <div className="hero-actions">
           <dl className="hero-figs">
@@ -161,7 +171,7 @@ export default function Rules() {
         <section className="rgroup">
           <h2>{t("dt.page.title")}</h2>
           <p className="muted" style={{ maxWidth: "70ch" }}>{t("dt.page.lead")}</p>
-          <DecisionTree />
+          <DecisionTree rules={{ title: (id) => { const r = rules.find((x) => x.id === id); return r ? bi(r.title) : undefined; }, open }} />
         </section>
       ) : (
         <>
