@@ -7,6 +7,7 @@ The product idea and the interview evidence are in [docs/Product-discovery.md](d
 ## Run it
 
 Requires Node 22+ (`nvm use`). No database or Docker.
+Use npm for setup and commands; the repository is configured as an npm workspace.
 
 ```sh
 npm install

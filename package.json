@@ -3,6 +3,7 @@
   "private": true,
   "version": "0.0.0",
   "description": "Prototype: faster, clearer Auslands-BAföG (class project, fictional office)",
+  "packageManager": "npm@11.20.0",
   "engines": {
     "node": ">=22"
   },
@@ -13,9 +14,9 @@
   "scripts": {
     "dev": "npm run build -w @digieurope/shared && (npm run dev:api & npm run dev:web & wait)",
     "dev:api": "npm run dev -w @digieurope/api",
-    "dev:web": "npm run dev -w @digieurope/web",
+    "dev:web": "next dev apps/web -p 3000",
     "reset-demo": "rm -rf apps/api/data",
-    "build": "npm run build -w @digieurope/shared && npm run build -w @digieurope/api && npm run build -w @digieurope/web",
+    "build": "npm run build -w @digieurope/shared && npm run build -w @digieurope/api && next build apps/web",
     "test": "npm run test --workspaces --if-present",
     "typecheck": "npm run typecheck --workspaces --if-present"
   }
