@@ -8,6 +8,7 @@ import {
   NODE_CATALOG,
   TOKEN_KEYS,
   uniqueStepName,
+  applyEdit,
   applyMentions,
   canMerge,
   decideSuggestion,
@@ -19,6 +20,7 @@ import {
   type Category,
   type ConfigValue,
   type FlowEdge,
+  type EditOp,
   type FlowNode,
   type Mention,
   type NodeKind,
@@ -82,6 +84,7 @@ import {
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AssignmentTable } from "@/components/AssignmentTable";
+import { AssistantPane } from "@/components/AssistantPane";
 import { ExpressionEditor, FunctionTiles, previewResult } from "@/components/Expressions";
 import { JsonPicker } from "@/components/JsonPicker";
 import { OutputTiles, ProvidesList, useTokenResolver } from "@/components/StepOutputs";
@@ -132,6 +135,11 @@ function Builder() {
   const [issues, setIssues] = useState<ProcessIssue[]>([]);
   const [selected, setSelected] = useState<string | null>(null);
   const [selEdge, setSelEdge] = useState<string | null>(null);
+  const [leaving, setLeaving] = useState(false);
+  // Open by default; a person who closes it keeps it closed on this computer.
+  const [assistantOpen, setAssistantOpenRaw] = useState(true);
+  const setAssistantOpen = (v: boolean | ((x: boolean) => boolean)) => setAssistantOpenRaw((cur) => { const next = typeof v === "function" ? v(cur) : v; try { localStorage.setItem("assistantOpen", next ? "1" : "0"); } catch { /* optional */ } return next; });
+  useEffect(() => { try { if (localStorage.getItem("assistantOpen") === "0") setAssistantOpenRaw(false); } catch { /* optional */ } }, []);
   const [dropEdge, setDropEdge] = useState<string | null>(null);
   const [collapsed, setCollapsed] = useState(false);
   const [query, setQuery] = useState("");
@@ -232,6 +240,8 @@ function Builder() {
     }, 700);
     setNodes(ns);
     setEdges(es);
+    // A process with nothing in it yet: the assistant opens, so a first-time user is asked what should happen instead of facing an empty canvas.
+    if (def.nodes.length <= 1) setAssistantOpenRaw(true);
     setName(def.name);
     setInputs(def.inputs ?? []);
     setOwner(def.owner ?? "");
@@ -363,6 +373,27 @@ function Builder() {
     const at = { x: Math.round(((from?.position.x ?? 0) + (to?.position.x ?? 0)) / 32) * 16, y: Math.round(((from?.position.y ?? 0) + (to?.position.y ?? 0)) / 32) * 16 };
     addNode("condition", undefined, at, e.id);
     setSelEdge(null);
+  };
+
+  /** Puts a graph on the canvas as one undoable step, arranged once the real sizes are known. */
+  const putGraph = (nodesIn: FlowNode[], edgesIn: FlowEdge[]) => {
+    checkpoint();
+    const ns0 = nodesIn.map(toRfNode);
+    const es = edgesIn.map((e) => rfEdge(e, ns0));
+    setNodes(layout(ns0, es));
+    setEdges(es);
+    setSelected(null);
+    touch();
+    setTimeout(() => { setNodes((cur) => layout(cur, es)); setTimeout(() => rf.fitView({ padding: 0.12, duration: 300 }), 150); }, 700);
+  };
+  const applyAssistant = (ops: EditOp[]) => { const r = applyEdit(snapshot(), ops); putGraph(r.nodes, r.edges); };
+
+  const saveDraft = async (): Promise<boolean> => {
+    const r = await run(() => api.saveDraft(toDef()));
+    if (!r) return false;
+    setDirty(false);
+    setToast({ text: t("builder.saved"), tone: "ok" });
+    return true;
   };
 
   const deleteEdge = () => {
@@ -560,7 +591,7 @@ function Builder() {
     <div className="ws">
       <div className="ws-toolbar">
         <div className="ws-left">
-        <Link href="/office/processes" className="button button-ghost button-small" onClick={(e) => { if (dirty && !window.confirm(t("builder.switchConfirm"))) e.preventDefault(); }}><ArrowLeft size={15} /><span className="hide-narrow">{t("builder.back")}</span></Link>
+        <Link href="/office/processes" className="button button-ghost button-small" onClick={(e) => { if (dirty) { e.preventDefault(); setLeaving(true); } }}><ArrowLeft size={15} /><span className="hide-narrow">{t("builder.back")}</span></Link>
         <input className="ws-name" style={{ width: `${Math.min(34, Math.max(10, name.length + 2))}ch` }} value={name} onChange={(e) => { setName(e.target.value); touch(); }} aria-label={t("builder.name")} />
         <Tip text={category !== DEFAULT_CATEGORY ? `${live ? t("builder.live", { v: live.version }) : t("builder.notLive")}. ${t("builder.notRunning")}` : live ? t("builder.live", { v: live.version }) : t("builder.notLive")}>
           {live ? <span className="pill pill-ok">{t("builder.live", { v: live.version })}</span> : <span className="pill pill-muted">{t("builder.notLive")}</span>}
@@ -570,7 +601,7 @@ function Builder() {
         <div className="ws-center">
         <div className="ws-tools" role="group">
           <Tip text={t("tip.inputs")}><button className={`tool-btn ${showInputs ? "on" : ""}`} type="button" aria-label={t("builder.inputs")} onClick={() => { setShowInputs((v) => !v); setSelected(null); }}><ListChecks size={16} /><span className="tool-label">{t("builder.inputs")}</span>{inputs.length > 0 && <b className="tool-count">{inputs.length}</b>}</button></Tip>
-          <Tip text={t("tip.improve")}><button className="tool-btn" type="button" disabled={busy} aria-label={t("doc.run")} onClick={documentWithAi}><Sparkles size={16} /><span className="tool-label">{t("doc.run")}</span>{pendingSuggestions > 0 && <b className="tool-count">{pendingSuggestions}</b>}</button></Tip>
+          <Tip text={t("tip.assistant")}><button className={`tool-btn ${assistantOpen ? "on" : ""}`} type="button" aria-label={t("asst.title")} onClick={() => setAssistantOpen((v) => !v)}><Sparkles size={16} /><span className="tool-label">{t("asst.title")}</span>{pendingSuggestions > 0 && <b className="tool-count">{pendingSuggestions}</b>}</button></Tip>
           <Tip text={t("tip.validate")}><button className="tool-btn" type="button" aria-label={t("builder.validate")} onClick={validate}><CheckCircle2 size={16} /><span className="tool-label">{t("builder.validate")}</span></button></Tip>
           <Tip text={t("tip.testRun")}><button className={`tool-btn ${drawer ? "on" : ""}`} type="button" aria-label={t("builder.testRun")} onClick={() => { setDrawer((d) => !d); setShowTests(false); }}><Play size={16} /><span className="tool-label">{t("builder.testRun")}</span></button></Tip>
           <Tip text={t("tip.tests")}><button className={`tool-btn ${showTests ? "on" : ""}`} type="button" aria-label={t("builder.testsBtn")} onClick={() => { setShowTests((d) => !d); setDrawer(false); }}><FlaskConical size={16} /><span className="tool-label">{t("builder.testsBtn")}</span>{tests.length > 0 && <b className="tool-count">{tests.length}</b>}</button></Tip>
@@ -598,7 +629,7 @@ function Builder() {
         <span className="ws-sep" />
         {pendingSuggestions > 0 && <button className="link-button small" type="button" onClick={() => { checkpoint(); setNodes((ns) => ns.map((x) => ({ ...x, data: { ...x.data, suggestion: undefined } }))); touch(); }}>{t("doc.rejectAll")}</button>}
         <Tip text={t("tip.save")}>
-          <button className="button button-ghost button-small" type="button" disabled={busy} onClick={async () => { const r = await run(() => api.saveDraft(toDef())); if (r) { setDirty(false); setToast({ text: t("builder.saved"), tone: "ok" }); } }}>{t("builder.save")}</button>
+          <button className="button button-ghost button-small" type="button" disabled={busy} onClick={() => void saveDraft()}>{t("builder.save")}</button>
         </Tip>
         <Tip text={t("tip.publish")}>
           <button
@@ -620,6 +651,21 @@ function Builder() {
         </Tip>
         </div>
       </div>
+
+      {leaving && (
+        <>
+          <div className="drawer-bg" onClick={() => setLeaving(false)} />
+          <div className="modal" role="dialog" aria-label={t("builder.leave.title")} style={{ width: "min(440px, calc(100vw - 32px))" }}>
+            <h2>{t("builder.leave.title")}</h2>
+            <p className="muted">{t("builder.leave.text")}</p>
+            <div className="row" style={{ gap: "0.5rem", justifyContent: "flex-end", marginTop: "0.8rem" }}>
+              <button type="button" className="button button-ghost" onClick={() => setLeaving(false)}>{t("builder.leave.stay")}</button>
+              <button type="button" className="button button-ghost" onClick={() => router.push("/office/processes")}>{t("builder.leave.discard")}</button>
+              <button type="button" className="button" disabled={busy} onClick={async () => { if (await saveDraft()) router.push("/office/processes"); }}>{t("builder.leave.save")}</button>
+            </div>
+          </div>
+        </>
+      )}
 
       <div className="ws-body">
         <aside className={`ws-palette${collapsed ? " collapsed" : ""}`} aria-label={t("builder.palette")}>
@@ -905,6 +951,17 @@ function Builder() {
             </aside>
           )}
         </div>
+        {assistantOpen && (
+          <AssistantPane
+            graph={snapshot}
+            onApply={applyAssistant}
+            onApplyProposal={(g) => putGraph(g.nodes, g.edges)}
+            onDocument={() => void documentWithAi()}
+            onUndo={undo}
+            canUndo={past.current.length > 0}
+            onClose={() => setAssistantOpen(false)}
+          />
+        )}
       </div>
 
       {publishDlg && (

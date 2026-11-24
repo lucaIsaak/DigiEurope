@@ -270,13 +270,13 @@ function actionsIn(text: string, b: Builder): Action[] {
   return found.filter((f, i) => found.findIndex((g) => g.said === f.said) === i);
 }
 
-type Cond =
+export type Cond =
   | { kind: "value"; config: Record<string, ConfigValue>; label: string; needsRead?: boolean }
   /** A branch from an output of an earlier step: "if incomplete", "if the rules are not met", "if rejected". */
   | { kind: "branch"; of: NodeKind; handle: string; label: string };
 
 /** The condition in an "if …" part. null when it is not something the builder can branch on. */
-function conditionIn(text: string): Cond | null {
+export function conditionIn(text: string): Cond | null {
   const t = text.toLowerCase();
   const num = /(\d[\d.,]*)/.exec(t.replace(/(\d),(\d{3})/g, "$1$2"));
   const value = num ? num[1]!.replace(",", ".") : "";

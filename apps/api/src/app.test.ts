@@ -215,6 +215,25 @@ describe("decision tree", () => {
   });
 });
 
+describe("process assistant", () => {
+  it("proposes a change in plain sentences without saving anything, and refuses what it cannot do", async () => {
+    const { app, store } = setup();
+    const def = defaultProcess();
+    const before = JSON.stringify(store.process(def.catalogId));
+    const res = await app.inject({ method: "POST", url: "/office/processes/assist", payload: { message: "Add a reminder after 7 days", def: { nodes: def.nodes, edges: def.edges }, lang: "en" } });
+    expect(res.statusCode).toBe(200);
+    const body = res.json();
+    expect(body.mode).toBe("simulated");
+    expect(body.ops.length).toBeGreaterThan(0);
+    expect(body.changes.length).toBe(body.ops.length);
+    expect(JSON.stringify(store.process(def.catalogId))).toBe(before);
+    const lost = (await app.inject({ method: "POST", url: "/office/processes/assist", payload: { message: "make it blue", def: { nodes: def.nodes, edges: def.edges } } })).json();
+    expect(lost.ops).toEqual([]);
+    const bad = await app.inject({ method: "POST", url: "/office/processes/assist", payload: { message: "", def: { nodes: [], edges: [] } } });
+    expect(bad.statusCode).toBe(400);
+  });
+});
+
 describe("staff access", () => {
   it("keeps the office area closed without a login", async () => {
     const store = new Store();

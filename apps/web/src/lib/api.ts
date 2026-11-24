@@ -1,4 +1,4 @@
-import type { Condition, Application, CaseView, DocumentTemplate, FieldType, TemplateField, TemplateProposal, CatalogNode, CatalogVariant, Harmony, OfficeAssignment, OfficeSettings, ProcessDef, GeneratedProcess, NodeSuggestion, StaffMember, RunLogEntry, Mail, IntegrationEntry, ProcessIssue, DocumentKind, Extraction, LetterFields, Lang, Rule, RuleState, StayInfo, StudentInfo } from "@digieurope/shared";
+import type { Bilingual, EditOp, FlowEdge, FlowNode, Graph, SummaryLine, Condition, Application, CaseView, DocumentTemplate, FieldType, TemplateField, TemplateProposal, CatalogNode, CatalogVariant, Harmony, OfficeAssignment, OfficeSettings, ProcessDef, GeneratedProcess, NodeSuggestion, StaffMember, RunLogEntry, Mail, IntegrationEntry, ProcessIssue, DocumentKind, Extraction, LetterFields, Lang, Rule, RuleState, StayInfo, StudentInfo } from "@digieurope/shared";
 
 export class ApiError extends Error {
   issues?: ProcessIssue[];
@@ -389,6 +389,8 @@ export const api = {
   httpTry: (req: { method: string; url: string; headers: Record<string, string>; body?: string }) => call<{ status: number; body?: string; error?: string }>("/office/http/try", { method: "POST", json: req }),
   generateInfo: () => call<{ live: boolean; model: string | null }>("/office/processes/generate/info"),
   generateProcess: (description: string, mode: "simulated" | "live") => call<GeneratedProcess & { mode: "simulated" | "live"; fellBack?: string }>("/office/processes/generate", { method: "POST", json: { description, mode } }),
+  assist: (message: string, def: { nodes: FlowNode[]; edges: FlowEdge[] }, mode: "simulated" | "live", lang: string, history: { role: "user" | "assistant"; content: string }[]) =>
+    call<AssistResponse>("/office/processes/assist", { method: "POST", json: { message, def, mode, lang, history } }),
   documentProcess: (def: ProcessDef) => call<{ suggestions: Record<string, NodeSuggestion>; simulated: boolean }>("/office/processes/document", { method: "POST", json: { def } }),
   processImpact: (def: ProcessDef) => call<ProcessImpact>("/office/processes/impact", { method: "POST", json: { def } }),
   restartCase: (id: string) => call<CaseView>(`/office/cases/${id}/restart`, { method: "POST", json: {} }),
@@ -435,3 +437,16 @@ export const myApplications = {
     }
   },
 };
+
+export interface AssistResponse {
+  reply: string;
+  changes: Bilingual[];
+  skipped: Bilingual[];
+  ops: EditOp[];
+  summary?: SummaryLine[];
+  proposal?: Graph;
+  action?: "document";
+  unmapped: Bilingual[];
+  mode: "simulated" | "live";
+  fellBack?: string;
+}

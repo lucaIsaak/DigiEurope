@@ -55,7 +55,7 @@ import { Store as ScratchStore } from "./store.js";
 import { askLive, liveAvailable, retrieve } from "./assistant.js";
 import { PARENT_KINDS, addDocument, allSpecs, allTemplates, checksFor, readFor, checkNow, invite, newApplication, officeAct, open, removeDocument, submit, view, withAudit, draftFor, questionDraft, reviewReport, type OfficeAction } from "./cases.js";
 import { extractDocument } from "./documents.js";
-import { generateProcessFrom, liveProcessAiAvailable, processAiModel } from "./generator.js";
+import { assistProcess, asGraph, generateProcessFrom, liveProcessAiAvailable, processAiModel } from "./generator.js";
 import { readPdfLines } from "./pdf.js";
 import { computeInsights } from "./metrics.js";
 import { SAMPLE_SETS, fixDocuments, formblatt8, getPerson, proposalSample, sampleDocuments, sampleLetter, type Defect } from "./samples.js";
@@ -1124,6 +1124,16 @@ export function buildApp(opts: AppOptions) {
     if (description.length < 10) return bad(reply, "Describe the process in a few sentences first.");
     if (description.length > 4000) return bad(reply, "The description is too long (at most 4000 characters).");
     return generateProcessFrom(description, req.body?.mode === "live" ? "live" : "simulated", opts.aiFetch);
+  });
+  /** Talk about a process: a reply and a proposed change. Nothing is saved or applied here; the page shows it and the person decides. */
+  app.post<{ Body: { message?: string; def?: unknown; mode?: string; lang?: string; history?: { role?: string; content?: string }[] } }>("/office/processes/assist", async (req, reply) => {
+    const message = String(req.body?.message ?? "").trim();
+    if (!message) return bad(reply, "Write what you would like to change.");
+    if (message.length > 1500) return bad(reply, "The message is too long (at most 1500 characters).");
+    const g = asGraph(req.body?.def);
+    if (!g) return bad(reply, "The process could not be read.");
+    const history = (req.body?.history ?? []).filter((h) => (h.role === "user" || h.role === "assistant") && typeof h.content === "string").slice(-8).map((h) => ({ role: h.role as "user" | "assistant", content: String(h.content).slice(0, 1500) }));
+    return assistProcess(message, g, req.body?.mode === "live" ? "live" : "simulated", req.body?.lang === "de" ? "de" : "en", history, opts.aiFetch);
   });
   app.get("/demo-api/exchange", async () => DEMO_EXCHANGE);
   app.post<{ Body: unknown }>("/demo-api/echo", async (req) => ({ received: req.body ?? null, at: now().toISOString() }));
