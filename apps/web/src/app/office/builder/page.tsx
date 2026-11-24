@@ -93,6 +93,7 @@ import { RulePicker } from "@/components/RulePicker";
 import { InputsEditor } from "@/components/InputsEditor";
 import { CATEGORIES, ICONS, NODE_H, NODE_W, edgeBase, layout, ARROW, nodeTypes, toRfNode, type StepData, type StepNode } from "@/components/FlowKit";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { Spinner } from "@/components/ui";
 import { ApiError, api, type MessageEntry, type ProcessImpact, type ProcessTestResult, type TestRunResult } from "@/lib/api";
 import { useI18n } from "@/lib/i18n";
@@ -117,6 +118,7 @@ function Tip({ text, children }: { text: string; children: React.ReactNode }) {
 function Builder() {
   const { t, bi, lang, tk, dateTime } = useI18n();
   const rf = useReactFlow();
+  const router = useRouter();
   const { theme } = useTheme();
   const [nodes, setNodes, onNodesChange] = useNodesState<StepNode>([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
@@ -247,7 +249,16 @@ function Builder() {
 
   const refresh = useCallback(async (cat?: string) => {
     const target = cat ?? category;
-    const [p, lib, msgs] = await Promise.all([api.processes(target), api.templates().catch(() => null), api.messages().catch(() => [] as MessageEntry[])]);
+    // A process that does not exist (deleted, or a stale link) goes back to the list instead of loading forever.
+    let p: Awaited<ReturnType<typeof api.processes>>;
+    let lib: Awaited<ReturnType<typeof api.templates>> | null;
+    let msgs: MessageEntry[];
+    try {
+      [p, lib, msgs] = await Promise.all([api.processes(target), api.templates().catch(() => null), api.messages().catch(() => [] as MessageEntry[])]);
+    } catch {
+      router.replace("/office/processes");
+      return;
+    }
     if (lib) setTemplates(lib.templates);
     setMessages(msgs);
     setCategory(target);

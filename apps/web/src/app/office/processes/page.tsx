@@ -131,7 +131,7 @@ export default function ProcessesPage() {
     </span>
   );
   const actions = (r: Row) => (
-    <div className="pl-menu" ref={menu === r.catalogId ? menuRef : undefined}>
+    <div className="pl-menu" ref={menu === r.catalogId ? menuRef : undefined} onClick={(e) => e.stopPropagation()} onKeyDown={(e) => e.stopPropagation()}>
       <button type="button" className="icon-button" aria-label={t("pl.menu", { name: r.name })} aria-haspopup="menu" aria-expanded={menu === r.catalogId} onClick={(e) => { e.stopPropagation(); setMenu(menu === r.catalogId ? null : r.catalogId); }}><MoreHorizontal size={18} /></button>
       {menu === r.catalogId && (
         <div className="pl-pop" role="menu">
