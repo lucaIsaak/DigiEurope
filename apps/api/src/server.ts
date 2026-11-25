@@ -21,6 +21,11 @@ api.listen({ port, host: "0.0.0.0" }).catch((err) => {
   console.error(err);
   process.exit(1);
 });
+// Agents: the always-on part. Every two minutes (AGENT_TICK_MS) the agents give each open case whose inputs changed to the pipeline.
+const agentTickMs = Math.max(10_000, Number(process.env.AGENT_TICK_MS ?? 2 * 60_000));
+const agentTick = () => void api.inject({ method: "POST", url: "/admin/agents/run" }).catch(() => undefined);
+void api.ready().then(agentTick);
+setInterval(agentTick, agentTickMs);
 // Timers: every minute, processes whose waiting step has run out carry on.
 setInterval(() => void api.inject({ method: "POST", url: "/admin/timers/run" }).catch(() => undefined), 60_000);
 // Context watcher: one sweep at start, then on the schedule.

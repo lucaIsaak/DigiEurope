@@ -182,6 +182,33 @@ export interface Application {
   flow?: FlowState;
   /** Answers to the custom questions of the process, by question id. */
   info?: Record<string, string>;
+  /** What the always-on agents did with this case and what they hand to an employee. */
+  agent?: AgentState;
+}
+
+/** One step of an agent on a case, for the audit trail. `llm` is true when a language model was called. */
+export interface AgentRun {
+  at: string;
+  agent: "intake" | "verification" | "rules" | "allocation" | "correspondence" | "supervisor";
+  summary: string;
+  llm?: boolean;
+}
+
+export type AgentStage = "waiting_student" | "ready_for_approval" | "needs_employee";
+
+/** The agents' working state on a case. Agents prepare and propose; only an employee approves or rejects. */
+export interface AgentState {
+  /** Hash of the inputs the agents last looked at. Unchanged inputs mean nothing to do. */
+  fingerprint: string;
+  stage: AgentStage;
+  lastRunAt: string;
+  runs: AgentRun[];
+  /** The amount the allocation agent proposes (monthly, EUR). The employee confirms or changes it. */
+  proposal?: { monthly: number; low: number; high: number; months: number; oneOff: { travel: number; tuition: number }; provisional: boolean };
+  /** Why an employee is needed, and a short briefing. */
+  escalation?: { reasons: string[]; summary: string; llm: boolean };
+  /** The open blockers the student was last asked about, so the same request is never sent twice. */
+  askedFor?: string;
 }
 
 export interface Mail {

@@ -43,23 +43,53 @@ export function methodsInfo(): MethodInfo[] {
   ];
 }
 
-function flagReview(e: Extraction, min: number): Extraction {
+export function flagReview(e: Extraction, min: number): Extraction {
   const low = e.readable && Object.values(e.confidence ?? {}).some((c) => c < min);
   return { ...e, needsReview: low };
 }
 
-type Read = { kind: DocumentKind; extraction: Extraction };
+export type Read = { kind: DocumentKind; extraction: Extraction };
+
+/** The instructions for a model that reads a document: the document types, their fields, and the JSON it must return. */
+export function readingPrompt(specs: DocSpec[] = DOC_SPECS): string {
+  const catalog = specs.map((s) => `- ${s.kind}: "${s.title}". Fields: ${s.fields.map(([k, l]) => `${k} (${l})`).join("; ")}.${s.sigs.length ? ` Signatures: ${s.sigs.map(([k, l]) => `${k} (${l})`).join("; ")}.` : ""}`).join("\n");
+  return (
+    "You read German administrative documents for a student funding office. Identify which document type it is from the list and extract only the listed fields. " +
+    "Never guess: if a value is missing, cut off or unreadable, return an empty string with confidence 0. Report the page number (1-based) for each field. " +
+    "For signatures say whether a handwritten or digital signature is present. If the document is none of the listed types, return documentType \"unknown\".\n" +
+    `Reply with JSON only: {"documentType": string, "fields": {key: {"value": string, "confidence": number 0..1, "page": number}}, "signatures": {key: {"present": boolean}}}\n\nDOCUMENT TYPES:\n${catalog}`
+  );
+}
+
+/** Turns a model's JSON answer into an extraction. Unknown fields are dropped and an empty value never counts as confident. */
+export function parseReading(parsed: unknown, engine: string, specs: DocSpec[] = DOC_SPECS): Read {
+  const p = (parsed ?? {}) as {
+    documentType?: string;
+    fields?: Record<string, { value?: unknown; confidence?: unknown; page?: unknown }>;
+    signatures?: Record<string, { present?: unknown }>;
+  };
+  const spec = specs.find((s) => s.kind === p.documentType);
+  if (!spec) return { kind: "unknown", extraction: { readable: false, fields: {}, signatures: {}, engine } };
+  const fields: Record<string, string> = {};
+  const confidence: Record<string, number> = {};
+  const pages: Record<string, number> = {};
+  for (const [k] of spec.fields) {
+    const f = p.fields?.[k];
+    if (!f) continue;
+    fields[k] = String(f.value ?? "").trim();
+    confidence[k] = fields[k] === "" ? 0 : Math.min(1, Math.max(0, Number(f.confidence) || 0));
+    pages[k] = Math.max(1, Math.round(Number(f.page) || 1));
+  }
+  const signatures: Record<string, boolean> = {};
+  for (const [k] of spec.sigs) signatures[k] = p.signatures?.[k]?.present === true;
+  const readable = Object.values(fields).some((v) => v !== "");
+  return { kind: spec.kind, extraction: { readable, fields, signatures, confidence, pages, engine } };
+}
 
 /** Reads a file with the AI reader: the model gets the document and the field list, and must return JSON. Never guesses. */
 export async function aiExtract(content: Buffer, mimeType: string, fetchImpl: typeof fetch = fetch, specs: DocSpec[] = DOC_SPECS): Promise<Read | null> {
   const key = process.env.ANTHROPIC_API_KEY;
   if (!key) return null;
-  const catalog = specs.map((s) => `- ${s.kind}: "${s.title}". Fields: ${s.fields.map(([k, l]) => `${k} (${l})`).join("; ")}.${s.sigs.length ? ` Signatures: ${s.sigs.map(([k, l]) => `${k} (${l})`).join("; ")}.` : ""}`).join("\n");
-  const system =
-    "You read German administrative documents for a student funding office. Identify which document type it is from the list and extract only the listed fields. " +
-    "Never guess: if a value is missing, cut off or unreadable, return an empty string with confidence 0. Report the page number (1-based) for each field. " +
-    "For signatures say whether a handwritten or digital signature is present. If the document is none of the listed types, return documentType \"unknown\".\n" +
-    `Reply with JSON only: {"documentType": string, "fields": {key: {"value": string, "confidence": number 0..1, "page": number}}, "signatures": {key: {"present": boolean}}}\n\nDOCUMENT TYPES:\n${catalog}`;
   const block =
     mimeType === "application/pdf"
       ? { type: "document", source: { type: "base64", media_type: "application/pdf", data: content.toString("base64") } }
@@ -71,7 +101,7 @@ export async function aiExtract(content: Buffer, mimeType: string, fetchImpl: ty
       body: JSON.stringify({
         model: process.env.ANTHROPIC_EXTRACT_MODEL ?? "claude-sonnet-5-5",
         max_tokens: 1500,
-        system,
+        system: readingPrompt(specs),
         messages: [{ role: "user", content: [block, { type: "text", text: "Extract the fields as JSON." }] }],
       }),
       signal: AbortSignal.timeout(40_000),
@@ -79,27 +109,7 @@ export async function aiExtract(content: Buffer, mimeType: string, fetchImpl: ty
     if (!res.ok) throw new Error(`status ${res.status}`);
     const body = (await res.json()) as { content?: { type: string; text?: string }[] };
     const text = body.content?.find((c) => c.type === "text")?.text ?? "";
-    const parsed = JSON.parse(text.slice(text.indexOf("{"), text.lastIndexOf("}") + 1)) as {
-      documentType?: string;
-      fields?: Record<string, { value?: unknown; confidence?: unknown; page?: unknown }>;
-      signatures?: Record<string, { present?: unknown }>;
-    };
-    const spec = specs.find((s) => s.kind === parsed.documentType);
-    if (!spec) return { kind: "unknown", extraction: { readable: false, fields: {}, signatures: {}, engine: "ai" } };
-    const fields: Record<string, string> = {};
-    const confidence: Record<string, number> = {};
-    const pages: Record<string, number> = {};
-    for (const [k] of spec.fields) {
-      const f = parsed.fields?.[k];
-      if (!f) continue;
-      fields[k] = String(f.value ?? "").trim();
-      confidence[k] = fields[k] === "" ? 0 : Math.min(1, Math.max(0, Number(f.confidence) || 0));
-      pages[k] = Math.max(1, Math.round(Number(f.page) || 1));
-    }
-    const signatures: Record<string, boolean> = {};
-    for (const [k] of spec.sigs) signatures[k] = parsed.signatures?.[k]?.present === true;
-    const readable = Object.values(fields).some((v) => v !== "");
-    return { kind: spec.kind, extraction: { readable, fields, signatures, confidence, pages, engine: "ai" } };
+    return parseReading(JSON.parse(text.slice(text.indexOf("{"), text.lastIndexOf("}") + 1)), "ai", specs);
   } catch {
     return null;
   }

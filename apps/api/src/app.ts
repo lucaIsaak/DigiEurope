@@ -53,6 +53,7 @@ import { PEER_OFFICES, REFERENCE_SETTINGS, type OfficeProcess } from "./offices.
 import { DEFAULT_MIN_CONFIDENCE, aiAvailable, methodsInfo } from "./extraction.js";
 import { Store as ScratchStore } from "./store.js";
 import { askLive, liveAvailable, retrieve } from "./assistant.js";
+import { agentQueue, createAgentRunner } from "./agents.js";
 import { PARENT_KINDS, addDocument, allSpecs, allTemplates, checksFor, readFor, checkNow, invite, newApplication, officeAct, open, removeDocument, submit, view, withAudit, draftFor, questionDraft, reviewReport, type OfficeAction } from "./cases.js";
 import { extractDocument } from "./documents.js";
 import { assistProcess, asGraph, generateProcessFrom, liveProcessAiAvailable, processAiModel } from "./generator.js";
@@ -81,6 +82,8 @@ export interface AppOptions {
   aiFetch?: typeof fetch;
   /** How often the context watcher sweeps on its own (shown in the UI; the timer itself lives in server.ts). */
   watchIntervalMs?: number;
+  /** Lets tests replace the network for the language model. */
+  agentFetch?: typeof fetch;
 }
 
 const MAX_UPLOAD_BYTES = 5 * 1024 * 1024;
@@ -1366,6 +1369,12 @@ export function buildApp(opts: AppOptions) {
     await ontologyChanged();
     return { ok: true };
   });
+  // ---- Agents: the always-on pipeline (scheduled in server.ts) -------------------------
+  const agents = createAgentRunner({ store, now, fetchImpl: opts.agentFetch });
+  /** Called by the scheduler in server.ts, every couple of minutes. */
+  app.post("/admin/agents/run", async () => agents.tick());
+  /** What the agents hand to employees: cases to look at, cases ready for one click, cases waiting for the student. */
+  app.get("/office/agents", async () => agentQueue(store));
   /** Called by the scheduler in server.ts. */
   app.post("/admin/watcher/run", async () => watcher.run("schedule", { de: "Planmäßiger Lauf", en: "Scheduled sweep" }));
 
