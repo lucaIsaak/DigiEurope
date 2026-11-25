@@ -2028,6 +2028,16 @@ body:has(.ws-chat) .roleinfo { display: none; }
 
 /* Context model and watcher */
 .ctx { --t-office: #12151c; --t-person: #7a4fd6; --t-process: #2f6fe0; --t-rule: #1f9d6b; --t-template: #d98a1c; --t-proposal: #e8782a; --t-message: #148a9c; --t-connector: #4a5568; }
+.ctx { --t-catalog: #8a6d3b; --t-peer: #6b7280; --t-reference: #b4387a; --t-step: #3d82f6; --t-action: #5b6b80; --t-field: #c9a227; --t-data: #0f9f8f; --t-role: #9b6fe0; --t-team: #6366f1; --t-source: #a0522d; }
+:root[data-theme="dark"] .ctx { --t-catalog: #d4b483; --t-peer: #b0b7c3; --t-reference: #f07bb8; --t-step: #8ab4ff; --t-action: #a9b6c8; --t-field: #f0d060; --t-data: #4fd6c6; --t-role: #c4a8f5; --t-team: #a5a8ff; --t-source: #e0a080; }
+.ctx .t-catalog { --tc: var(--t-catalog); } .ctx .t-peer { --tc: var(--t-peer); } .ctx .t-reference { --tc: var(--t-reference); } .ctx .t-step { --tc: var(--t-step); } .ctx .t-action { --tc: var(--t-action); }
+.ctx .t-field { --tc: var(--t-field); } .ctx .t-data { --tc: var(--t-data); } .ctx .t-role { --tc: var(--t-role); } .ctx .t-team { --tc: var(--t-team); } .ctx .t-source { --tc: var(--t-source); }
+.ctx-node.t-step .ctx-tile, .ctx-node.t-field .ctx-tile, .ctx-node.t-data .ctx-tile, .ctx-node.t-action .ctx-tile, .ctx-node.t-source .ctx-tile, .ctx-node.t-role .ctx-tile, .ctx-node.t-team .ctx-tile { width: 32px; height: 32px; border-radius: 9px; }
+.ctx-node.t-data .ctx-tile { border-radius: 50%; }
+.ctx-node.t-peer .ctx-tile, .ctx-node.t-catalog .ctx-tile, .ctx-node.t-reference .ctx-tile { border-radius: 8px; }
+.ctx-legend .ctx-chip.detail[aria-pressed="false"] { opacity: 0.75; text-decoration: none; border-style: dashed; }
+.ctx-edge.k-next path { stroke: var(--t-step); }
+.ctx-edge.k-needs path, .ctx-edge.k-provides path { stroke: var(--t-data); }
 :root[data-theme="dark"] .ctx { --t-office: #dfe4ef; --t-person: #a98bf0; --t-process: #6f9bff; --t-rule: #4cc58b; --t-template: #f0b24c; --t-proposal: #ff9a52; --t-message: #4fc3d4; --t-connector: #9aa1b0; }
 .ctx-head { display: flex; justify-content: space-between; align-items: flex-end; gap: 1.5rem; flex-wrap: wrap; margin-bottom: 1rem; }
 .ctx-head p { max-width: 70ch; margin: 0; }
@@ -2047,7 +2057,9 @@ body:has(.ws-chat) .roleinfo { display: none; }
 .ctx-alert-icon { width: 38px; height: 38px; border-radius: 10px; display: grid; place-items: center; background: var(--bad); color: #fff; }
 .ctx-alert.ok .ctx-alert-icon { background: var(--ok); }
 .ctx-alert > svg:last-child { margin-left: auto; }
-.ctx-legend { position: absolute; bottom: 14px; left: 60px; right: 14px; z-index: 5; display: flex; flex-wrap: wrap; gap: 0.35rem; pointer-events: none; }
+.ctx-canvas { display: flex; flex-direction: column; }
+.ctx-flow { position: relative; flex: 1; min-height: 0; }
+.ctx-legend { display: flex; flex-wrap: wrap; gap: 0.35rem; padding: 0.55rem 0.75rem; border-top: 1px solid var(--line); background: var(--surface); }
 .ctx-legend .ctx-chip { pointer-events: auto; }
 .ctx-legend .ctx-chip[aria-pressed="false"] { opacity: 0.45; text-decoration: line-through; }
 .ctx-hint { position: absolute; top: 22px; right: 18px; z-index: 5; margin: 0; }
@@ -2071,6 +2083,7 @@ body:has(.ws-chat) .roleinfo { display: none; }
 .ctx-sev.problem { background: var(--bad); } .ctx-sev.warning { background: var(--warn); } .ctx-sev.info { background: var(--primary); }
 .ctx-handle { opacity: 0; top: 22px !important; left: 50% !important; pointer-events: none; }
 .ctx-node.t-office .ctx-handle { top: 29px !important; }
+.ctx-node.t-step .ctx-handle, .ctx-node.t-field .ctx-handle, .ctx-node.t-data .ctx-handle, .ctx-node.t-action .ctx-handle, .ctx-node.t-source .ctx-handle, .ctx-node.t-role .ctx-handle, .ctx-node.t-team .ctx-handle { top: 16px !important; }
 .ctx-edge path { stroke: var(--line-strong); stroke-width: 1.2; opacity: 0.6; transition: opacity 0.2s, stroke 0.2s; }
 .ctx-edge.k-calls path { stroke: var(--t-connector); } .ctx-edge.k-uses_rule path { stroke: color-mix(in srgb, var(--t-rule) 50%, var(--line)); }
 .ctx-edge.draft path { stroke-dasharray: 5 4; }

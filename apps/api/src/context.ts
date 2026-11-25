@@ -1,6 +1,8 @@
 import { createHash } from "node:crypto";
-import { CONNECTORS, DEFAULT_CATEGORY, diffProcess, processDependencies, type Bilingual, type ProcessDef, type ProcessIssue, type StaffMember } from "@digieurope/shared";
+import { CONNECTORS, DEFAULT_CATEGORY, diffProcess, factCatalog, processDependencies, type Bilingual, type ProcessDef, type ProcessIssue, type StaffMember } from "@digieurope/shared";
 import { allTemplates } from "./cases.js";
+import { missingInputs } from "./contracts.js";
+import { extendGraph, factNodeId, refsOf } from "./ontology.js";
 import type { Store } from "./store.js";
 
 /**
@@ -9,7 +11,11 @@ import type { Store } from "./store.js";
  * The watcher reads it on a schedule and after every change and turns what it finds into findings for a named person.
  */
 
-export type ContextNodeType = "office" | "person" | "process" | "rule" | "template" | "proposal" | "message" | "connector";
+/** Core types are always drawn; detail types (steps, fields, actions, roles, teams, legal sources) appear when something they belong to is in focus. */
+export type ContextNodeType =
+  | "office" | "person" | "process" | "rule" | "template" | "proposal" | "message" | "connector"
+  | "catalog" | "peer" | "reference"
+  | "step" | "action" | "field" | "data" | "role" | "team" | "source";
 export type Severity = "problem" | "warning" | "info";
 
 export interface ContextNode {
@@ -23,7 +29,10 @@ export interface ContextNode {
   severity?: Severity;
 }
 
-export type ContextEdgeKind = "runs" | "heads" | "reports_to" | "oversees" | "owns" | "wrote" | "approved" | "uses_rule" | "requires" | "sends" | "calls" | "proposed" | "administers";
+export type ContextEdgeKind =
+  | "runs" | "heads" | "reports_to" | "oversees" | "owns" | "wrote" | "approved" | "uses_rule" | "requires" | "sends" | "calls" | "proposed" | "administers"
+  | "has_step" | "next" | "invokes" | "offers" | "needs" | "provides" | "has_field" | "reads" | "asks" | "routes_to"
+  | "has_role" | "deputizes_for" | "based_on" | "implements" | "part_of" | "defines" | "maintains";
 
 export interface ContextEdge {
   id: string;
@@ -32,6 +41,8 @@ export interface ContextEdge {
   kind: ContextEdgeKind;
   /** Only the draft of a process has this connection, the live version does not. */
   draftOnly?: boolean;
+  /** Not stated in the data but inferred (for example the reporting line). */
+  derived?: boolean;
 }
 
 export interface ContextGraph {
@@ -88,7 +99,7 @@ const RANK: Record<Severity, number> = { problem: 3, warning: 2, info: 1 };
 
 // ---- People: who is responsible for what --------------------------------------------------------------
 
-function people(store: Store) {
+export function people(store: Store) {
   const staff = store.staff();
   const admin = staff.find((m) => m.isAdmin) ?? null;
   const extractorOwner = staff.find((m) => m.canApproveTemplates && !m.isAdmin) ?? admin;
@@ -100,7 +111,7 @@ function people(store: Store) {
   return { staff, admin, extractorOwner, byName, ref, processOwner, approverFor };
 }
 
-const processVersions = (store: Store) =>
+export const processVersions = (store: Store) =>
   Object.entries(store.processes()).map(([catalogId, p]) => ({ catalogId, live: p.live, draft: p.draft ?? null, current: (p.draft ?? p.live)! })).filter((p) => p.current);
 
 // ---- The graph ------------------------------------------------------------------------------------
@@ -108,10 +119,13 @@ const processVersions = (store: Store) =>
 export function buildGraph(store: Store): ContextGraph {
   const nodes = new Map<string, ContextNode>();
   const edges: ContextEdge[] = [];
-  const edge = (source: string, target: string, kind: ContextEdgeKind, draftOnly = false) => {
+  const seen = new Set<string>();
+  const edge = (source: string, target: string, kind: ContextEdgeKind, draftOnly = false, derived = false) => {
     if (!nodes.has(source) || !nodes.has(target)) return;
     const id = `${kind}:${source}>${target}`;
-    if (!edges.some((e) => e.id === id)) edges.push({ id, source, target, kind, ...(draftOnly ? { draftOnly } : {}) });
+    if (seen.has(id)) return;
+    seen.add(id);
+    edges.push({ id, source, target, kind, ...(draftOnly ? { draftOnly } : {}), ...(derived ? { derived } : {}) });
   };
   const ppl = people(store);
   const personId = (name: string | undefined) => {
@@ -149,7 +163,7 @@ export function buildGraph(store: Store): ContextGraph {
     const id = `person:${m.id}`;
     if (m.isOversight) edge(id, "office", "oversees");
     else if (m.isAdmin) edge(id, "office", "heads");
-    else if (ppl.admin) edge(id, `person:${ppl.admin.id}`, "reports_to");
+    else if (ppl.admin) edge(id, `person:${ppl.admin.id}`, "reports_to", false, true);
   }
   if (ppl.admin) for (const c of CONNECTORS) edge(`person:${ppl.admin.id}`, `connector:${c.id}`, "administers");
   if (ppl.extractorOwner) for (const t of allTemplates(store)) edge(`person:${ppl.extractorOwner.id}`, `template:${t.id}`, "owns");
@@ -195,6 +209,7 @@ export function buildGraph(store: Store): ContextGraph {
     add((d) => d.messages, "message", "sends");
     add((d) => d.systems, "connector", "calls");
   }
+  extendGraph(store, nodes, edge);
   return { nodes: [...nodes.values()], edges };
 }
 
@@ -376,6 +391,48 @@ export class Watcher {
       }
     }
 
+    // Lineage: every item a connector step needs must be provided earlier in the process.
+    for (const p of versions) {
+      for (const [def, isDraft] of [[p.live, false], [p.draft, true]] as const) {
+        if (!def) continue;
+        for (const n of def.nodes.filter((x) => x.kind === "connector")) {
+          const missing = missingInputs(def, n.id, templates);
+          if (!missing.length) continue;
+          const c = CONNECTORS.find((x) => x.id === n.config.system);
+          const name = c?.name ?? same(String(n.config.system));
+          const collected = missing.some((m) => m.source === "collected");
+          out.push({
+            id: `lineage:${p.catalogId}:${isDraft ? "draft" : "live"}:${n.id}`, kind: "lineage", severity: isDraft ? "warning" : "problem",
+            title: b(`Diese Verbindung braucht eine Anpassung: ${name.de} bekommt nicht alle Daten`, `This connector needs a modification: ${name.en} does not get all its data`),
+            detail: b(
+              `Der Schritt „${n.name ?? n.id}“ in „${def.name}“${isDraft ? " (Entwurf)" : ""} braucht ${missing.map((m) => m.label.de).join(", ")}, aber nichts davor im Prozess liefert das.`,
+              `Step “${n.name ?? n.id}” in “${def.name}”${isDraft ? " (draft)" : ""} needs ${missing.map((m) => m.label.en).join(", ")}, but nothing earlier in the process provides it.`,
+            ),
+            recommendation: collected
+              ? b(`Im Prozess eine Pflichtfrage „${missing.find((m) => m.source === "collected")!.label.de}“ ergänzen oder das Feld über einen Vorlagenvorschlag in ein Formular aufnehmen.`, `Add a required question “${missing.find((m) => m.source === "collected")!.label.en}” to the process, or add the field to a form through a template proposal.`)
+              : b("Einen Schritt „Sachbearbeitung entscheidet“ vor diesen Schritt setzen.", "Put a “caseworker decides” step before this step."),
+            subjects: [`process:${p.catalogId}`, `connector:${String(n.config.system)}`, `step:${p.catalogId}:${n.id}`, ...missing.map((m) => `data:${m.id}`)],
+            affects: [same(def.name)], owner: ppl.ref(ppl.processOwner(def)), href: `/office/builder?category=${encodeURIComponent(p.catalogId)}`,
+          });
+        }
+      }
+    }
+    // Rules that read a field no template has (any more).
+    const knownFacts = new Set(factCatalog(templates).map((f) => f.path));
+    for (const [id, r] of Object.entries(rules)) {
+      const rule = (r.draft ?? r.live)?.rule;
+      if (!rule) continue;
+      const unknown = [...new Set([...refsOf(rule.when), ...refsOf(rule.pass)])].filter((x) => !knownFacts.has(x));
+      if (!unknown.length) continue;
+      out.push({
+        id: `rule-field:${id}`, kind: "rule", severity: r.live && !r.paused ? "problem" : "warning",
+        title: b(`Regel „${rule.title.de}“ liest ein Feld, das es nicht gibt`, `Rule “${rule.title.en}” reads a field that does not exist`),
+        detail: b(`Unbekannt: ${unknown.join(", ")}. Wahrscheinlich wurde eine Vorlage geändert.`, `Unknown: ${unknown.join(", ")}. A template was probably changed.`),
+        recommendation: b("Die Bedingung auf ein vorhandenes Feld umstellen oder das Feld in der Vorlage wieder aufnehmen.", "Point the condition at an existing field, or bring the field back into the template."),
+        subjects: [`rule:${id}`, ...unknown.map(factNodeId)], affects: usersOf((d) => (processDependencies(d).rules ?? Object.keys(rules)).includes(id)), owner: ppl.ref(ppl.admin), href: `/office/rules?open=${encodeURIComponent(id)}`,
+      });
+    }
+
     // Templates a process requires but nobody tested and confirmed.
     for (const t of templates) {
       if (confirmed[t.id]) continue;
@@ -466,6 +523,10 @@ export class Watcher {
     for (const sys of deps.systems) {
       const c = CONNECTORS.find((x) => x.id === sys);
       if (c && conns[sys]?.enabled === false) blockers.push(b(`${c.name.de} ist ausgeschaltet`, `${c.name.en} is switched off`));
+    }
+    for (const n of draft.nodes.filter((x) => x.kind === "connector")) {
+      const missing = missingInputs(draft, n.id, allTemplates(store));
+      if (missing.length) blockers.push(b(`„${n.name ?? n.id}“ fehlt: ${missing.map((m) => m.label.de).join(", ")}`, `“${n.name ?? n.id}” is missing: ${missing.map((m) => m.label.en).join(", ")}`));
     }
     for (const id of deps.rules ?? []) {
       const r = store.rules()[id];

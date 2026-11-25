@@ -1435,3 +1435,43 @@ describe("context model and watcher", () => {
     expect(c.runs.map((r) => r.trigger).slice(0, 2)).toEqual(["manual", "schedule"]);
   });
 });
+
+describe("ontology: design-time entities and lineage", () => {
+  type Ctx = { graph: { nodes: { id: string; type: string }[]; edges: { source: string; target: string; kind: string; derived?: boolean }[] }; findings: { id: string; severity: string; detail: { en: string } }[] };
+  const context = async (app: ReturnType<typeof setup>["app"]) => (await app.inject({ method: "GET", url: "/office/context" })).json() as Ctx;
+  const has = (c: Ctx, source: string, target: string, kind: string) => c.graph.edges.some((e) => e.source === source && e.target === target && e.kind === kind);
+
+  it("models steps, actions, data items, fields, roles, legal sources, the catalogue and other offices", async () => {
+    const { app } = setup();
+    const c = await context(app);
+    const types = new Set(c.graph.nodes.map((n) => n.type));
+    for (const t of ["step", "action", "data", "field", "role", "source", "catalog", "peer", "reference"]) expect(types).toContain(t);
+    expect(has(c, "process:bafoeg.abroad", "step:bafoeg.abroad:case", "has_step")).toBe(true);
+    expect(has(c, "step:bafoeg.abroad:case", "action:payment.create_payment_order", "invokes")).toBe(true);
+    expect(has(c, "action:payment.create_payment_order", "data:bank.iban", "needs")).toBe(true);
+    expect(has(c, "connector:payment", "action:payment.create_payment_order", "offers")).toBe(true);
+    expect(has(c, "template:application_form", "field:docs.application_form.fields.name", "has_field")).toBe(true);
+    expect(c.graph.edges.some((e) => e.kind === "reads" && e.source.startsWith("rule:"))).toBe(true);
+    expect(c.graph.edges.some((e) => e.kind === "based_on")).toBe(true);
+    expect(has(c, "person:s-obermeier", "role:admin", "has_role")).toBe(true);
+    expect(has(c, "process:bafoeg.abroad", "catalog:bafoeg.abroad", "implements")).toBe(true);
+    expect(has(c, "catalog:bafoeg.abroad", "catalog:bafoeg", "part_of")).toBe(true);
+    expect(has(c, "peer:nordhafen", "catalog:bafoeg.abroad", "implements")).toBe(true);
+    expect(c.graph.edges.find((e) => e.kind === "reports_to")?.derived).toBe(true);
+  });
+
+  it("finds that the payment step gets no IBAN, and clears it once the process asks for one", async () => {
+    const { app } = setup("s-lindner");
+    let c = await context(app);
+    const live = c.findings.find((f) => f.id === "lineage:bafoeg.abroad:live:case");
+    expect(live?.severity).toBe("problem");
+    expect(live?.detail.en).toContain("IBAN");
+    const def = defaultProcess();
+    const draft: ProcessDef = { ...def, inputs: [...def.inputs, { id: "info:iban", type: "info", ref: "iban", required: true, question: { label: { de: "IBAN", en: "IBAN" }, type: "text" } }] };
+    expect((await app.inject({ method: "PUT", url: "/office/processes/draft", payload: { def: draft } })).statusCode).toBe(200);
+    c = await context(app);
+    expect(c.findings.some((f) => f.id === "lineage:bafoeg.abroad:draft:case")).toBe(false);
+    expect(has(c, "field:info.iban", "data:bank.iban", "provides")).toBe(true);
+    expect(c.findings.some((f) => f.id === "lineage:bafoeg.abroad:live:case")).toBe(true);
+  });
+});

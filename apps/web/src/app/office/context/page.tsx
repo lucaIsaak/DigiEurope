@@ -2,7 +2,7 @@
 
 import { Background, BackgroundVariant, Controls, Handle, Position, ReactFlow, ReactFlowProvider, useReactFlow, type Edge, type Node, type NodeProps } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
-import { AlertOctagon, ArrowLeft, ArrowRight, Building2, Cable, CheckCircle2, ChevronRight, FilePlus2, FileText, Mail, RefreshCw, ShieldCheck, UserRound, Workflow, type LucideIcon } from "lucide-react";
+import { AlertOctagon, ArrowLeft, ArrowRight, BadgeCheck, Building2, Cable, CheckCircle2, ChevronRight, Compass, Database, FilePlus2, FileText, FolderTree, Footprints, Landmark, Mail, RefreshCw, Scale, ShieldCheck, TextCursorInput, UserRound, Users, Workflow, Zap, type LucideIcon } from "lucide-react";
 import Link from "next/link";
 import { memo, useCallback, useEffect, useMemo, useState } from "react";
 import { Spinner } from "@/components/ui";
@@ -12,14 +12,23 @@ import { useI18n } from "@/lib/i18n";
 import type { MessageKey } from "@/lib/messages";
 import { useStaff } from "@/lib/staff";
 
-const ICON: Record<ContextNodeType, LucideIcon> = { office: Building2, person: UserRound, process: Workflow, rule: ShieldCheck, template: FileText, proposal: FilePlus2, message: Mail, connector: Cable };
+const ICON: Record<ContextNodeType, LucideIcon> = {
+  office: Building2, person: UserRound, process: Workflow, rule: ShieldCheck, template: FileText, proposal: FilePlus2, message: Mail, connector: Cable,
+  catalog: FolderTree, peer: Landmark, reference: Compass, step: Footprints, action: Zap, field: TextCursorInput, data: Database, role: BadgeCheck, team: Users, source: Scale,
+};
 /** Order around the ring, starting at the top. */
-const RING: ContextNodeType[] = ["person", "rule", "template", "proposal", "message", "connector"];
+const RING: ContextNodeType[] = ["person", "rule", "template", "proposal", "message", "connector", "catalog", "reference", "peer"];
+/** Finer entities: drawn next to what they belong to, when that is in focus or the layer is switched on. */
+const DETAIL: ContextNodeType[] = ["step", "action", "data", "field", "source", "role", "team"];
+/** Where a detail node sits: next to the first neighbour of this type. */
+const PARENT: Partial<Record<ContextNodeType, ContextNodeType[]>> = {
+  step: ["process"], action: ["connector"], field: ["template", "rule", "process"], source: ["rule"], role: ["person"], team: ["step"], data: ["action"],
+};
 /** Edges about people are many (one person approved every rule); they show only when one end is in focus. */
-const QUIET = new Set<ContextEdge["kind"]>(["wrote", "approved", "owns", "administers", "proposed"]);
+const QUIET = new Set<ContextEdge["kind"]>(["wrote", "approved", "owns", "administers", "proposed", "has_role"]);
 
-/** Office in the middle, processes around it, everything they use (and the people) on an outer ring, grouped by type. */
-function layout(nodes: ContextNode[]): Map<string, { x: number; y: number }> {
+/** Office in the middle, processes around it, what they use (and the people) on an outer ring by type, finer entities next to their parent. */
+function layout(nodes: ContextNode[], edges: ContextEdge[]): Map<string, { x: number; y: number }> {
   const pos = new Map<string, { x: number; y: number }>();
   pos.set("office", { x: 0, y: 0 });
   const processes = nodes.filter((n) => n.type === "process");
@@ -37,13 +46,43 @@ function layout(nodes: ContextNode[]): Map<string, { x: number; y: number }> {
   }
   const people = nodes.filter((n) => n.type === "person").length;
   const step = (2 * Math.PI) / Math.max(1, slots.length);
-  const R = Math.max(360, (slots.length * 58) / (2 * Math.PI));
+  const R = Math.max(380, (slots.length * 58) / (2 * Math.PI));
   slots.forEach((n, i) => {
     if (!n) return;
     const a = -Math.PI / 2 - ((people - 1) / 2) * step + i * step;
     const r = R + (i % 2 ? 95 : 0);
     pos.set(n.id, { x: r * Math.cos(a), y: r * Math.sin(a) });
   });
+  // Detail nodes: rows fanning outward from their parent, in order (steps of a process, then actions, then data items, ...).
+  const type = new Map(nodes.map((n) => [n.id, n.type]));
+  const nb = new Map<string, string[]>();
+  for (const e of edges) {
+    nb.set(e.source, [...(nb.get(e.source) ?? []), e.target]);
+    nb.set(e.target, [...(nb.get(e.target) ?? []), e.source]);
+  }
+  const groups = new Map<string, string[]>();
+  for (const t of DETAIL) {
+    for (const n of nodes.filter((x) => x.type === t)) {
+      const parent = (PARENT[t] ?? []).map((pt) => (nb.get(n.id) ?? []).find((o) => type.get(o) === pt && pos.has(o))).find(Boolean) ?? "office";
+      groups.set(parent, [...(groups.get(parent) ?? []), n.id]);
+    }
+    // Place this layer before the next one looks for its parents among it.
+    for (const [parent, kids] of groups) {
+      const P = pos.get(parent)!;
+      const len = Math.hypot(P.x, P.y) || 1;
+      const u = parent === "office" ? { x: 0, y: 1 } : { x: P.x / len, y: P.y / len };
+      const v = { x: -u.y, y: u.x };
+      kids.forEach((k, idx) => {
+        const per = 6;
+        const row = Math.floor(idx / per);
+        const inRow = Math.min(per, kids.length - row * per);
+        const col = (idx % per) - (inRow - 1) / 2;
+        const d = 120 + row * 70;
+        pos.set(k, { x: P.x + u.x * d + v.x * col * 110, y: P.y + u.y * d + v.y * col * 110 });
+      });
+    }
+    groups.clear();
+  }
   return pos;
 }
 
@@ -105,11 +144,12 @@ function FindingCard({ f, onShow }: { f: ContextFinding; onShow: () => void }) {
   );
 }
 
-function Graph({ state, focus, selected, onSelect, hidden }: { state: ContextState; focus: Set<string> | null; selected: string | null; onSelect: (id: string | null) => void; hidden: Set<ContextNodeType> }) {
+function Graph({ state, focus, selected, onSelect, hidden, zoomTo }: { state: ContextState; focus: Set<string> | null; selected: string | null; onSelect: (id: string | null) => void; hidden: Set<ContextNodeType>; zoomTo: string[] | null }) {
   const { bi } = useI18n();
   const flow = useReactFlow();
-  const visible = useMemo(() => state.graph.nodes.filter((n) => !hidden.has(n.type)), [state, hidden]);
-  const pos = useMemo(() => layout(visible), [visible]);
+  // Positions are computed for everything once, so showing a layer never moves what is already there.
+  const pos = useMemo(() => layout(state.graph.nodes.filter((n) => n.type === "office" || !hidden.has(n.type) || DETAIL.includes(n.type)), state.graph.edges), [state, hidden]);
+  const visible = useMemo(() => state.graph.nodes.filter((n) => pos.has(n.id) && (!hidden.has(n.type) || focus?.has(n.id))), [state, hidden, focus, pos]);
   const ids = useMemo(() => new Set(visible.map((n) => n.id)), [visible]);
   const nodes: Node<NodeData>[] = useMemo(
     () =>
@@ -128,8 +168,8 @@ function Graph({ state, focus, selected, onSelect, hidden }: { state: ContextSta
         .filter((e) => ids.has(e.source) && ids.has(e.target))
         .filter((e) => !QUIET.has(e.kind) || (focus && selected && (e.source === selected || e.target === selected)))
         .map((e) => {
-          const on = Boolean(focus && focus.has(e.source) && focus.has(e.target) && (!selected || e.source === selected || e.target === selected));
-          return { id: e.id, source: e.source, target: e.target, type: "straight", className: `ctx-edge k-${e.kind}${on ? " on" : ""}${focus && !on ? " off" : ""}${e.draftOnly ? " draft" : ""}`, animated: on && e.kind === "calls" };
+          const on = Boolean(focus && focus.has(e.source) && focus.has(e.target) && (!selected || e.source === selected || e.target === selected || e.kind === "next"));
+          return { id: e.id, source: e.source, target: e.target, type: "straight", className: `ctx-edge k-${e.kind}${on ? " on" : ""}${focus && !on ? " off" : ""}${e.draftOnly || e.derived ? " draft" : ""}`, animated: on && e.kind === "calls" };
         }),
     [state, ids, focus, selected],
   );
@@ -137,6 +177,18 @@ function Graph({ state, focus, selected, onSelect, hidden }: { state: ContextSta
     const id = setTimeout(() => void flow.fitView({ padding: 0.08, duration: 300 }), 30);
     return () => clearTimeout(id);
   }, [hidden, flow]);
+  // "Show in model": zoom to the finding's chain once its nodes are drawn.
+  useEffect(() => {
+    if (!zoomTo || !focus) return;
+    // Bounds from the layout itself, so nodes that just appeared need not be measured first.
+    const pts = [...focus].map((x) => pos.get(x)).filter((p): p is { x: number; y: number } => Boolean(p));
+    if (!pts.length) return;
+    const x0 = Math.min(...pts.map((p) => p.x)) - 60, x1 = Math.max(...pts.map((p) => p.x)) + 60;
+    const y0 = Math.min(...pts.map((p) => p.y)) - 40, y1 = Math.max(...pts.map((p) => p.y)) + 50;
+    const id = setTimeout(() => void flow.fitBounds({ x: x0, y: y0, width: x1 - x0, height: y1 - y0 }, { padding: 0.25, duration: 400 }), 50);
+    return () => clearTimeout(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [zoomTo, flow]);
   return (
     <ReactFlow
       nodes={nodes}
@@ -164,7 +216,7 @@ export default function ContextPage() {
   const [selected, setSelected] = useState<string | null>(null);
   const [pinned, setPinned] = useState<string[] | null>(null);
   const [mine, setMine] = useState(false);
-  const [hidden, setHidden] = useState<Set<ContextNodeType>>(new Set());
+  const [hidden, setHidden] = useState<Set<ContextNodeType>>(() => new Set(DETAIL));
 
   const load = useCallback(() => api.context().then(setState).catch(() => undefined), []);
   useEffect(() => {
@@ -189,12 +241,17 @@ export default function ContextPage() {
     return m;
   }, [state]);
   const focus = useMemo(() => {
-    const roots = selected ? [selected] : pinned;
-    if (!roots) return null;
-    const out = new Set(roots);
-    for (const r of roots) for (const n of neighbours.get(r) ?? []) out.add(n);
+    if (selected) return new Set([selected, ...(neighbours.get(selected) ?? [])]);
+    if (!pinned) return null;
+    // A finding shows its own chain: the items it names, plus what connects them through a data item or a single connector or rule.
+    const out = new Set(pinned);
+    const types = new Map(state?.graph.nodes.map((n) => [n.id, n.type]) ?? []);
+    for (const r of pinned) {
+      const t = types.get(r);
+      if (t === "data" || (pinned.length === 1 && t !== "process")) for (const n of neighbours.get(r) ?? []) out.add(n);
+    }
     return out;
-  }, [selected, pinned, neighbours]);
+  }, [selected, pinned, neighbours, state]);
 
   if (!state || !staff) return <Spinner label={t("common.loading")} />;
   const findings = state.findings.filter((f) => !mine || f.owner?.id === staff.id);
@@ -241,20 +298,22 @@ export default function ContextPage() {
             </span>
             <ChevronRight size={16} className="muted" />
           </button>
+          <div className="ctx-flow">
+            <ReactFlowProvider>
+              <Graph state={state} focus={focus} selected={selected} onSelect={(id) => { setSelected(id); if (id) setPinned(null); }} hidden={hidden} zoomTo={pinned} />
+            </ReactFlowProvider>
+          </div>
           <div className="ctx-legend" role="group" aria-label={t("ctx.legend")}>
-            {(["process", ...RING] as ContextNodeType[]).filter((x) => counts.get(x)).map((x) => {
+            {(["process", ...RING, ...DETAIL] as ContextNodeType[]).filter((x) => counts.get(x)).map((x) => {
               const Icon = ICON[x];
               const off = hidden.has(x);
               return (
-                <button key={x} type="button" aria-pressed={!off} className={`ctx-chip t-${x}`} onClick={() => setHidden((h) => { const n = new Set(h); if (off) n.delete(x); else n.add(x); return n; })}>
+                <button key={x} type="button" aria-pressed={!off} title={DETAIL.includes(x) ? t("ctx.detailHint") : undefined} className={`ctx-chip t-${x}${DETAIL.includes(x) ? " detail" : ""}`} onClick={() => setHidden((h) => { const n = new Set(h); if (off) n.delete(x); else n.add(x); return n; })}>
                   <Icon size={13} />{t(`ctx.type.${x}` as MessageKey)}<span className="num muted">{counts.get(x)}</span>
                 </button>
               );
             })}
           </div>
-          <ReactFlowProvider>
-            <Graph state={state} focus={focus} selected={selected} onSelect={(id) => { setSelected(id); if (id) setPinned(null); }} hidden={hidden} />
-          </ReactFlowProvider>
           {!focus && <p className="ctx-hint small muted">{t("ctx.hint")}</p>}
         </section>
 

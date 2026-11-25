@@ -148,7 +148,10 @@ export interface Todo {
   attention?: number;
 }
 
-export type ContextNodeType = "office" | "person" | "process" | "rule" | "template" | "proposal" | "message" | "connector";
+export type ContextNodeType =
+  | "office" | "person" | "process" | "rule" | "template" | "proposal" | "message" | "connector"
+  | "catalog" | "peer" | "reference"
+  | "step" | "action" | "field" | "data" | "role" | "team" | "source";
 export type Severity = "problem" | "warning" | "info";
 
 export interface ContextNode {
@@ -164,8 +167,12 @@ export interface ContextEdge {
   id: string;
   source: string;
   target: string;
-  kind: "runs" | "heads" | "reports_to" | "oversees" | "owns" | "wrote" | "approved" | "uses_rule" | "requires" | "sends" | "calls" | "proposed" | "administers";
+  kind:
+    | "runs" | "heads" | "reports_to" | "oversees" | "owns" | "wrote" | "approved" | "uses_rule" | "requires" | "sends" | "calls" | "proposed" | "administers"
+    | "has_step" | "next" | "invokes" | "offers" | "needs" | "provides" | "has_field" | "reads" | "asks" | "routes_to"
+    | "has_role" | "deputizes_for" | "based_on" | "implements" | "part_of" | "defines" | "maintains";
   draftOnly?: boolean;
+  derived?: boolean;
 }
 
 export interface ContextFinding {
