@@ -8,6 +8,7 @@ import { defaultProcess, upgradeProcess, validateProcess, walkDecisionTree, DECI
 import { checksFor, reviewReport } from "./cases.js";
 import { Store } from "./store.js";
 import { checkSchema } from "./schema.js";
+import { OntologyError, parseOntology } from "./ontologyDoc.js";
 import { buildGraph } from "./context.js";
 
 const NOW = new Date("2026-11-16T10:00:00Z");
@@ -1482,7 +1483,7 @@ describe("declared schema", () => {
   it("the demo data matches the schema, and the view carries counts", async () => {
     const { app, store } = setup();
     const c = (await app.inject({ method: "GET", url: "/office/context" })).json();
-    expect(checkSchema(buildGraph(store))).toEqual({ undeclared: [], tooMany: [] });
+    expect(checkSchema(buildGraph(store))).toEqual({ unknownTypes: [], undeclared: [], tooMany: [] });
     expect(c.findings.some((f: { kind: string }) => f.kind === "schema")).toBe(false);
     const step = c.schema.types.find((t: { type: string }) => t.type === "step");
     expect(step.count).toBeGreaterThan(0);
@@ -1497,5 +1498,57 @@ describe("declared schema", () => {
     const r = checkSchema(g);
     expect(r.undeclared).toEqual([{ kind: "owns", from: "connector", to: "person", count: 1 }]);
     expect(r.tooMany.map((x) => x.node)).toContain("step:bafoeg.abroad:case");
+  });
+});
+
+describe("docs/ontology.md", () => {
+  const doc = (rel = "| `has_step` | has step / hat Schritt | Step | 1 → 1..* | stated | The steps |") => `# Ontology
+
+## Process
+- id: \`process\`
+- group: process
+- de: Prozess
+
+A process.
+
+**Fields**
+
+| Field | Type | Description |
+|---|---|---|
+| name | text | Name |
+
+**Relations**
+
+| Relation | Label (en / de) | To | Cardinality | Kind | Description |
+|---|---|---|---|---|---|
+${rel}
+
+## Step
+- id: \`step\`
+- group: process
+- de: Schritt
+
+One box.
+`;
+  it("reads entities, fields and relations", () => {
+    const o = parseOntology(doc());
+    expect(o.types.map((t) => t.type)).toEqual(["process", "step"]);
+    expect(o.types[0]).toMatchObject({ label: { en: "Process", de: "Prozess" }, description: "A process.", attributes: [{ name: "name", type: "text" }] });
+    expect(o.relations[0]).toMatchObject({ kind: "has_step", from: "process", to: "step", fromCard: "1", toCard: "1..*", label: { en: "has step", de: "hat Schritt" } });
+  });
+  it("names the line of each mistake", () => {
+    expect(() => parseOntology(doc("| `has_step` | has step | Stp | 1 → 1..* | stated | x |"))).toThrow(/"Stp" is not an entity/);
+    expect(() => parseOntology(doc("| `has_step` | has step | Step | one → many | stated | x |"))).toThrow(/cardinality/);
+    try {
+      parseOntology(doc("| `has_step` | has step | Step | 1 → 2 | stated | x |"));
+    } catch (e) {
+      expect((e as OntologyError).problems[0]).toMatch(/^line 20 /);
+    }
+  });
+  it("the file in the repo is valid and describes everything the graph contains", async () => {
+    const { readFileSync } = await import("node:fs");
+    const o = parseOntology(readFileSync(new URL("../../../docs/ontology.md", import.meta.url), "utf8"));
+    const { store } = setup();
+    expect(checkSchema(buildGraph(store), o)).toEqual({ unknownTypes: [], undeclared: [], tooMany: [] });
   });
 });

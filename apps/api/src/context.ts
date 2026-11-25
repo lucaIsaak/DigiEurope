@@ -4,6 +4,7 @@ import { allTemplates } from "./cases.js";
 import { missingInputs } from "./contracts.js";
 import { extendGraph, factNodeId, refsOf } from "./ontology.js";
 import { checkSchema, schemaView } from "./schema.js";
+import { ontology } from "./ontologyDoc.js";
 import type { Store } from "./store.js";
 
 /**
@@ -436,13 +437,32 @@ export class Watcher {
     }
 
     // The graph must match the declared schema: no undeclared relations, no "at most one" exceeded.
+    const doc = ontology();
+    if (doc.error) {
+      out.push({
+        id: "ontology-file", kind: "schema", severity: "problem",
+        title: b("docs/ontology.md kann nicht gelesen werden", "docs/ontology.md cannot be read"),
+        detail: same(doc.error.slice(0, 4).join(" · ")),
+        recommendation: b("Die genannten Zeilen korrigieren. Bis dahin gilt die letzte gültige Fassung.", "Fix the lines named. Until then the last valid version stays in use."),
+        subjects: [], affects: [], owner: ppl.ref(ppl.admin),
+      });
+    }
     const sc = checkSchema(buildGraph(store));
+    for (const u of sc.unknownTypes) {
+      out.push({
+        id: `schema-type:${u.type}`, kind: "schema", severity: "warning",
+        title: b(`Art „${u.type}“ fehlt in docs/ontology.md`, `Type “${u.type}” is missing from docs/ontology.md`),
+        detail: b(`Die Daten haben ${u.count} Element(e) dieser Art.`, `The data has ${u.count} item(s) of this type.`),
+        recommendation: b("Die Art in docs/ontology.md beschreiben.", "Describe the type in docs/ontology.md."),
+        subjects: [], affects: [], owner: ppl.ref(ppl.admin),
+      });
+    }
     for (const u of sc.undeclared) {
       out.push({
         id: `schema-undeclared:${u.kind}:${u.from}:${u.to}`, kind: "schema", severity: "warning",
         title: b(`Beziehung nicht im Schema: ${u.from} –${u.kind}→ ${u.to}`, `Relation not in the schema: ${u.from} –${u.kind}→ ${u.to}`),
         detail: b(`${u.count} Verbindung(en) dieser Art gibt es in den Daten, das Schema kennt sie nicht.`, `The data has ${u.count} link(s) of this kind; the schema does not know it.`),
-        recommendation: b("Schema ergänzen (apps/api/src/schema.ts) oder die Daten korrigieren.", "Add it to the schema (apps/api/src/schema.ts) or correct the data."),
+        recommendation: b("Die Beziehung in docs/ontology.md ergänzen oder die Daten korrigieren.", "Add the relation to docs/ontology.md, or correct the data."),
         subjects: [], affects: [], owner: ppl.ref(ppl.admin),
       });
     }

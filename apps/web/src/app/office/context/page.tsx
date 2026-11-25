@@ -428,7 +428,9 @@ function NodeDetail({ node, state, onBack, onSelect }: { node: ContextNode; stat
     const out = e.source === node.id;
     const other = byId.get(out ? e.target : e.source);
     if (!other) continue;
-    const key = `${out ? "" : "← "}${t(`ctx.edge.${e.kind}` as MessageKey)}`;
+    // The label comes from docs/ontology.md; the built-in wording is only a fallback.
+    const decl = state.schema.relations.find((r) => r.kind === e.kind && r.from === byId.get(e.source)?.type && r.to === byId.get(e.target)?.type);
+    const key = `${out ? "" : "← "}${decl ? bi(decl.label) : t(`ctx.edge.${e.kind}` as MessageKey)}`;
     groups.set(key, [...(groups.get(key) ?? []), { other, draft: e.draftOnly }]);
   }
   const findings = state.findings.filter((f) => f.subjects.includes(node.id));
@@ -442,6 +444,7 @@ function NodeDetail({ node, state, onBack, onSelect }: { node: ContextNode; stat
           <p className="muted small">{t(`ctx.type.${node.type}` as MessageKey)}{node.sub ? ` · ${bi(node.sub)}` : ""}{node.state ? ` · ${node.state}` : ""}</p>
         </div>
       </div>
+      {state.schema.types.find((x) => x.type === node.type)?.description && <p className="small ctx-typedesc">{state.schema.types.find((x) => x.type === node.type)!.description}</p>}
       {findings.length === 0 ? <p className="muted small">{t("ctx.noFindingsNode")}</p> : (
         <ul className="ctx-findings">{findings.map((f) => <FindingCard key={f.id} f={f} onShow={() => onSelect(f.subjects[0]!)} />)}</ul>
       )}

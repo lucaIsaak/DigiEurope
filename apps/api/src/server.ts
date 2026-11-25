@@ -1,5 +1,7 @@
+import { watchFile } from "node:fs";
 import { resolve } from "node:path";
 import { buildApp } from "./app.js";
+import { ONTOLOGY_FILE } from "./ontologyDoc.js";
 import { seedDemoData } from "./seed.js";
 import { Store } from "./store.js";
 
@@ -25,3 +27,5 @@ setInterval(() => void api.inject({ method: "POST", url: "/admin/timers/run" }).
 const sweep = () => void api.inject({ method: "POST", url: "/admin/watcher/run" }).catch(() => undefined);
 void api.ready().then(sweep);
 setInterval(sweep, watchIntervalMs);
+// The ontology file is the source of truth: when someone edits it, the schema and the checks follow within a second.
+watchFile(ONTOLOGY_FILE, { interval: 1000 }, () => void api.inject({ method: "POST", url: "/admin/ontology/check" }).catch(() => undefined));

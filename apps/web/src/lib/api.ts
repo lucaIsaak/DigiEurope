@@ -206,8 +206,10 @@ export interface WatchRun {
 
 export type SchemaCard = "1" | "0..1" | "0..*" | "1..*";
 export interface ContextSchema {
-  types: { type: ContextNodeType; label: Bilingual; group: "organisation" | "process" | "rules" | "documents" | "systems" | "federal"; attributes: { name: string; type: string }[]; count: number }[];
-  relations: { kind: ContextEdge["kind"]; from: ContextNodeType; to: ContextNodeType; fromCard: SchemaCard; toCard: SchemaCard; shortcut?: boolean; derived?: boolean; count: number }[];
+  /** Declared in docs/ontology.md; a type there may be new to the app, so types are plain strings here. */
+  types: { type: string; label: Bilingual; group: "organisation" | "process" | "rules" | "documents" | "systems" | "federal"; description: string; attributes: { name: string; type: string; description: string }[]; count: number }[];
+  relations: { kind: string; label: Bilingual; from: string; to: string; fromCard: SchemaCard; toCard: SchemaCard; description: string; shortcut?: boolean; derived?: boolean; count: number }[];
+  source: { file: string; loadedAt: string | null; error: string[] | null };
 }
 
 export interface ContextState {

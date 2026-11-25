@@ -59,6 +59,7 @@ import { assistProcess, asGraph, generateProcessFrom, liveProcessAiAvailable, pr
 import { readPdfLines } from "./pdf.js";
 import { computeInsights } from "./metrics.js";
 import { Watcher, eventFor } from "./context.js";
+import { ontology } from "./ontologyDoc.js";
 import { SAMPLE_SETS, fixDocuments, formblatt8, getPerson, proposalSample, sampleDocuments, sampleLetter, type Defect } from "./samples.js";
 import { deliverFromPortal, seedDemoData } from "./seed.js";
 import type { Store } from "./store.js";
@@ -1345,7 +1346,12 @@ export function buildApp(opts: AppOptions) {
     const ev = eventFor(req.method, req.url);
     if (ev) void watcher.run("event", ev, req.staff?.name);
   });
+  /** When docs/ontology.md changed on disk, the watcher sweeps right away against the new version. */
+  const ontologyChanged = async () => {
+    if (ontology().changed) await watcher.run("event", { de: "docs/ontology.md geändert", en: "docs/ontology.md changed" });
+  };
   const contextState = async () => {
+    await ontologyChanged();
     await watcher.settled();
     if (!watcher.hasRun) await watcher.run("startup", { de: "Erster Lauf", en: "First run" });
     return watcher.state();
@@ -1354,6 +1360,11 @@ export function buildApp(opts: AppOptions) {
   app.post("/office/context/run", async (req) => {
     await watcher.run("manual", { de: "Von Hand gestartet", en: "Started by hand" }, req.staff?.name);
     return watcher.state();
+  });
+  /** Called by server.ts when docs/ontology.md changes. */
+  app.post("/admin/ontology/check", async () => {
+    await ontologyChanged();
+    return { ok: true };
   });
   /** Called by the scheduler in server.ts. */
   app.post("/admin/watcher/run", async () => watcher.run("schedule", { de: "Planmäßiger Lauf", en: "Scheduled sweep" }));
