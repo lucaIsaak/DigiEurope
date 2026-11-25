@@ -144,6 +144,65 @@ export interface Todo {
   myProposals: number;
   templatesToCheck: number;
   processDrafts: number;
+  /** Open findings of the context watcher for this person (everything for administrators). */
+  attention?: number;
+}
+
+export type ContextNodeType = "office" | "person" | "process" | "rule" | "template" | "proposal" | "message" | "connector";
+export type Severity = "problem" | "warning" | "info";
+
+export interface ContextNode {
+  id: string;
+  type: ContextNodeType;
+  label: Bilingual;
+  sub?: Bilingual;
+  state?: string;
+  severity?: Severity;
+}
+
+export interface ContextEdge {
+  id: string;
+  source: string;
+  target: string;
+  kind: "runs" | "heads" | "reports_to" | "oversees" | "owns" | "wrote" | "approved" | "uses_rule" | "requires" | "sends" | "calls" | "proposed" | "administers";
+  draftOnly?: boolean;
+}
+
+export interface ContextFinding {
+  id: string;
+  severity: Severity;
+  kind: string;
+  title: Bilingual;
+  detail: Bilingual;
+  recommendation: Bilingual;
+  subjects: string[];
+  affects: Bilingual[];
+  owner: { id: string; name: string } | null;
+  href?: string;
+  firstSeen: string;
+  lastSeen: string;
+  resolvedAt?: string;
+}
+
+export interface WatchRun {
+  id: number;
+  at: string;
+  trigger: "schedule" | "event" | "manual" | "startup";
+  reason: Bilingual;
+  by?: string;
+  ms: number;
+  changed: Bilingual[];
+  open: number;
+  added: number;
+  resolved: number;
+}
+
+export interface ContextState {
+  graph: { nodes: ContextNode[]; edges: ContextEdge[] };
+  findings: ContextFinding[];
+  resolved: ContextFinding[];
+  runs: WatchRun[];
+  schedule: { intervalMs: number; lastRunAt: string | null; nextRunAt: string | null };
 }
 
 export interface OfficeConfigResponse {
@@ -353,6 +412,8 @@ export const api = {
   createRule: (body: Omit<RuleDraftBody, "tests">) => call<RuleEntry>("/office/rules", { method: "POST", json: body }),
   saveRuleDraft: (id: string, body: RuleDraftBody) => call<RuleEntry>(`/office/rules/${id}/draft`, { method: "PUT", json: body }),
   todo: () => call<Todo>("/office/todo"),
+  context: () => call<ContextState>("/office/context"),
+  runContext: () => call<ContextState>("/office/context/run", { method: "POST", json: {} }),
   testTemplate: async (id: string, file: File) => call<{ kind: string; extraction: Extraction; matches: boolean; expected: string[] }>(`/office/templates/${id}/test`, { method: "POST", json: await filePayload(file) }),
   confirmTemplate: (id: string) => call<{ ok: true }>(`/office/templates/${id}/confirm`, { method: "POST" }),
   config: () => call<OfficeConfigResponse>("/office/config"),

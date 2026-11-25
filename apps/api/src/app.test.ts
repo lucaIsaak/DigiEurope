@@ -1382,3 +1382,56 @@ describe("process from a description", () => {
     }
   });
 });
+
+describe("context model and watcher", () => {
+  type Ctx = { graph: { nodes: { id: string; type: string; severity?: string }[]; edges: { source: string; target: string; kind: string; draftOnly?: boolean }[] }; findings: { id: string; severity: string; owner: { name: string } | null; recommendation: { en: string } }[]; resolved: { id: string }[]; runs: { trigger: string; reason: { en: string } }[] };
+  const context = async (app: ReturnType<typeof setup>["app"]) => (await app.inject({ method: "GET", url: "/office/context" })).json() as Ctx;
+
+  it("builds the graph from what the office really has", async () => {
+    const { app } = setup();
+    const c = await context(app);
+    const types = new Set(c.graph.nodes.map((n) => n.type));
+    for (const t of ["office", "person", "process", "rule", "template", "message", "connector"]) expect(types).toContain(t);
+    expect(c.graph.edges).toContainEqual(expect.objectContaining({ source: "process:bafoeg.abroad", target: "connector:payment", kind: "calls" }));
+    expect(c.graph.edges).toContainEqual(expect.objectContaining({ source: "person:s-lindner", target: "person:s-obermeier", kind: "reports_to" }));
+    expect(c.graph.edges).toContainEqual(expect.objectContaining({ source: "office", target: "process:bafoeg.abroad", kind: "runs" }));
+    expect(c.runs[0]!.trigger).toBe("startup");
+  });
+
+  it("wakes on a change, names who has to act, and clears the finding once fixed", async () => {
+    const { app } = setup();
+    await context(app);
+    await app.inject({ method: "PUT", url: "/office/connections/payment", payload: { enabled: false } });
+    let c = await context(app);
+    const off = c.findings.find((f) => f.id === "connector-off:payment");
+    expect(off?.severity).toBe("problem");
+    expect(off?.owner?.name).toBe("Herr Obermeier");
+    expect(c.runs[0]).toMatchObject({ trigger: "event", reason: { en: "Connection changed" } });
+    expect(c.graph.nodes.find((n) => n.id === "connector:payment")?.severity).toBe("problem");
+    expect((await app.inject({ method: "GET", url: "/office/todo" })).json().attention).toBeGreaterThan(0);
+    await app.inject({ method: "PUT", url: "/office/connections/payment", payload: { enabled: true } });
+    c = await context(app);
+    expect(c.findings.some((f) => f.id === "connector-off:payment")).toBe(false);
+    expect(c.resolved.some((f) => f.id === "connector-off:payment")).toBe(true);
+  });
+
+  it("reviews a proposed process and says which connector needs a modification", async () => {
+    const { app } = setup("s-lindner");
+    const live = defaultProcess();
+    const draft: ProcessDef = { ...live, nodes: live.nodes.map((n) => (n.id === "case" ? { ...n, config: { ...n.config, action: "send_iban" } } : n)) };
+    expect((await app.inject({ method: "PUT", url: "/office/processes/draft", payload: { def: draft } })).statusCode).toBe(200);
+    const c = await context(app);
+    const review = c.findings.find((f) => f.id === "process-review:bafoeg.abroad")!;
+    expect(review.severity).toBe("warning");
+    expect(review.owner?.name).toBe("Herr Obermeier");
+    expect(c.findings.some((f) => f.id.startsWith("connector-action:bafoeg.abroad:draft:case"))).toBe(true);
+    expect(c.graph.nodes.find((n) => n.id === "process:bafoeg.abroad")?.severity).toBeDefined();
+  });
+
+  it("can be run by hand and on the schedule", async () => {
+    const { app } = setup();
+    expect((await app.inject({ method: "POST", url: "/admin/watcher/run" })).json().trigger).toBe("schedule");
+    const c = (await app.inject({ method: "POST", url: "/office/context/run" })).json() as Ctx;
+    expect(c.runs.map((r) => r.trigger).slice(0, 2)).toEqual(["manual", "schedule"]);
+  });
+});

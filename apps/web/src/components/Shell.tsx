@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { BarChart3, Check, Clock, FileStack, FlaskConical, FolderTree, Globe, Inbox, KeyRound, LogOut, Moon, RotateCcw, ShieldCheck, SlidersHorizontal, Sun, Workflow, ArrowUpRight, Zap, type LucideIcon } from "lucide-react";
+import { BarChart3, Check, Clock, FileStack, FlaskConical, FolderTree, Globe, Inbox, KeyRound, LogOut, Moon, Network, RotateCcw, ShieldCheck, SlidersHorizontal, Sun, Workflow, ArrowUpRight, Zap, type LucideIcon } from "lucide-react";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { api } from "@/lib/api";
 import { useI18n } from "@/lib/i18n";
@@ -93,6 +93,7 @@ function OfficeShell({ children, current, oversight }: { children: ReactNode; cu
     "/office/rules": todo.rulesToApprove,
     "/office/templates": todo.proposalsToDecide + todo.templatesToCheck,
     "/office/processes": todo.processDrafts,
+    "/office/context": todo.attention ?? 0,
   };
   const [busy, setBusy] = useState(false);
   if (!staff) return null;
@@ -104,6 +105,7 @@ function OfficeShell({ children, current, oversight }: { children: ReactNode; cu
         { href: "/office/templates", key: "office.nav.templates", icon: FileStack, show: canBuild || Boolean(staff.canApproveTemplates) },
         { href: "/office/rules", key: "office.nav.rules", icon: ShieldCheck, show: true },
         { href: "/office/insights", key: "office.nav.insights", icon: BarChart3, show: true },
+        { href: "/office/context", key: "office.nav.context", icon: Network, show: true },
         { href: "/office/staff", key: "office.nav.staff", icon: KeyRound, show: staff.isAdmin },
         { href: "/office/settings", key: "office.nav.settings", icon: SlidersHorizontal, show: staff.isAdmin || Boolean(staff.canApproveTemplates) },
       ];

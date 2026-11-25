@@ -58,6 +58,7 @@ import { extractDocument } from "./documents.js";
 import { assistProcess, asGraph, generateProcessFrom, liveProcessAiAvailable, processAiModel } from "./generator.js";
 import { readPdfLines } from "./pdf.js";
 import { computeInsights } from "./metrics.js";
+import { Watcher, eventFor } from "./context.js";
 import { SAMPLE_SETS, fixDocuments, formblatt8, getPerson, proposalSample, sampleDocuments, sampleLetter, type Defect } from "./samples.js";
 import { deliverFromPortal, seedDemoData } from "./seed.js";
 import type { Store } from "./store.js";
@@ -77,6 +78,8 @@ export interface AppOptions {
   http?: (req: HttpRequest) => Promise<HttpResponse>;
   /** Replaces fetch for the live process writer (tests). */
   aiFetch?: typeof fetch;
+  /** How often the context watcher sweeps on its own (shown in the UI; the timer itself lives in server.ts). */
+  watchIntervalMs?: number;
 }
 
 const MAX_UPLOAD_BYTES = 5 * 1024 * 1024;
@@ -514,6 +517,7 @@ export function buildApp(opts: AppOptions) {
       myProposals: store.proposals().filter((p) => p.proposedBy === me.name && (p.status === "draft" || p.status === "rejected")).length,
       templatesToCheck: owner ? allTemplates(store).filter((t) => !store.config().templateChecks[t.id] && (t.source === "accepted" || used.has(t.id))).length : 0,
       processDrafts: builder ? Object.values(store.processes()).filter((p) => p.draft).length : 0,
+      attention: watcher.attentionFor(me),
     };
   });
 
@@ -1327,8 +1331,32 @@ export function buildApp(opts: AppOptions) {
   app.post("/admin/reset", async () => {
     store.clear();
     seedDemoData(store, now());
+    watcher.reset();
+    void watcher.run("event", { de: "Demo zurückgesetzt", en: "Demo reset" });
     return { ok: true, cases: store.list().length };
   });
+
+  // ---- Context model and the always-on watcher -----------------------------------------------
+  // Two triggers: every change in the office (right after the request) and a sweep on a schedule (server.ts)
+  // for what nobody triggers, such as cases that stopped at a connector or approvals that wait too long.
+  const watcher = new Watcher({ store, now, validate: inputIssues, runTests: runProcessTests, intervalMs: opts.watchIntervalMs ?? 5 * 60_000 });
+  app.addHook("onResponse", async (req, reply) => {
+    if (req.method === "GET" || reply.statusCode >= 400) return;
+    const ev = eventFor(req.method, req.url);
+    if (ev) void watcher.run("event", ev, req.staff?.name);
+  });
+  const contextState = async () => {
+    await watcher.settled();
+    if (!watcher.hasRun) await watcher.run("startup", { de: "Erster Lauf", en: "First run" });
+    return watcher.state();
+  };
+  app.get("/office/context", async () => contextState());
+  app.post("/office/context/run", async (req) => {
+    await watcher.run("manual", { de: "Von Hand gestartet", en: "Started by hand" }, req.staff?.name);
+    return watcher.state();
+  });
+  /** Called by the scheduler in server.ts. */
+  app.post("/admin/watcher/run", async () => watcher.run("schedule", { de: "Planmäßiger Lauf", en: "Scheduled sweep" }));
 
   return app;
 }

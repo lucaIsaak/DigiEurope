@@ -6,7 +6,7 @@ import { useI18n } from "@/lib/i18n";
 import { useStaff } from "@/lib/staff";
 
 type L = [string, string];
-type Section = "inbox" | "builder" | "templates" | "rules" | "insights" | "staff" | "settings" | "oversight";
+type Section = "inbox" | "builder" | "templates" | "rules" | "insights" | "staff" | "settings" | "context" | "oversight";
 
 interface Info {
   title: L;
@@ -133,6 +133,22 @@ const INFO: Record<Section, Info> = {
       [["Hinzufügen / löschen", "Add / delete"], ["Nur über die vorhandenen Felder", "Only through the existing fields"]],
     ].map(([what, who]) => ({ what: what as L, who: who as L })),
   },
+  context: {
+    title: ["Kontextmodell und Wächter", "Context model and watcher"],
+    can: [
+      ["Sehen, wie Personen, Prozesse, Regeln, Vorlagen und Verbindungen zusammenhängen", "See how people, processes, rules, templates and connectors are connected"],
+      ["Meldungen des Wächters lesen und zur Stelle springen, an der sie behoben werden", "Read the watcher's findings and jump to where they are fixed"],
+      ["Den Wächter von Hand starten", "Start the watcher by hand"],
+    ],
+    cannot: [
+      ["Hier etwas ändern. Behoben wird an der jeweiligen Stelle (Builder, Regeln, Vorlagen, Einstellungen)", "Change anything here. Fixes happen in their own place (builder, rules, templates, settings)"],
+      ["Den Wächter etwas veröffentlichen oder freigeben lassen. Er empfiehlt nur", "Let the watcher publish or approve anything. It only recommends"],
+    ],
+    who: [
+      [["Meldungen beheben", "Fix findings"], ["Die genannte zuständige Person", "The named owner"]],
+      [["Überblick über alles", "Overview of everything"], ADMIN],
+    ].map(([what, who]) => ({ what: what as L, who: who as L })),
+  },
   oversight: {
     title: ["Aufsicht", "Oversight"],
     can: [
@@ -157,6 +173,7 @@ export function sectionOf(path: string): Section {
   if (path.startsWith("/office/insights")) return "insights";
   if (path.startsWith("/office/staff")) return "staff";
   if (path.startsWith("/office/settings")) return "settings";
+  if (path.startsWith("/office/context")) return "context";
   return "inbox";
 }
 

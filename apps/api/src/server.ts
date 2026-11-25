@@ -12,10 +12,16 @@ if (store.isNew && process.env.SEED_DEMO_DATA !== "false") {
   console.log(`Seeded demo data into ${dataDir}`);
 }
 
-const api = buildApp({ store, logger: true, webUrl: process.env.WEB_URL });
+/** The context watcher sweeps on its own this often ("always on"); changes in the office wake it right away as well. */
+const watchIntervalMs = Math.max(10_000, Number(process.env.WATCH_INTERVAL_MS ?? 5 * 60_000));
+const api = buildApp({ store, logger: true, webUrl: process.env.WEB_URL, watchIntervalMs });
 api.listen({ port, host: "0.0.0.0" }).catch((err) => {
   console.error(err);
   process.exit(1);
 });
 // Timers: every minute, processes whose waiting step has run out carry on.
 setInterval(() => void api.inject({ method: "POST", url: "/admin/timers/run" }).catch(() => undefined), 60_000);
+// Context watcher: one sweep at start, then on the schedule.
+const sweep = () => void api.inject({ method: "POST", url: "/admin/watcher/run" }).catch(() => undefined);
+void api.ready().then(sweep);
+setInterval(sweep, watchIntervalMs);
