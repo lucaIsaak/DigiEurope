@@ -2,10 +2,11 @@
 
 import { Background, BackgroundVariant, Controls, Handle, Position, ReactFlow, ReactFlowProvider, useReactFlow, type Edge, type Node, type NodeProps } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
-import { AlertOctagon, ArrowLeft, ArrowRight, BadgeCheck, Building2, Cable, CheckCircle2, ChevronRight, Compass, Database, FilePlus2, FileText, FolderTree, Footprints, Landmark, Mail, RefreshCw, Scale, ShieldCheck, TextCursorInput, UserRound, Users, Workflow, Zap, type LucideIcon } from "lucide-react";
+import { AlertOctagon, ArrowLeft, ArrowRight, BadgeCheck, Building2, Cable, CheckCircle2, ChevronRight, Compass, Database, FilePlus2, FileText, FolderTree, Footprints, Landmark, Mail, RefreshCw, Scale, Share2, ShieldCheck, TableProperties, TextCursorInput, UserRound, Users, Workflow, Zap, type LucideIcon } from "lucide-react";
 import Link from "next/link";
 import { memo, useCallback, useEffect, useMemo, useState } from "react";
 import { Spinner } from "@/components/ui";
+import { ContextSchemaView } from "@/components/ContextSchema";
 import { refreshTodo } from "@/components/TodoBar";
 import { api, type ContextEdge, type ContextFinding, type ContextNode, type ContextNodeType, type ContextState, type Severity } from "@/lib/api";
 import { useI18n } from "@/lib/i18n";
@@ -217,6 +218,7 @@ export default function ContextPage() {
   const [pinned, setPinned] = useState<string[] | null>(null);
   const [mine, setMine] = useState(false);
   const [hidden, setHidden] = useState<Set<ContextNodeType>>(() => new Set(DETAIL));
+  const [view, setView] = useState<"graph" | "schema">("graph");
 
   const load = useCallback(() => api.context().then(setState).catch(() => undefined), []);
   useEffect(() => {
@@ -241,17 +243,22 @@ export default function ContextPage() {
     return m;
   }, [state]);
   const focus = useMemo(() => {
-    if (selected) return new Set([selected, ...(neighbours.get(selected) ?? [])]);
+    const types = new Map(state?.graph.nodes.map((n) => [n.id, n.type]) ?? []);
+    if (selected) {
+      // A core item brings in only core neighbours; its steps, fields and the like are listed in the panel instead.
+      // A detail item (a step, a field, ...) brings in everything next to it, which is always a short list.
+      const core = !DETAIL.includes(types.get(selected)!);
+      return new Set([selected, ...[...(neighbours.get(selected) ?? [])].filter((n) => !core || !DETAIL.includes(types.get(n)!) || !hidden.has(types.get(n)!))]);
+    }
     if (!pinned) return null;
     // A finding shows its own chain: the items it names, plus what connects them through a data item or a single connector or rule.
     const out = new Set(pinned);
-    const types = new Map(state?.graph.nodes.map((n) => [n.id, n.type]) ?? []);
     for (const r of pinned) {
       const t = types.get(r);
       if (t === "data" || (pinned.length === 1 && t !== "process")) for (const n of neighbours.get(r) ?? []) out.add(n);
     }
     return out;
-  }, [selected, pinned, neighbours, state]);
+  }, [selected, pinned, neighbours, state, hidden]);
 
   if (!state || !staff) return <Spinner label={t("common.loading")} />;
   const findings = state.findings.filter((f) => !mine || f.owner?.id === staff.id);
@@ -277,6 +284,10 @@ export default function ContextPage() {
           <p className="muted">{t("ctx.lead")}</p>
         </div>
         <div className="ctx-pulse">
+          <div className="seg" role="group" aria-label={t("ctx.title")}>
+            <button type="button" aria-pressed={view === "graph"} onClick={() => setView("graph")}><Share2 size={14} />{t("ctx.view.graph")}</button>
+            <button type="button" aria-pressed={view === "schema"} onClick={() => setView("schema")}><TableProperties size={14} />{t("ctx.view.schema")}</button>
+          </div>
           <span className="ctx-live"><span className="ctx-dot" aria-hidden />{t("ctx.alwaysOn")} · {t("ctx.every", { n: Math.round(state.schedule.intervalMs / 60000) })}</span>
           <span className="muted small">
             {last && t("ctx.lastRun", { t: dateTime(last.at) })}
@@ -288,16 +299,20 @@ export default function ContextPage() {
         </div>
       </header>
 
-      <div className="ctx-body">
+      <div className={`ctx-body${view === "schema" ? " full" : ""}`}>
         <section className="ctx-canvas" aria-label={t("ctx.title")}>
-          <button type="button" className={`ctx-alert${urgent.length ? "" : " ok"}`} onClick={() => { setSelected(null); setPinned(null); setMine(!staff.isAdmin); }}>
+          {view === "graph" && <button type="button" className={`ctx-alert${urgent.length ? "" : " ok"}`} onClick={() => { setSelected(null); setPinned(null); setMine(!staff.isAdmin); }}>
             <span className="ctx-alert-icon">{urgent.length ? <AlertOctagon size={20} /> : <CheckCircle2 size={20} />}</span>
             <span>
               <strong>{urgent.length ? (urgent.length === 1 ? t("ctx.problem1") : t("ctx.problems", { n: urgent.length })) : t("ctx.allClear")}</strong>
               <small>{urgent.length ? t("ctx.needAttention") : t("ctx.allClearSub")}</small>
             </span>
             <ChevronRight size={16} className="muted" />
-          </button>
+          </button>}
+          {view === "schema" ? (
+            <ContextSchemaView schema={state.schema} onOpen={(type) => { setView("graph"); setSelected(null); setPinned(state.graph.nodes.filter((n) => n.type === type).map((n) => n.id)); }} />
+          ) : (
+          <>
           <div className="ctx-flow">
             <ReactFlowProvider>
               <Graph state={state} focus={focus} selected={selected} onSelect={(id) => { setSelected(id); if (id) setPinned(null); }} hidden={hidden} zoomTo={pinned} />
@@ -315,9 +330,11 @@ export default function ContextPage() {
             })}
           </div>
           {!focus && <p className="ctx-hint small muted">{t("ctx.hint")}</p>}
+          </>
+          )}
         </section>
 
-        <aside className="ctx-panel">
+        {view === "graph" && <aside className="ctx-panel">
           {node ? (
             <NodeDetail node={node} state={state} onBack={() => setSelected(null)} onSelect={setSelected} />
           ) : (
@@ -364,10 +381,38 @@ export default function ContextPage() {
               </details>
             </>
           )}
-        </aside>
+        </aside>}
       </div>
     </div>
   );
+}
+
+/** Steps of a process from the start, following "then"; steps that cannot be reached come last. */
+function stepOrder(processId: string, edges: ContextEdge[], byId: Map<string, ContextNode>): ContextNode[] {
+  const ids = edges.filter((e) => e.kind === "has_step" && e.source === processId).map((e) => e.target);
+  const set = new Set(ids);
+  const next = new Map<string, string[]>();
+  const into = new Map<string, number>();
+  for (const e of edges) {
+    if (e.kind !== "next" || !set.has(e.source) || !set.has(e.target)) continue;
+    next.set(e.source, [...(next.get(e.source) ?? []), e.target]);
+    into.set(e.target, (into.get(e.target) ?? 0) + 1);
+  }
+  const order: string[] = [];
+  const seen = new Set<string>();
+  let frontier = ids.filter((id) => !into.get(id));
+  while (frontier.length) {
+    const n: string[] = [];
+    for (const id of frontier) {
+      if (seen.has(id)) continue;
+      seen.add(id);
+      order.push(id);
+      n.push(...(next.get(id) ?? []));
+    }
+    frontier = n;
+  }
+  for (const id of ids) if (!seen.has(id)) order.push(id);
+  return order.map((id) => byId.get(id)).filter((x): x is ContextNode => Boolean(x));
 }
 
 function NodeDetail({ node, state, onBack, onSelect }: { node: ContextNode; state: ContextState; onBack: () => void; onSelect: (id: string) => void }) {
@@ -375,8 +420,11 @@ function NodeDetail({ node, state, onBack, onSelect }: { node: ContextNode; stat
   const Icon = ICON[node.type];
   const byId = new Map(state.graph.nodes.map((n) => [n.id, n]));
   const links = state.graph.edges.filter((e) => e.source === node.id || e.target === node.id);
+  // A process: its steps in the order they run, instead of a bag of chips.
+  const steps = node.type === "process" ? stepOrder(node.id, state.graph.edges, byId) : [];
   const groups = new Map<string, { other: ContextNode; draft?: boolean }[]>();
   for (const e of links) {
+    if (steps.length && e.kind === "has_step") continue;
     const out = e.source === node.id;
     const other = byId.get(out ? e.target : e.source);
     if (!other) continue;
@@ -397,7 +445,22 @@ function NodeDetail({ node, state, onBack, onSelect }: { node: ContextNode; stat
       {findings.length === 0 ? <p className="muted small">{t("ctx.noFindingsNode")}</p> : (
         <ul className="ctx-findings">{findings.map((f) => <FindingCard key={f.id} f={f} onShow={() => onSelect(f.subjects[0]!)} />)}</ul>
       )}
-      <h3>{t("ctx.connections")} <span className="muted num">{links.length}</span></h3>
+      {steps.length > 0 && (
+        <>
+          <h3>{t("ctx.type.step")} <span className="muted num">{steps.length}</span></h3>
+          <ol className="ctx-steps">
+            {steps.map((st) => (
+              <li key={st.id}>
+                <button type="button" onClick={() => onSelect(st.id)} className={st.severity ? `sev-${st.severity}` : undefined}>
+                  <span>{bi(st.label)}</span>
+                  {st.sub && <small className="muted">{bi(st.sub).split(" · ")[0]}</small>}
+                </button>
+              </li>
+            ))}
+          </ol>
+        </>
+      )}
+      <h3>{t("ctx.connections")} <span className="muted num">{links.length - steps.length}</span></h3>
       <dl className="ctx-links">
         {[...groups].map(([k, xs]) => (
           <div key={k}>

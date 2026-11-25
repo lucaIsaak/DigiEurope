@@ -3,6 +3,7 @@ import { CONNECTORS, DEFAULT_CATEGORY, diffProcess, factCatalog, processDependen
 import { allTemplates } from "./cases.js";
 import { missingInputs } from "./contracts.js";
 import { extendGraph, factNodeId, refsOf } from "./ontology.js";
+import { checkSchema, schemaView } from "./schema.js";
 import type { Store } from "./store.js";
 
 /**
@@ -272,6 +273,7 @@ export class Watcher {
     const last = this.runs.at(-1) ?? null;
     return {
       graph: { nodes: graph.nodes.map((n) => (sev.has(n.id) ? { ...n, severity: sev.get(n.id) } : n)), edges: graph.edges },
+      schema: schemaView(graph),
       findings: [...this.findings.values()].sort((x, y) => RANK[y.severity] - RANK[x.severity] || x.firstSeen.localeCompare(y.firstSeen)),
       resolved: [...this.resolved].reverse().slice(0, 12),
       runs: [...this.runs].reverse(),
@@ -430,6 +432,27 @@ export class Watcher {
         detail: b(`Unbekannt: ${unknown.join(", ")}. Wahrscheinlich wurde eine Vorlage geändert.`, `Unknown: ${unknown.join(", ")}. A template was probably changed.`),
         recommendation: b("Die Bedingung auf ein vorhandenes Feld umstellen oder das Feld in der Vorlage wieder aufnehmen.", "Point the condition at an existing field, or bring the field back into the template."),
         subjects: [`rule:${id}`, ...unknown.map(factNodeId)], affects: usersOf((d) => (processDependencies(d).rules ?? Object.keys(rules)).includes(id)), owner: ppl.ref(ppl.admin), href: `/office/rules?open=${encodeURIComponent(id)}`,
+      });
+    }
+
+    // The graph must match the declared schema: no undeclared relations, no "at most one" exceeded.
+    const sc = checkSchema(buildGraph(store));
+    for (const u of sc.undeclared) {
+      out.push({
+        id: `schema-undeclared:${u.kind}:${u.from}:${u.to}`, kind: "schema", severity: "warning",
+        title: b(`Beziehung nicht im Schema: ${u.from} –${u.kind}→ ${u.to}`, `Relation not in the schema: ${u.from} –${u.kind}→ ${u.to}`),
+        detail: b(`${u.count} Verbindung(en) dieser Art gibt es in den Daten, das Schema kennt sie nicht.`, `The data has ${u.count} link(s) of this kind; the schema does not know it.`),
+        recommendation: b("Schema ergänzen (apps/api/src/schema.ts) oder die Daten korrigieren.", "Add it to the schema (apps/api/src/schema.ts) or correct the data."),
+        subjects: [], affects: [], owner: ppl.ref(ppl.admin),
+      });
+    }
+    for (const t of sc.tooMany) {
+      out.push({
+        id: `schema-card:${t.relation.kind}:${t.node}`, kind: "schema", severity: "warning",
+        title: b(`Mehr als erlaubt: ${t.relation.from} –${t.relation.kind}→ ${t.relation.to}`, `More than allowed: ${t.relation.from} –${t.relation.kind}→ ${t.relation.to}`),
+        detail: b(`${t.node} hat ${t.count} solche Verbindungen, das Schema erlaubt höchstens eine.`, `${t.node} has ${t.count} such links; the schema allows at most one.`),
+        recommendation: b("Die überzählige Verbindung entfernen.", "Remove the extra link."),
+        subjects: [t.node], affects: [], owner: ppl.ref(ppl.admin),
       });
     }
 

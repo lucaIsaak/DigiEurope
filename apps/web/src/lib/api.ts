@@ -204,7 +204,14 @@ export interface WatchRun {
   resolved: number;
 }
 
+export type SchemaCard = "1" | "0..1" | "0..*" | "1..*";
+export interface ContextSchema {
+  types: { type: ContextNodeType; label: Bilingual; group: "organisation" | "process" | "rules" | "documents" | "systems" | "federal"; attributes: { name: string; type: string }[]; count: number }[];
+  relations: { kind: ContextEdge["kind"]; from: ContextNodeType; to: ContextNodeType; fromCard: SchemaCard; toCard: SchemaCard; shortcut?: boolean; derived?: boolean; count: number }[];
+}
+
 export interface ContextState {
+  schema: ContextSchema;
   graph: { nodes: ContextNode[]; edges: ContextEdge[] };
   findings: ContextFinding[];
   resolved: ContextFinding[];

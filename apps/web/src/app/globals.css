@@ -2122,3 +2122,42 @@ body:has(.ws-chat) .roleinfo { display: none; }
 .ctx-links { margin: 0; display: grid; gap: 0.6rem; }
 .ctx-links dt { font-size: 0.78rem; color: var(--muted); font-weight: 600; margin-bottom: 0.25rem; }
 .ctx-links dd { margin: 0; display: flex; flex-wrap: wrap; gap: 0.3rem; }
+.ctx-steps { list-style: none; margin: 0 0 0.75rem; padding: 0 0 0 0.9rem; border-left: 2px solid color-mix(in srgb, var(--t-step) 35%, transparent); display: grid; gap: 0.15rem; counter-reset: st; }
+.ctx-steps li { counter-increment: st; position: relative; }
+.ctx-steps li::before { content: counter(st); position: absolute; left: -1.55rem; top: 0.42rem; width: 1.15rem; height: 1.15rem; border-radius: 50%; background: var(--surface); border: 1.5px solid var(--t-step); color: var(--t-step); font-size: 0.62rem; font-weight: 700; display: grid; place-items: center; }
+.ctx-steps button { width: 100%; display: flex; justify-content: space-between; gap: 0.5rem; align-items: baseline; text-align: left; border: 0; background: none; padding: 0.35rem 0.45rem; border-radius: 7px; font: inherit; font-size: 0.86rem; color: var(--ink); cursor: pointer; }
+.ctx-steps button:hover { background: var(--surface-2); }
+.ctx-steps button small { white-space: nowrap; font-size: 0.72rem; }
+.ctx-steps button.sev-problem { box-shadow: inset 3px 0 0 var(--bad); } .ctx-steps button.sev-warning { box-shadow: inset 3px 0 0 var(--warn); }
+
+/* Context schema view */
+.ctx { --g-organisation: #7a4fd6; --g-process: #2f6fe0; --g-rules: #1f9d6b; --g-documents: #d98a1c; --g-systems: #4a5568; --g-federal: #b4387a; }
+:root[data-theme="dark"] .ctx { --g-organisation: #a98bf0; --g-process: #6f9bff; --g-rules: #4cc58b; --g-documents: #f0b24c; --g-systems: #9aa1b0; --g-federal: #f07bb8; }
+.ctx .g-organisation { --gc: var(--g-organisation); } .ctx .g-process { --gc: var(--g-process); } .ctx .g-rules { --gc: var(--g-rules); }
+.ctx .g-documents { --gc: var(--g-documents); } .ctx .g-systems { --gc: var(--g-systems); } .ctx .g-federal { --gc: var(--g-federal); }
+.sch-markers { position: absolute; width: 0; height: 0; overflow: hidden; }
+.sch-markers path, .sch-markers circle, .sch-legend line { stroke: var(--muted); stroke-width: 1.5; fill: none; }
+.sch-markers circle { fill: var(--surface); }
+.sch-legend line { stroke: var(--muted); }
+.sch-box { background: var(--surface); border: 1px solid var(--line-strong); border-radius: 6px; box-shadow: var(--shadow); font-size: 12.5px; overflow: hidden; }
+.sch-head { width: 100%; display: flex; justify-content: space-between; align-items: center; gap: 0.5rem; border: 0; border-bottom: 1px solid var(--line-strong); padding: 0.5rem 0.7rem; background: color-mix(in srgb, var(--gc) 16%, var(--surface)); color: var(--ink); font: inherit; font-weight: 700; font-size: 13.5px; cursor: pointer; text-align: left; }
+.sch-head:hover { background: color-mix(in srgb, var(--gc) 26%, var(--surface)); }
+.sch-count { font-size: 11px; font-weight: 600; color: var(--gc); background: var(--surface); border-radius: 99px; padding: 0 0.45rem; }
+.sch-box ul { list-style: none; margin: 0; padding: 0; }
+.sch-box li { display: flex; justify-content: space-between; gap: 0.5rem; padding: 0 0.7rem; height: 24px; align-items: center; border-bottom: 1px solid var(--line); }
+.sch-box li:nth-child(even) { background: var(--surface-2); }
+.sch-box li:last-child { border-bottom: 0; }
+.sch-box li em { color: var(--ink); }
+.sch-box li span { color: var(--muted); font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sch-handle { opacity: 0; pointer-events: none; }
+.sch-edge path.react-flow__edge-path { stroke: var(--muted); stroke-width: 1.4; }
+.sch-edge.empty path.react-flow__edge-path { stroke-dasharray: 4 4; opacity: 0.6; }
+.sch-edge .react-flow__edge-text { font-size: 10.5px; fill: var(--muted); }
+.sch-edge .react-flow__edge-textbg { fill: var(--surface); }
+.sch-legend { align-items: center; gap: 0.5rem 0.9rem; font-size: 0.8rem; }
+.sch-key { display: inline-flex; align-items: center; gap: 0.35rem; }
+.sch-key i { width: 12px; height: 12px; border-radius: 3px; background: color-mix(in srgb, var(--gc) 35%, var(--surface)); border: 1px solid var(--gc); }
+.sch-sep { width: 1px; height: 16px; background: var(--line); }
+.sch-note { flex-basis: 100%; }
+
+.ctx-body.full { grid-template-columns: 1fr; height: calc(100vh - 200px); min-height: 640px; }

@@ -7,6 +7,8 @@ import { startRun } from "./engine.js";
 import { defaultProcess, upgradeProcess, validateProcess, walkDecisionTree, DECISION_TREE, type Application, type ProcessDef } from "@digieurope/shared";
 import { checksFor, reviewReport } from "./cases.js";
 import { Store } from "./store.js";
+import { checkSchema } from "./schema.js";
+import { buildGraph } from "./context.js";
 
 const NOW = new Date("2026-11-16T10:00:00Z");
 const b64 = (b: Buffer) => b.toString("base64");
@@ -1473,5 +1475,27 @@ describe("ontology: design-time entities and lineage", () => {
     expect(c.findings.some((f) => f.id === "lineage:bafoeg.abroad:draft:case")).toBe(false);
     expect(has(c, "field:info.iban", "data:bank.iban", "provides")).toBe(true);
     expect(c.findings.some((f) => f.id === "lineage:bafoeg.abroad:live:case")).toBe(true);
+  });
+});
+
+describe("declared schema", () => {
+  it("the demo data matches the schema, and the view carries counts", async () => {
+    const { app, store } = setup();
+    const c = (await app.inject({ method: "GET", url: "/office/context" })).json();
+    expect(checkSchema(buildGraph(store))).toEqual({ undeclared: [], tooMany: [] });
+    expect(c.findings.some((f: { kind: string }) => f.kind === "schema")).toBe(false);
+    const step = c.schema.types.find((t: { type: string }) => t.type === "step");
+    expect(step.count).toBeGreaterThan(0);
+    expect(step.attributes.map((a: { name: string }) => a.name)).toContain("kind");
+    expect(c.schema.relations.find((r: { kind: string; from: string }) => r.kind === "has_step" && r.from === "process").toCard).toBe("1..*");
+  });
+  it("flags links the schema does not know and 'at most one' that is exceeded", () => {
+    const { store } = setup();
+    const g = buildGraph(store);
+    g.edges.push({ id: "x1", source: "connector:payment", target: "person:s-kaya", kind: "owns" });
+    g.edges.push({ id: "x2", source: "step:bafoeg.abroad:case", target: "action:payment.cancel_payment", kind: "invokes" });
+    const r = checkSchema(g);
+    expect(r.undeclared).toEqual([{ kind: "owns", from: "connector", to: "person", count: 1 }]);
+    expect(r.tooMany.map((x) => x.node)).toContain("step:bafoeg.abroad:case");
   });
 });
