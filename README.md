@@ -1,8 +1,8 @@
 # Auslands-BAföG, faster and clearer
 
-Class prototype (Product Management, NOVA SBE) for **Auslands-BAföG**, German student funding for studying or interning abroad. Students find out within minutes whether their application is complete, what to fix and what they will likely get. Offices get complete files, rules they approve themselves, and insights that improve the application form.
+Class prototype (Applied Programming) for **Auslands-BAföG**, German student funding for studying or interning abroad. Students find out within minutes whether their application is complete, what to fix and what they will likely get. Offices get complete files, rules they approve themselves, and insights that improve the application form.
 
-The product idea and the interview evidence are in [docs/Product-discovery.md](docs/Product-discovery.md). **Studierendenwerk Musterstadt is fictional.** All people, documents and statistics are made up, and no real authority branding is used. Do not use it with real personal data.
+The product idea and the interview evidence are in [docs/discovery.md](docs/discovery.md). **Studierendenwerk Musterstadt is fictional.** All people, documents and statistics are made up, and no real authority branding is used. Do not use it with real personal data.
 
 ## Run it
 

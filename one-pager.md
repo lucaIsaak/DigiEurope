@@ -6,7 +6,7 @@ DigiEurope tells students applying for Auslands-BAföG, German state funding for
 
 The cause is on both sides. Applicants send incomplete files, such as a missing parent signature or an unsigned internship contract. Offices check every file by hand and find the gaps late. The prototype fixes the file before it is submitted, and it gives the office complete cases plus data on how to improve the form.
 
-It is a class prototype for Product Management at NOVA SBE. The office ("Studierendenwerk Musterstadt"), the people and the data are all fictional.
+It is a class prototype for Applied Programming. The office ("Studierendenwerk Musterstadt"), the people and the data are all fictional.
 
 ## What it does
 
@@ -47,4 +47,4 @@ A real pilot would track these numbers:
 
 The main risks are rule changes after BAföG reforms, which rule versions and approvals handle. Others are students reading the estimate as a promise, messy real documents, data protection and integration with the real portal. The prototype uses no real personal data and has none of these protections.
 
-More detail: [README.md](README.md) and [docs/Product-discovery.md](docs/Product-discovery.md).
+More detail: [README.md](README.md) and [docs/discovery.md](docs/discovery.md).

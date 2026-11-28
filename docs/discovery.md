@@ -1,6 +1,6 @@
-# Product discovery: faster, clearer Auslands-BAföG
+# Discovery: faster, clearer Auslands-BAföG
 
-Class prototype for Product Management at NOVA SBE. Everything here is a hypothesis or a design decision, not a finding about a real authority.
+Class prototype for Applied Programming. Everything here is a hypothesis or a design decision, not a finding about a real authority.
 
 ## 1. The problem in 60 seconds
 
